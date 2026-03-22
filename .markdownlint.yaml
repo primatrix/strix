@@ -1,0 +1,18 @@
+# Disable line length rule (documentation often has long lines)
+MD013: false
+
+# Allow HTML in markdown (VitePress uses custom components)
+MD033: false
+
+# Allow duplicate headings in different sections
+MD024:
+  siblings_only: true
+
+# Allow trailing punctuation in headings (Chinese punctuation)
+MD026: false
+
+# Allow multiple H1 headings (VitePress uses frontmatter title + body H1)
+MD025: false
+
+# Disable table column alignment check (CJK characters affect alignment)
+MD060: false

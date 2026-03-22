@@ -1,0 +1,9 @@
+# Global fallback
+* @org/wiki-maintainers
+
+# Per-project ownership
+/docs/projects/project-alpha/ @org/team-alpha
+/docs/projects/project-beta/  @org/team-beta
+
+# RFC requires architecture team review
+/docs/rfc/ @org/architecture-team
