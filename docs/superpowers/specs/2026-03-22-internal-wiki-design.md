@@ -13,7 +13,7 @@ Build an internal knowledge base for a 50+ person engineering team using VitePre
 | Version history | Git commit history + VitePress last-updated |
 | Chinese language UI | VitePress i18n configuration |
 | Multi-project support | Project-first directory structure |
-| Search | VitePress built-in local search (minisearch) |
+| Search | VitePress built-in local search (minisearch) with Chinese tokenization |
 
 ## Architecture
 
@@ -36,7 +36,7 @@ Cloudflare Pages (CDN + Hosting)
     ▼
 VitePress Static Site
     - Markdown → HTML rendering
-    - Client-side local search
+    - Client-side local search (with CJK tokenizer)
     - Dark mode support
 ```
 
@@ -61,40 +61,47 @@ Editor writes/edits Markdown
 ```
 wiki/
 ├── .github/
-│   └── CODEOWNERS                  # PR review assignment rules
-├── .vitepress/
-│   ├── config.ts                   # VitePress main config
-│   └── theme/
-│       └── index.ts                # Custom theme extensions (if needed)
+│   ├── CODEOWNERS                      # PR review assignment rules
+│   └── workflows/
+│       └── lint.yml                    # Markdown lint + broken link check
 ├── docs/
-│   ├── index.md                    # Homepage
-│   ├── projects/                   # Project-specific docs
+│   ├── .vitepress/
+│   │   ├── config.ts                   # VitePress main config
+│   │   └── theme/
+│   │       └── index.ts                # Custom theme extensions (if needed)
+│   ├── public/
+│   │   └── images/                     # Shared static assets (logos, icons)
+│   ├── index.md                        # Homepage
+│   ├── projects/                       # Project-specific docs
 │   │   ├── project-alpha/
-│   │   │   ├── index.md            # Project overview
-│   │   │   ├── guide/              # Tutorials & guides
+│   │   │   ├── index.md                # Project overview
+│   │   │   ├── assets/                 # Project-specific images & files
+│   │   │   ├── guide/                  # Tutorials & guides
 │   │   │   │   ├── index.md
 │   │   │   │   └── getting-started.md
-│   │   │   ├── reference/          # Technical reference
+│   │   │   ├── reference/              # Technical reference
 │   │   │   │   ├── index.md
 │   │   │   │   └── api.md
-│   │   │   └── troubleshooting/    # Troubleshooting
+│   │   │   └── troubleshooting/        # Troubleshooting
 │   │   │       └── index.md
 │   │   └── project-beta/
 │   │       ├── index.md
+│   │       ├── assets/
 │   │       ├── guide/
 │   │       └── reference/
-│   ├── rfc/                        # Cross-project RFCs
-│   │   ├── index.md                # RFC list
-│   │   ├── template.md             # RFC template
+│   ├── rfc/                            # Cross-project RFCs
+│   │   ├── index.md                    # RFC list
+│   │   ├── template.md                 # RFC template
 │   │   └── 0001-example-rfc.md
-│   ├── best-practices/             # Shared best practices
+│   ├── best-practices/                 # Shared best practices
 │   │   ├── index.md
 │   │   ├── code-review.md
 │   │   └── coding-standards.md
-│   └── onboarding/                 # New member onboarding
+│   └── onboarding/                     # New member onboarding
 │       ├── index.md
 │       └── dev-environment.md
 ├── package.json
+├── package-lock.json                   # Lockfile for deterministic builds
 └── README.md
 ```
 
@@ -109,6 +116,46 @@ wiki/
 | `best-practices/` | Engineering standards | Code review guidelines, security practices |
 | `onboarding/` | New member guides | Team intro, tooling setup, workflow overview |
 
+### Static Assets Convention
+
+- **Shared assets** (logos, favicons): `docs/public/images/`
+- **Project-specific assets**: `docs/projects/<name>/assets/` (co-located with content)
+- **Image size limit**: Keep individual images under 500KB; use compressed formats (WebP preferred, PNG/JPG acceptable)
+- **Referencing images**: Use relative paths from the Markdown file (e.g., `./assets/architecture.png`)
+
+### Frontmatter Schema
+
+All pages should include frontmatter. Required fields vary by content type:
+
+**All pages (required):**
+```yaml
+---
+title: Page Title
+---
+```
+
+**RFC pages (required):**
+```yaml
+---
+title: "RFC-0001: Feature Name"
+status: draft | review | accepted | rejected | superseded
+author: GitHub username
+date: YYYY-MM-DD
+reviewers:
+  - reviewer1
+  - reviewer2
+---
+```
+
+**Project guide/reference pages (optional but recommended):**
+```yaml
+---
+title: Getting Started with Project Alpha
+lastUpdated: true
+editLink: true
+---
+```
+
 ## Authentication & Access Control
 
 ### Cloudflare Access Configuration
@@ -120,6 +167,14 @@ wiki/
    - **Require Rule**: GitHub Organization → `<your-org-name>`
 4. **Session Duration**: 24 hours (configurable)
 5. **Same-site Cookie**: Enabled for security
+
+### Preview Deployment Protection
+
+Cloudflare Pages preview deployments use `*.pages.dev` subdomains that are **not** automatically covered by the Access policy. To protect preview content:
+
+- Configure a second Cloudflare Access application with a wildcard policy covering `*.wiki-project.pages.dev`
+- Alternatively, restrict preview deployments to a custom preview domain that is covered by the Access policy
+- As a simpler option: disable preview deployments in Cloudflare Pages settings if security of unreleased content is critical
 
 ### Authentication Flow
 
@@ -147,18 +202,38 @@ Cloudflare Pages natively integrates with GitHub:
 - **Production**: Push to `main` triggers automatic build and deployment
 - **Preview**: Every PR gets an automatic preview deployment with a unique URL
 - **Build Command**: `npm run docs:build`
-- **Build Output Directory**: `.vitepress/dist`
+- **Build Output Directory**: `docs/.vitepress/dist`
 
-No custom GitHub Actions workflow is needed for basic build/deploy — Cloudflare Pages handles this automatically.
+### CI Quality Checks (GitHub Actions)
+
+In addition to Cloudflare Pages auto-deploy, a lightweight GitHub Actions workflow runs on PRs:
+
+```yaml
+# .github/workflows/lint.yml
+name: Docs Lint
+on: [pull_request]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx markdownlint-cli2 "docs/**/*.md"
+      - run: npm run docs:build  # Also catches broken links
+```
 
 ### Collaboration Workflow
 
 1. Contributor creates a branch and writes/edits Markdown files
 2. Contributor opens a PR against `main`
-3. Cloudflare Pages automatically builds a preview deployment
-4. CODEOWNERS-assigned reviewers review content and preview
-5. After approval, PR is merged to `main`
-6. Cloudflare Pages automatically deploys to production
+3. GitHub Actions runs markdown lint and build check
+4. Cloudflare Pages automatically builds a preview deployment
+5. CODEOWNERS-assigned reviewers review content and preview
+6. After approval, PR is merged to `main`
+7. Cloudflare Pages automatically deploys to production
 
 ### CODEOWNERS Configuration
 
@@ -176,36 +251,136 @@ No custom GitHub Actions workflow is needed for basic build/deploy — Cloudflar
 
 ## VitePress Configuration
 
-### Key Configuration Points
+### config.ts Skeleton
 
-1. **Language**: `zh-CN` with full Chinese UI localization
-2. **Sidebar**: Auto-generated from directory structure, collapsible sections
-3. **Search**: Built-in `local` search provider (minisearch-based, supports Chinese)
-4. **Mermaid Diagrams**: Via `vitepress-plugin-mermaid` for flowcharts and architecture diagrams
-5. **Last Updated**: Git-based timestamps shown on each page
-6. **Edit Link**: "Edit this page on GitHub" link at the bottom of each page
-7. **Dark Mode**: Built-in, no additional configuration needed
+```ts
+import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
-### Navigation Bar Structure
+export default withMermaid(
+  defineConfig({
+    lang: 'zh-CN',
+    title: 'Internal Wiki',
+    description: '内部技术知识库',
 
+    lastUpdated: true,
+
+    themeConfig: {
+      // Chinese UI localization
+      lastUpdatedText: '最后更新',
+      returnToTopLabel: '返回顶部',
+      sidebarMenuLabel: '菜单',
+      darkModeSwitchLabel: '主题',
+      outlineTitle: '本页目录',
+      docFooter: { prev: '上一页', next: '下一页' },
+
+      // Navigation bar
+      nav: [
+        { text: '首页', link: '/' },
+        {
+          text: '项目',
+          items: [
+            { text: 'Project Alpha', link: '/projects/project-alpha/' },
+            { text: 'Project Beta', link: '/projects/project-beta/' },
+          ],
+        },
+        { text: 'RFC', link: '/rfc/' },
+        { text: '最佳实践', link: '/best-practices/' },
+        { text: '新人入门', link: '/onboarding/' },
+      ],
+
+      // Sidebar (manual configuration per section)
+      sidebar: {
+        '/projects/project-alpha/': [
+          {
+            text: 'Project Alpha',
+            items: [
+              { text: '概览', link: '/projects/project-alpha/' },
+              {
+                text: '教程指南',
+                collapsed: false,
+                items: [
+                  { text: '快速开始', link: '/projects/project-alpha/guide/getting-started' },
+                ],
+              },
+              {
+                text: '技术参考',
+                collapsed: true,
+                items: [
+                  { text: 'API 文档', link: '/projects/project-alpha/reference/api' },
+                ],
+              },
+            ],
+          },
+        ],
+        // ... other project sidebars
+      },
+
+      // Edit link
+      editLink: {
+        pattern: 'https://github.com/primatrix/wiki/edit/main/docs/:path',
+        text: '在 GitHub 上编辑此页',
+      },
+
+      // Local search with Chinese tokenization
+      search: {
+        provider: 'local',
+        options: {
+          translations: {
+            button: { buttonText: '搜索', buttonAriaLabel: '搜索' },
+            modal: {
+              noResultsText: '未找到相关结果',
+              resetButtonTitle: '清除',
+              footer: { selectText: '选择', navigateText: '切换', closeText: '关闭' },
+            },
+          },
+          miniSearch: {
+            options: {
+              tokenize: (text) => {
+                // CJK-aware tokenization using Intl.Segmenter
+                const segmenter = new Intl.Segmenter('zh-CN', { granularity: 'word' })
+                const segments = [...segmenter.segment(text)]
+                return segments
+                  .filter((s) => s.isWordLike)
+                  .map((s) => s.segment)
+              },
+            },
+            searchOptions: {
+              combineWith: 'AND',
+              fuzzy: 0.2,
+            },
+          },
+        },
+      },
+
+      // Social links
+      socialLinks: [
+        { icon: 'github', link: 'https://github.com/primatrix/wiki' },
+      ],
+    },
+
+    // Mermaid plugin configuration
+    mermaid: {},
+  })
+)
 ```
-Homepage | Projects ▾ | RFC | Best Practices | Onboarding
-                    ├── Project Alpha
-                    ├── Project Beta
-                    └── ...
-```
+
+**Sidebar generation strategy**: The sidebar is configured manually in `config.ts`. For a growing knowledge base, consider migrating to the `vitepress-sidebar` plugin (`npm install vitepress-sidebar`) which auto-generates sidebar entries from the directory structure.
 
 ### Tech Stack Summary
 
 | Component | Technology | Version |
 |-----------|-----------|---------|
-| Static Site Generator | VitePress | Latest (1.x) |
-| Runtime | Node.js | 18+ |
-| Package Manager | npm | Latest |
+| Static Site Generator | VitePress | ^1.6.x (pin in package.json) |
+| Runtime | Node.js | 20 LTS |
+| Package Manager | npm | 10.x |
 | Hosting | Cloudflare Pages | - |
 | Authentication | Cloudflare Access | - |
 | OAuth Provider | GitHub | - |
-| Diagrams | vitepress-plugin-mermaid | Latest |
+| Diagrams | vitepress-plugin-mermaid | ^2.x (pin in package.json) |
+| Markdown Lint | markdownlint-cli2 | ^0.x (devDependency) |
+
+Use `package-lock.json` for deterministic builds across all contributors and CI.
 
 ## Non-Goals
 
