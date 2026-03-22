@@ -9,6 +9,7 @@ title: 新人入门
 ## 入职指南
 
 - [开发环境搭建](./dev-environment.md) — 配置本地开发环境
+- [Cloudflare 配置指南](./cloudflare-setup.md) — 部署和认证配置
 
 ## 团队资源
 

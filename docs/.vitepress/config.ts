@@ -113,6 +113,7 @@ export default withMermaid(
             items: [
               { text: '概览', link: '/onboarding/' },
               { text: '开发环境搭建', link: '/onboarding/dev-environment' },
+              { text: 'Cloudflare 配置', link: '/onboarding/cloudflare-setup' },
             ],
           },
         ],
