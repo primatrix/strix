@@ -27,6 +27,7 @@ export default withMermaid(
           items: [
             { text: 'Project Alpha', link: '/projects/project-alpha/' },
             { text: 'Project Beta', link: '/projects/project-beta/' },
+            { text: 'Ling 对齐', link: '/projects/ling-alignment/' },
           ],
         },
         { text: 'RFC', link: '/rfc/' },
@@ -82,6 +83,21 @@ export default withMermaid(
                 collapsed: true,
                 items: [
                   { text: '概览', link: '/projects/project-beta/reference/' },
+                ],
+              },
+            ],
+          },
+        ],
+        '/projects/ling-alignment/': [
+          {
+            text: 'Ling 对齐',
+            items: [
+              { text: '概览', link: '/projects/ling-alignment/' },
+              {
+                text: '教程指南',
+                collapsed: false,
+                items: [
+                  { text: 'Megatron-LM Dump 指南', link: '/projects/ling-alignment/guide/megatron-dump' },
                 ],
               },
             ],
