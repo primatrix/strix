@@ -31,6 +31,7 @@ npm run docs:preview
 - `docs/rfc/` — 技术决策记录 (RFC)
 - `docs/best-practices/` — 工程最佳实践
 - `docs/onboarding/` — 新人入门指南
+- `docs/summaries/` — 技术总结与复盘报告
 
 ## 静态资源
 
