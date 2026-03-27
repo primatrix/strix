@@ -45,6 +45,7 @@ os.environ["XLA_FLAGS"] = (
 ```
 
 dump 目录会生成：
+
 - `*-buffer-assignment.txt` — **包含精确的 buffer 大小、偏移、峰值 HBM、buffer 复用信息**
 - 各优化 pass 前后的 HLO text/proto
 
@@ -61,13 +62,17 @@ dump 目录会生成：
 **解决方案**（三选一）：
 
 1. **UI 下拉菜单**：在 Graph Viewer 页面的 "XLA Modules" 下拉菜单中选择目标模块
+
 2. **符号链接**：找到最大的 `.hlo_proto.pb` 文件（通常是顶层模块），创建符号链接
+
    ```bash
    cd <profile_timestamp_dir>
    ls -lS *.hlo_proto.pb | head -1
    ln -s 'jit_xxx(N).hlo_proto.pb' main.hlo_proto.pb
    ```
+
 3. **代码注入**：用方式 A 生成 proto 后复制到 profile 目录
+
    ```python
    compiled = jax.jit(fn).lower(*args).compile()
    proto_path = f"{trace_dir}/plugins/profile/<timestamp>/main.hlo_proto.pb"
@@ -78,6 +83,7 @@ dump 目录会生成：
 ### 3.2 Memory Viewer 的局限
 
 xprof 的 Memory Viewer 可以分析单个 HLO module 按程序执行顺序的 HBM/VMEM 占用，但：
+
 - 缺乏跨 module 的全局视角
 - 需要先找到正确的 top module 才有意义
 - 对 Pallas kernel 内部（`tpu_custom_call`）不透明
@@ -111,8 +117,8 @@ def run_bwd(q, k, v, do, g_gamma, h0, dht, scale, chunk_size):
 ```
 
 ## 5. 如何看懂 xprof Memory Viewer
-![](../public/images/xprof-memory-viewer.png)
 
+![xprof Memory Viewer 界面](../public/images/xprof-memory-viewer.png)
 
 成功拿到带顶层 `jax.jit` 的 profile 后，在 xprof 左侧选择 **Tools → Memory Viewer**，**Hlo Modules** 下拉选择你的 top module（如 `jit_run_bwd(29)`），即可看到完整的显存分析视图。
 
@@ -120,7 +126,7 @@ def run_bwd(q, k, v, do, g_gamma, h0, dht, scale, chunk_size):
 
 页面顶部会显示全局统计：
 
-```
+```text
 Module Name: jit_run_bwd(29)
 Peak memory allocation: 966.00 MiB, 966.24 MiB (with fragmentation)
   0.00 MiB total padding overhead
@@ -151,10 +157,12 @@ Peak memory allocation: 966.00 MiB, 966.24 MiB (with fragmentation)
 **Y 轴 — Allocated Heap Size（MiB）**：在该 Program Order 时刻，所有存活 buffer 的总 HBM 占用。
 
 **两条线**：
+
 - **蓝线（Size）**：含 padding 的实际分配大小
 - **红线（Unpadded Size）**：不含 padding 的逻辑大小。两线差距大说明 padding 浪费严重
 
 **图的形状解读**：
+
 - **上升段**：新 buffer 被分配（如 layout copy 产生新 tensor、Pallas kernel 分配输出）
 - **平台段**：多个 buffer 同时存活，内存稳定
 - **下降段**：旧 buffer 生命周期结束，被释放
@@ -204,6 +212,7 @@ Peak memory allocation: 966.00 MiB, 966.24 MiB (with fragmentation)
 ### 5.6 Memory Type 切换
 
 左上角的 **Select Memory Type** 下拉可切换分析目标：
+
 - **HBM**：设备主存（默认，最常用）
 - **VMEM**：片上 SRAM（对 Pallas kernel 的 tile 大小调优有用，但只能看到 XLA 管理的部分，Pallas kernel 内部的 VMEM 对此不透明）
 
@@ -215,36 +224,36 @@ Peak memory allocation: 966.00 MiB, 966.24 MiB (with fragmentation)
 
 从 ENTRY 函数的参数和中间操作的 shape 计算：
 
-```
+```hlo
 # 例：f32[2,4096,16,128] = 2 * 4096 * 16 * 128 * 4 bytes = 64MB
 %flat_args_0 = f32[2,4096,16,128]{3,2,1,0:T(8,128)} parameter(0)
 ```
 
-### 5.2 关注 layout copy
+### 6.2 关注 layout copy
 
-```
+```hlo
 %copy = f32[8192,16,128]{2,0,1:T(8,128)} copy(%bitcast.16)
 ```
 
 Layout 转换（`{3,2,1,0}` → `{2,0,1}`）会创建额外的 HBM buffer。如果 Pallas kernel 能直接接受原始 layout，可以省掉这些 copy。
 
-### 5.3 识别 Pallas kernel
+### 6.3 识别 Pallas kernel
 
-```
+```hlo
 %trace_fn.1 = (...) custom-call(...), custom_call_target="tpu_custom_call"
 ```
 
 Pallas kernel 在 HLO 中是 opaque 的 `tpu_custom_call`。XLA 无法优化其内部，但能看到它的输入输出 buffer 大小。
 
-### 5.4 粗算峰值公式
+### 6.4 粗算峰值公式
 
-```
+```text
 峰值 HBM ≈ 所有输入 + layout copy 中间结果 + 输出 + Pallas scratch
 ```
 
 精确值看 `buffer-assignment.txt`（方式 B dump 出的）。
 
-## 6. 完整 profile 脚本模板
+## 7. 完整 profile 脚本模板
 
 ```python
 import functools
@@ -287,9 +296,9 @@ compiled = target_fn.lower(*inputs).compile()
 # 找到 trace_dir 下的 timestamp 目录，写入 main.hlo_proto.pb
 ```
 
-## 7. 两条编译路径对显存分析的影响
+## 8. 两条编译路径对显存分析的影响
 
-```
+```text
 标准 JAX:  JAX → HLO → XLA 优化 → buffer assignment → LLO → VLIW
 Pallas:   Pallas → HLO (opaque custom-call) → Mosaic → LLO → VLIW
 ```
