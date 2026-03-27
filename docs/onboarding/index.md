@@ -11,6 +11,8 @@ title: 新人入门
 - [开发环境搭建](./dev-environment.md) — 配置本地开发环境
 - [Cloudflare 配置指南](./cloudflare-setup.md) — 部署和认证配置
 - [当我们谈论性能优化的时候，到底在说什么？](./performance-overview.md) — 团队性能优化基础理念
+- [当我们谈论 TPU/DSA 性能优化时，我们在说什么？](./performance-tpu.md) — GPU Kernel 开发者 TPU 避坑指南
+- [Pallas Kernel 编写经验总结](./pallas-kernel-guide.md) — TPU Pallas kernel API 约束、性能优化与 profiling
 
 ## 团队资源
 
