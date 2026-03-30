@@ -11,7 +11,7 @@ hero:
       link: /onboarding/
     - theme: alt
       text: 浏览项目
-      link: /projects/project-alpha/
+      link: /projects/sglang-jax/
 features:
   - title: 项目文档
     details: 按项目组织的技术文档，包括教程、API 参考和故障排查

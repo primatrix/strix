@@ -25,8 +25,6 @@ export default withMermaid(
         {
           text: '项目',
           items: [
-            { text: 'Project Alpha', link: '/projects/project-alpha/' },
-            { text: 'Project Beta', link: '/projects/project-beta/' },
             { text: 'sglang-jax', link: '/projects/sglang-jax/' },
             { text: 'Ling 对齐', link: '/projects/ling-alignment/' },
             { text: '性能优化', link: '/projects/performance-optimization/' },
@@ -39,57 +37,6 @@ export default withMermaid(
 
       // Sidebar (manual configuration per section)
       sidebar: {
-        '/projects/project-alpha/': [
-          {
-            text: 'Project Alpha',
-            items: [
-              { text: '概览', link: '/projects/project-alpha/' },
-              {
-                text: '教程指南',
-                collapsed: false,
-                items: [
-                  { text: '快速开始', link: '/projects/project-alpha/guide/getting-started' },
-                ],
-              },
-              {
-                text: '技术参考',
-                collapsed: true,
-                items: [
-                  { text: 'API 文档', link: '/projects/project-alpha/reference/api' },
-                ],
-              },
-              {
-                text: '故障排查',
-                collapsed: true,
-                items: [
-                  { text: '概览', link: '/projects/project-alpha/troubleshooting/' },
-                ],
-              },
-            ],
-          },
-        ],
-        '/projects/project-beta/': [
-          {
-            text: 'Project Beta',
-            items: [
-              { text: '概览', link: '/projects/project-beta/' },
-              {
-                text: '教程指南',
-                collapsed: false,
-                items: [
-                  { text: '概览', link: '/projects/project-beta/guide/' },
-                ],
-              },
-              {
-                text: '技术参考',
-                collapsed: true,
-                items: [
-                  { text: '概览', link: '/projects/project-beta/reference/' },
-                ],
-              },
-            ],
-          },
-        ],
         '/projects/ling-alignment/': [
           {
             text: 'Ling 对齐',
