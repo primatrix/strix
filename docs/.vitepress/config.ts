@@ -28,6 +28,7 @@ export default withMermaid(
             { text: 'Project Alpha', link: '/projects/project-alpha/' },
             { text: 'Project Beta', link: '/projects/project-beta/' },
             { text: 'Ling 对齐', link: '/projects/ling-alignment/' },
+            { text: '性能优化', link: '/projects/performance-optimization/' },
           ],
         },
         { text: 'RFC', link: '/rfc/' },
@@ -100,6 +101,17 @@ export default withMermaid(
                   { text: 'Megatron-LM Dump 指南', link: '/projects/ling-alignment/guide/megatron-dump' },
                 ],
               },
+            ],
+          },
+        ],
+        '/projects/performance-optimization/': [
+          {
+            text: '性能优化',
+            items: [
+              { text: '概览', link: '/projects/performance-optimization/' },
+              { text: '分析框架', link: '/projects/performance-optimization/analysis-framework' },
+              { text: '分析结果', link: '/projects/performance-optimization/analysis-results' },
+              { text: '工作拆解', link: '/projects/performance-optimization/work-breakdown' },
             ],
           },
         ],
