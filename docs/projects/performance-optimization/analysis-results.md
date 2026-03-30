@@ -75,7 +75,7 @@
 | 19 | 1 | 1 | 1 | 8 | 16 | 1 | dot-mlp+ctx | 8 | 8 | 5 | 0.8 | 1.6 | 0.8 | 3.0 | 54.7 | 18.2 | 79.0 | 204.6 | 23 | 1.71 | 0.00 | 4.40 | 0.14 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 6.25 | 22.2 | EP a2a |
 | 20 | 1 | 1 | 1 | 8 | 16 | 1 | dot-mlp | 10 | 10 | 4 | 0.8 | 1.6 | 0.8 | 3.0 | 65.1 | 21.3 | 92.5 | 204.6 | 27 | 1.76 | 0.00 | 4.40 | 0.11 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 6.28 | 22.1 | EP a2a |
 
-**Column Legend**
+### Column Legend
 
 | Column | Description |
 | --- | --- |
@@ -138,12 +138,11 @@
 
 #### Performance
 
-*   **Step time**: 4.402s (compute=1.823 + comm=2.576 + optimizer=0.004)
-    
-*   **MFU**: 31.5%
-    
-*   **Bottleneck**: FSDP
-    
+* **Step time**: 4.402s (compute=1.823 + comm=2.576 + optimizer=0.004)
+
+* **MFU**: 31.5%
+
+* **Bottleneck**: FSDP
 
 ### #2: TP=1 DP=1 PP=1 EP=1 FSDP=128 CP=1 remat=save\_qkv\_proj
 
@@ -177,12 +176,11 @@
 
 #### Performance
 
-*   **Step time**: 4.426s (compute=1.784 + comm=2.641 + optimizer=0.001)
-    
-*   **MFU**: 31.3%
-    
-*   **Bottleneck**: FSDP
-    
+* **Step time**: 4.426s (compute=1.784 + comm=2.641 + optimizer=0.001)
+
+* **MFU**: 31.3%
+
+* **Bottleneck**: FSDP
 
 ### #3: TP=1 DP=2 PP=1 EP=1 FSDP=64 CP=1 remat=save\_out\_proj
 
@@ -216,12 +214,11 @@
 
 #### Performance
 
-*   **Step time**: 4.444s (compute=1.823 + comm=2.620 + optimizer=0.002)
-    
-*   **MFU**: 31.2%
-    
-*   **Bottleneck**: FSDP
-    
+* **Step time**: 4.444s (compute=1.823 + comm=2.620 + optimizer=0.002)
+
+* **MFU**: 31.2%
+
+* **Bottleneck**: FSDP
 
 ### #4: TP=1 DP=1 PP=1 EP=1 FSDP=64 CP=2 remat=save\_out\_proj
 
@@ -255,12 +252,11 @@
 
 #### Performance
 
-*   **Step time**: 4.718s (compute=1.823 + comm=2.894 + optimizer=0.002)
-    
-*   **MFU**: 29.4%
-    
-*   **Bottleneck**: FSDP
-    
+* **Step time**: 4.718s (compute=1.823 + comm=2.894 + optimizer=0.002)
+
+* **MFU**: 29.4%
+
+* **Bottleneck**: FSDP
 
 ### #5: TP=1 DP=2 PP=1 EP=1 FSDP=32 CP=2 remat=save\_out\_proj
 
@@ -294,16 +290,15 @@
 
 #### Performance
 
-*   **Step time**: 4.743s (compute=1.823 + comm=2.916 + optimizer=0.004)
-    
-*   **MFU**: 29.2%
-    
-*   **Bottleneck**: FSDP
-    
+* **Step time**: 4.743s (compute=1.823 + comm=2.916 + optimizer=0.004)
+
+* **MFU**: 29.2%
+
+* **Bottleneck**: FSDP
 
 ## Worst 10 configurations (slowest)
 
-_10 of 10 shown_
+10 of 10 shown
 
 | # | TP | DP | PP | EP | FSDP | CP | Remat | PDB | MB | GA | W(GB) | O(GB) | G(GB) | FBuf | Act(GB) | Rsv | Tot(GB) | Trn(PF) | Rmt% | Comp | TP(s) | EP(s) | FSDP+ | DP(s) | CP(s) | PP+(s) | Bub | Opt | Step(s) | MFU% | Bottleneck |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -318,7 +313,7 @@ _10 of 10 shown_
 | 9 | 1 | 8 | 1 | 1 | 8 | 2 | save\_all | 1 | 2 | 40 | 8.1 | 16.2 | 8.1 | 7.3 | 22.1 | 18.6 | 80.5 | 204.6 | 0 | 1.39 | 0.00 | 0.00 | 35.49 | 0.18 | 0.32 | 0.00 | 0.00 | 0.02 | 37.38 | 3.7 | FSDP |
 | 10 | 1 | 4 | 1 | 4 | 2 | 4 | save\_all | 1 | 4 | 40 | 10.0 | 19.9 | 10.0 | 1.9 | 20.2 | 18.6 | 80.7 | 204.6 | 0 | 1.39 | 0.00 | 4.50 | 30.74 | 0.32 | 0.41 | 0.00 | 0.00 | 0.02 | 37.38 | 3.7 | FSDP |
 
-**Column Legend**
+### Column Legend
 
 | Column | Description |
 | --- | --- |
@@ -351,12 +346,10 @@ _10 of 10 shown_
 
 ## Summary
 
-*   **Best config**: TP=1 DP=4 PP=1 EP=1 FSDP=32 CP=1 remat=save\_out\_proj
-    
-*   **Best step time**: 4.402s, MFU: 31.5%
-    
-*   **MFU range**: 3.4% - 31.5%
-    
-*   **Step time range**: 4.402s - 40.406s
-    
+* **Best config**: TP=1 DP=4 PP=1 EP=1 FSDP=32 CP=1 remat=save\_out\_proj
 
+* **Best step time**: 4.402s, MFU: 31.5%
+
+* **MFU range**: 3.4% - 31.5%
+
+* **Step time range**: 4.402s - 40.406s
