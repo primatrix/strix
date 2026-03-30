@@ -27,6 +27,7 @@ export default withMermaid(
           items: [
             { text: 'Project Alpha', link: '/projects/project-alpha/' },
             { text: 'Project Beta', link: '/projects/project-beta/' },
+            { text: 'sglang-jax', link: '/projects/sglang-jax/' },
             { text: 'Ling 对齐', link: '/projects/ling-alignment/' },
             { text: '性能优化', link: '/projects/performance-optimization/' },
           ],
@@ -99,6 +100,35 @@ export default withMermaid(
                 collapsed: false,
                 items: [
                   { text: 'Megatron-LM Dump 指南', link: '/projects/ling-alignment/guide/megatron-dump' },
+                ],
+              },
+            ],
+          },
+        ],
+        '/projects/sglang-jax/': [
+          {
+            text: 'sglang-jax',
+            items: [
+              { text: '概览', link: '/projects/sglang-jax/' },
+              { text: '文档设计', link: '/projects/sglang-jax/2026-03-26-project-documentation-design' },
+              {
+                text: '参考资料',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'tpu-inference Q2 对照',
+                    link: '/projects/sglang-jax/reference/tpu-inference-q2',
+                    collapsed: false,
+                    items: [
+                      { text: 'MLA 与 DeepSeek V3', link: '/projects/sglang-jax/reference/gap-mla-deepseek' },
+                      { text: 'DP Attention', link: '/projects/sglang-jax/reference/gap-dp-attention' },
+                      { text: 'PD Disaggregation', link: '/projects/sglang-jax/reference/gap-pd-disaggregation' },
+                      { text: 'GMM Kernel', link: '/projects/sglang-jax/reference/gap-gmm-kernel' },
+                      { text: '通信-计算重叠', link: '/projects/sglang-jax/reference/gap-allgather-matmul' },
+                      { text: 'N:M 结构化稀疏', link: '/projects/sglang-jax/reference/gap-sparse-matmul' },
+                      { text: '高级优化', link: '/projects/sglang-jax/reference/gap-optimizations' },
+                    ],
+                  },
                 ],
               },
             ],

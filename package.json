@@ -7,9 +7,15 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
-    "lint": "markdownlint-cli2 \"docs/**/*.md\" \"!docs/superpowers/**\""
+    "lint": "markdownlint-cli2 \"docs/**/*.md\" \"!docs/superpowers/**\"",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "docs/**/*.md": "markdownlint-cli2"
   },
   "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "markdownlint-cli2": "^0.22.0",
     "mermaid": "^11.13.0",
     "vitepress": "^1.6.4",
