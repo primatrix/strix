@@ -25,6 +25,7 @@ export default withMermaid(
         {
           text: '项目',
           items: [
+            { text: 'Beaver', link: '/projects/beaver/' },
             { text: 'sglang-jax', link: '/projects/sglang-jax/' },
             { text: 'Ling 对齐', link: '/projects/ling-alignment/' },
             { text: '性能优化', link: '/projects/performance-optimization/' },
@@ -37,6 +38,17 @@ export default withMermaid(
 
       // Sidebar (manual configuration per section)
       sidebar: {
+        '/projects/beaver/': [
+          {
+            text: 'Beaver',
+            items: [
+              { text: '概览', link: '/projects/beaver/' },
+              { text: '产品设计', link: '/projects/beaver/design' },
+              { text: '标签体系规范', link: '/projects/beaver/label-system' },
+              { text: '通知机制规范', link: '/projects/beaver/notification-system' },
+            ],
+          },
+        ],
         '/projects/ling-alignment/': [
           {
             text: 'Ling 对齐',
