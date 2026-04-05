@@ -9,6 +9,7 @@ export default withMermaid(
 
     lastUpdated: true,
     ignoreDeadLinks: true,
+    srcExclude: ['superpowers/**'],
 
     themeConfig: {
       // Chinese UI localization
@@ -29,6 +30,7 @@ export default withMermaid(
             { text: 'sglang-jax', link: '/projects/sglang-jax/' },
             { text: 'Ling 对齐', link: '/projects/ling-alignment/' },
             { text: '性能优化', link: '/projects/performance-optimization/' },
+            { text: 'pallas-kernel', link: '/projects/pallas-kernel/' },
           ],
         },
         { text: 'RFC', link: '/rfc/' },
@@ -103,6 +105,20 @@ export default withMermaid(
               { text: '分析框架', link: '/projects/performance-optimization/analysis-framework' },
               { text: '分析结果', link: '/projects/performance-optimization/analysis-results' },
               { text: '工作拆解', link: '/projects/performance-optimization/work-breakdown' },
+            ],
+          },
+        ],
+        '/projects/pallas-kernel/': [
+          {
+            text: 'pallas-kernel',
+            items: [
+              { text: '项目概述', link: '/projects/pallas-kernel/' },
+              { text: '硬件约束与 API 限制', link: '/projects/pallas-kernel/hardware-constraints' },
+              { text: '代码规范', link: '/projects/pallas-kernel/coding-standards' },
+              { text: 'CI/CD 流水线', link: '/projects/pallas-kernel/ci-cd' },
+              { text: '开发流程', link: '/projects/pallas-kernel/development-workflow' },
+              { text: 'Benchmark 规范', link: '/projects/pallas-kernel/benchmarking' },
+              { text: 'Kernel 文档模板', link: '/projects/pallas-kernel/kernel-template' },
             ],
           },
         ],
