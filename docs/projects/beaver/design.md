@@ -8,9 +8,9 @@
 
 Beaver 所有的工作完全基于 GitHub 展开，其核心数据源包括：
 
-- **GitHub Project (ProjectsV2)**：作为任务看板和状态流转的真理之源。
-- **GitHub Issues**：作为功能需求描述、Bug 反馈及团队讨论的载体。
+- **GitHub Issues**：作为任务管理、状态流转和团队讨论的**真理之源**。Issue 标签（`status/`、`type/`、`size/`、`p/`）驱动 Beaver 的全部 SRA 流程。
 - **GitHub Pull Requests (PRs)**：作为代码变更、代码评审（Reviews）和 CI 状态的汇集点。
+- **GitHub Project (ProjectsV2)**：作为任务看板的**视图层**，提供可视化分组与筛选，不作为状态真理源。
 
 ## 3. 核心能力架构：SRA 框架
 
