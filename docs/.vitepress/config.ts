@@ -46,6 +46,8 @@ export default withMermaid(
               { text: '产品设计', link: '/projects/beaver/design' },
               { text: '标签体系规范', link: '/projects/beaver/label-system' },
               { text: '通知机制规范', link: '/projects/beaver/notification-system' },
+              { text: 'GitHub 集成规范', link: '/projects/beaver/github-integration' },
+              { text: 'Cloudflare 基础架构设计', link: '/projects/beaver/cloudflare-infrastructure' },
             ],
           },
         ],
