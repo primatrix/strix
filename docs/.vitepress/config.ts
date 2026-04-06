@@ -121,6 +121,17 @@ export default withMermaid(
               { text: 'Kernel 文档模板', link: '/projects/pallas-kernel/kernel-template' },
             ],
           },
+          {
+            text: '性能工程参考',
+            collapsed: false,
+            items: [
+              { text: 'Roofline 分析深度指南', link: '/projects/pallas-kernel/roofline-analysis' },
+              { text: 'TPU 硬件规格参考', link: '/projects/pallas-kernel/tpu-specs' },
+              { text: 'Sharding 与集合通信', link: '/projects/pallas-kernel/sharding-collectives' },
+              { text: 'Transformer 算子性能', link: '/projects/pallas-kernel/transformer-ops-reference' },
+              { text: 'Profiling 深度指南', link: '/projects/pallas-kernel/profiling-guide' },
+            ],
+          },
         ],
         '/rfc/': [
           {
