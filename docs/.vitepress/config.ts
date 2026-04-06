@@ -11,6 +11,10 @@ export default withMermaid(
     ignoreDeadLinks: true,
     srcExclude: ['superpowers/**'],
 
+    markdown: {
+      math: true,
+    },
+
     themeConfig: {
       // Chinese UI localization
       lastUpdatedText: '最后更新',
