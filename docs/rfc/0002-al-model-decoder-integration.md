@@ -32,6 +32,7 @@ Ling2 是一种混合注意力解码器架构，每 `inhomogeneous_layer_cycle_i
 5. **配置字段冗余**：`ALModel/` 使用 `layer_group_size`、`moe_layer_freq` 等自定义字段，与上游已有的 `inhomogeneous_layer_cycle_interval`、`first_num_dense_layers` 语义重复
 
 **前置依赖**（假设已合入）：
+
 - PR2: MoE 对齐（z-loss、router bias、5-value 返回签名、`moe_shared_expert_dim` 支持）
 - PR4: GLA 线性注意力（`attention_gla.py`、`gla_pallas.py`、`GroupRMSNorm`）
 - PR5: MLA 注意力（已在上游，含 `mla_interleaved_rope`）
@@ -90,6 +91,7 @@ Ling2 所需语义由上游现有字段覆盖，**不新增配置字段**：
 **关键变更**:
 
 1. **导入路径适配**（`MaxText.*` → `maxtext.*`）:
+
    ```python
    # 旧: from MaxText.common_types import Config, ...
    # 新: from maxtext.common.common_types import Config, ...
@@ -104,6 +106,7 @@ Ling2 所需语义由上游现有字段覆盖，**不新增配置字段**：
 2. **仅保留 `Ling2DecoderLayer` 和 `Ling2DecoderLayerToLinen`**，不迁移 `Ling2ScannableBlock`（Phase 2）
 
 3. **统一为 `Ling2DecoderLayer`**:
+
    ```python
    class Ling2DecoderLayer(nnx.Module):
        def __init__(self, config, mesh, model_mode, layer_idx, quant=None, *, rngs):
@@ -127,6 +130,7 @@ Ling2 所需语义由上游现有字段覆盖，**不新增配置字段**：
    ```
 
 4. **Linen 包装**:
+
    ```python
    Ling2DecoderLayerToLinen = nnx_wrappers.to_linen_class(
        Ling2DecoderLayer,
