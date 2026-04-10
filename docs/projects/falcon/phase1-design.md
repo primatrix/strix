@@ -11,7 +11,7 @@
 将 Falcon 从一个 MCP 工具集合，改造为以 **BenchmarkSession** 为核心的性能分析平台：
 
 1. **BenchmarkSession 元数据重构** — 统一数据模型，引入生命周期状态机，支持多种 Profile 产物
-2. **多 K8s 任务调度与管理** — Falcon 作为编排者，通过 xpk/kubectl 向多个 GKE 集群提交 benchmark job
+2. **多 K8s 任务调度与管理** — Falcon 作为编排者，通过 xpk 向多个 GKE 集群提交 benchmark job
 3. **Profile 数据存储与展示** — DB + GCS 分离存储，CLI/MCP 优先的展示层，预留 Web 接口
 
 ---
@@ -369,13 +369,13 @@ WORKLOAD_METRICS_REGISTRY: dict[WorkloadType, type] = {
                             │
               ┌─────────────┼─────────────┐
               ▼             ▼             ▼
-        XpkBackend    XpkBackend    KubectlBackend
+        XpkBackend    XpkBackend    XpkBackend
               │             │             │
          Cluster A     Cluster B     Cluster C
         (TPU v4-128)  (TPU v5e-256) (GPU A100×8)
 ```
 
-Falcon 作为编排者，通过统一的 `JobScheduler` 接口向多个 GKE 集群提交 benchmark job。调度后端分为 `xpk`（TPU 为主）和 `kubectl`（GPU 或通用场景）。
+Falcon 作为编排者，通过统一的 `JobScheduler` 接口向多个 GKE 集群提交 benchmark job。所有集群统一使用 `xpk` 调度 — xpk 同时支持 TPU（`--tpu-type`）和 GPU（`--device-type`），无需引入 kubectl 作为额外调度后端。
 
 ### 集群注册与配置
 
@@ -392,7 +392,6 @@ clusters:
       - tpu-v4-64
       - tpu-v4-128
     default_namespace: default
-    scheduling: xpk
     gcs_bucket: gs://falcon-tpu-v4
     labels:
       env: prod
@@ -406,7 +405,6 @@ clusters:
     accelerator_types:
       - tpu-v5e-256
     default_namespace: default
-    scheduling: xpk
     gcs_bucket: gs://falcon-tpu-v5e
     labels:
       env: dev
@@ -419,7 +417,6 @@ clusters:
     accelerator_types:
       - nvidia-a100-80g
     default_namespace: benchmark
-    scheduling: kubectl
     gcs_bucket: gs://falcon-gpu
     labels:
       env: prod
@@ -446,10 +443,10 @@ class SchedulingBackend(ABC):
 
 
 class XpkBackend(SchedulingBackend):
-    """基于 xpk 的 TPU 任务调度"""
+    """基于 xpk 的统一任务调度（TPU + GPU）"""
 
     def submit(self, spec: JobSpec, cluster: ClusterConfig) -> JobInfo:
-        # xpk workload create \
+        # TPU: xpk workload create \
         #   --cluster={cluster.cluster_id} \
         #   --project={cluster.project} \
         #   --zone={cluster.zone} \
@@ -459,15 +456,17 @@ class XpkBackend(SchedulingBackend):
         #   --docker-image={spec.docker_image} \
         #   --command="{' '.join(spec.command)}" \
         #   --priority={spec.priority}
-        ...
-
-
-class KubectlBackend(SchedulingBackend):
-    """基于 kubectl 的通用任务调度（GPU 等）"""
-
-    def submit(self, spec: JobSpec, cluster: ClusterConfig) -> JobInfo:
-        # 1. 渲染 Job YAML 模板
-        # 2. kubectl apply --context={context} -f job.yaml
+        #
+        # GPU: xpk workload create \
+        #   --cluster={cluster.cluster_id} \
+        #   --project={cluster.project} \
+        #   --zone={cluster.zone} \
+        #   --workload={workload_name} \
+        #   --device-type={spec.accelerator} \
+        #   --num-nodes={spec.num_nodes} \
+        #   --docker-image={spec.docker_image} \
+        #   --command="{' '.join(spec.command)}" \
+        #   --priority={spec.priority}
         ...
 
 
@@ -476,12 +475,7 @@ class JobScheduler:
 
     def __init__(self, clusters: dict[str, ClusterConfig]):
         self.clusters = clusters
-        self.backends: dict[str, SchedulingBackend] = {}
-        for name, cfg in clusters.items():
-            if cfg.scheduling == 'xpk':
-                self.backends[name] = XpkBackend()
-            elif cfg.scheduling == 'kubectl':
-                self.backends[name] = KubectlBackend()
+        self.backend = XpkBackend()  # 统一后端，所有集群共享
 
     def submit(self, session: BenchmarkSession, spec: JobSpec) -> JobInfo:
         """提交 job 并关联到 Session"""
@@ -671,7 +665,6 @@ CREATE TABLE clusters (
     zone              TEXT NOT NULL,
     cluster_id        TEXT NOT NULL,
     accelerator_types JSONB NOT NULL,
-    scheduling        TEXT NOT NULL,
     gcs_bucket        TEXT NOT NULL,
     labels            JSONB DEFAULT '{}',
     config            JSONB DEFAULT '{}'
@@ -851,7 +844,7 @@ GET    /api/v1/clusters/{name}/status
 | DB | PostgreSQL 15+ | JSONB 原生支持、GIN 索引、成熟生态 |
 | DB 客户端 | psycopg 3 | 同步模式，MCP server 单线程足够 |
 | GCS | gcloud CLI | 已验证可用，避免引入额外依赖 |
-| 调度 | xpk CLI + kubectl | 团队已在使用 xpk，kubectl 覆盖 GPU 场景 |
+| 调度 | xpk CLI | 团队已在使用 xpk，同时支持 TPU（`--tpu-type`）和 GPU（`--device-type`），统一调度后端 |
 | CLI 框架 | click | 轻量、命令分组、Python 标准 |
 | MCP | FastMCP | 已验证可用 |
 
