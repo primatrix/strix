@@ -35,6 +35,7 @@ export default withMermaid(
             { text: 'Ling 对齐', link: '/projects/ling-alignment/' },
             { text: '性能优化', link: '/projects/performance-optimization/' },
             { text: 'pallas-kernel', link: '/projects/pallas-kernel/' },
+            { text: 'Falcon', link: '/projects/falcon/' },
           ],
         },
         { text: 'RFC', link: '/rfc/' },
@@ -134,6 +135,15 @@ export default withMermaid(
               { text: 'Sharding 与集合通信', link: '/projects/pallas-kernel/sharding-collectives' },
               { text: 'Transformer 算子性能', link: '/projects/pallas-kernel/transformer-ops-reference' },
               { text: 'Profiling 深度指南', link: '/projects/pallas-kernel/profiling-guide' },
+            ],
+          },
+        ],
+        '/projects/falcon/': [
+          {
+            text: 'Falcon',
+            items: [
+              { text: '概览', link: '/projects/falcon/' },
+              { text: 'Phase 1 架构设计', link: '/projects/falcon/phase1-design' },
             ],
           },
         ],
