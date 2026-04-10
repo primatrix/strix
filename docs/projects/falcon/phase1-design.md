@@ -2,7 +2,7 @@
 
 > **日期:** 2026-04-09
 > **状态:** Approved
-> **范围:** BenchmarkSession 元数据重构 / 多 K8s 任务调度 / Profile 数据存储与展示
+> **范围:** BenchmarkSession 元数据重构 / 多 K8s 任务调度 / Profile 数据存储与展示 / 配置捕获与解析
 
 ---
 
@@ -13,6 +13,7 @@
 1. **BenchmarkSession 元数据重构** — 统一数据模型，引入生命周期状态机，支持多种 Profile 产物
 2. **多 K8s 任务调度与管理** — Falcon 作为编排者，通过 xpk 向多个 GKE 集群提交 benchmark job
 3. **Profile 数据存储与展示** — DB + GCS 分离存储，CLI/MCP 优先的展示层，预留 Web 接口
+4. **配置捕获与解析** — Schema-less 配置存储，两阶段捕获（意图 + 实际），原始配置完整保存
 
 ---
 
@@ -84,81 +85,23 @@ class WorkloadType(str, Enum):
     RL = "rl"
     KERNEL = "kernel"
 
-# ── 分场景 Config ──────────────────────────────────────────
+# ── 配置模型（Schema-less） ────────────────────────────────
 
 @dataclass
-class TrainingConfig:
-    """训练场景配置"""
-    tp: int = 1
-    dp: int = 1
-    pp: int = 1
-    ep: int = 1
-    fsdp: int = 1
-    cp: int = 1
-    remat: str | None = None           # "full" | "minimal"
-    per_device_batch_size: int | None = None
-    grad_accum: int | None = None
-    seq_len: int | None = None
-    model_config: dict | None = None
-
-@dataclass
-class InferenceConfig:
-    """离线推理配置"""
-    tp: int = 1
-    dp: int = 1
-    pp: int = 1
-    ep: int = 1
-    batch_size: int | None = None
-    max_decode_len: int | None = None
-    quantization: str | None = None    # "int8" | "fp8" | None
-    model_config: dict | None = None
-
-@dataclass
-class ServingConfig:
-    """在线推理服务配置"""
-    tp: int = 1
-    dp: int = 1
-    pp: int = 1
-    ep: int = 1
-    max_concurrent_requests: int | None = None
-    max_decode_len: int | None = None
-    quantization: str | None = None
-    engine: str | None = None          # "vllm" | "trt-llm" | "jetstream"
-    model_config: dict | None = None
-
-@dataclass
-class RLConfig:
-    """强化学习场景配置"""
-    tp: int = 1
-    dp: int = 1
-    pp: int = 1
-    ep: int = 1
-    fsdp: int = 1
-    cp: int = 1
-    algorithm: str | None = None       # "grpo" | "ppo" | "dpo"
-    per_device_batch_size: int | None = None
-    rollout_batch_size: int | None = None
-    seq_len: int | None = None
-    remat: str | None = None
-    model_config: dict | None = None
-
-@dataclass
-class KernelConfig:
-    """Kernel benchmark 配置"""
-    kernel_name: str                   # "flash_attention" | "matmul" | ...
-    input_shapes: dict | None = None   # {"m": 2048, "n": 2048, "k": 512}
-    dtype: str | None = None           # "bf16" | "fp32"
-    block_shape: tuple | None = None
-    num_iterations: int = 100
-
-WorkloadConfig = TrainingConfig | InferenceConfig | ServingConfig | RLConfig | KernelConfig
+class RawConfig:
+    """原始配置 — 完整保存用户提交的配置，用于复现和审计"""
+    cli_args: list[str]                    # 原始命令行参数 ["--tp=4", "--dp=8", ...]
+    config_files: dict[str, str]           # {filename: content} 如 {"base.yml": "...", "override.yml": "..."}
+    env_overrides: dict[str, str]          # {"XLA_FLAGS": "--xla_tpu_..."}
+    effective_config: dict | None = None   # Job 完成后回收的实际生效配置（resolved）
 
 @dataclass
 class SessionConfig:
-    """运行配置 — 通过 workload_type 路由到具体类型"""
-    workload_type: WorkloadType
-    workload_config: WorkloadConfig     # 强类型，按 workload_type 分发
-    extra: dict | None = None           # 保留扩展口
+    """运行配置 — workload_type 分类 + 自由存储"""
+    workload_type: WorkloadType            # 保留枚举，用于分类和路由
+    config: dict                           # 扁平化关键配置 {"tp": 4, "dp": 8, "model": "llama-70b", ...}
+    raw: RawConfig                         # 原始配置完整保存
+    extra: dict | None = None              # 保留扩展口
 
 # ── 分场景 Metrics ─────────────────────────────────────────
 
@@ -322,14 +265,8 @@ job_id:      "job-{session_id_suffix}-{4hex}"
 ### 类型注册表
 
 ```python
-# 序列化/反序列化用 — 新增场景只需：枚举值 + Config + Metrics + 注册
-WORKLOAD_CONFIG_REGISTRY: dict[WorkloadType, type] = {
-    WorkloadType.TRAINING: TrainingConfig,
-    WorkloadType.INFERENCE: InferenceConfig,
-    WorkloadType.SERVING: ServingConfig,
-    WorkloadType.RL: RLConfig,
-    WorkloadType.KERNEL: KernelConfig,
-}
+# Config 已改为 Schema-less (dict)，无需注册表
+# Metrics 仍保留强类型注册表 — 指标字段稳定，需要数值查询和排序
 
 WORKLOAD_METRICS_REGISTRY: dict[WorkloadType, type] = {
     WorkloadType.TRAINING: TrainingMetrics,
@@ -351,8 +288,9 @@ WORKLOAD_METRICS_REGISTRY: dict[WorkloadType, type] = {
 | `type: "e2e"` | `workload_type: "training"`, `tags: ["e2e"]` |
 | `type: "operator"` | `workload_type: "kernel"`, `tags: ["operator"]` |
 | `type: "alignment"` | `workload_type: "training"`, `tags: ["alignment"]` |
-| `config.parallelism` | 展平到 `workload_config` 的各并行维度字段 |
+| `config.parallelism` | 展平到 `config.config` 的各并行维度字段 |
 | `result.steps` | 转为 `result.raw_metrics` |
+| 无对应字段 | `config.raw` 置空（旧记录无原始配置） |
 
 ---
 
@@ -847,7 +785,7 @@ CREATE TABLE sessions (
     tags          TEXT[] DEFAULT '{}', -- 自由标签（"e2e" / "operator" / "alignment" 等）
     source        JSONB NOT NULL,        -- {author, repo, branch, commit, pr, trigger, ...}
     target        JSONB NOT NULL,        -- {cluster, accelerator, device_type, device_num}
-    config        JSONB NOT NULL,        -- {workload_type, workload_config: {...}, extra}
+    config        JSONB NOT NULL,        -- {workload_type, config: {...}, raw: {...}, extra}
     result        JSONB,                 -- {metrics: {...}, raw_metrics: [...], error}
     prediction    JSONB,                 -- {predicted, delta}
     collaboration JSONB NOT NULL DEFAULT '{}'
@@ -1092,6 +1030,229 @@ GET    /api/v1/clusters/{name}/status
 
 ---
 
+## Topic 4: 配置捕获与解析
+
+### 设计动机
+
+实际 benchmark 任务中存在大量非规范化的自定义配置：训练框架配置文件（YAML）、命令行参数、环境变量覆盖等。不同 benchmark 的参数集合差异大，强类型 Config 无法覆盖所有场景。
+
+**核心策略：** Config 采用 Schema-less 存储（JSONB dict），Metrics 保留强类型。配置在两个阶段捕获 — 提交时记录用户意图，job 完成后回收实际生效配置。
+
+### 两阶段捕获流程
+
+```text
+阶段 1: 提交时捕获（用户意图）
+─────────────────────────────
+falcon session submit \
+  --workload training \
+  --accelerator tpu-v4-128 \
+  --config-file base.yml \              ← 读取文件内容存入 raw.config_files
+  --config-file override.yml \
+  --env "XLA_FLAGS=--xla_tpu_..." \     ← 存入 raw.env_overrides
+  -- python train.py \                  ← 「--」后面全部存入 raw.cli_args
+    --tp=4 --dp=8 --fsdp=4 \
+    --model_name=llama-70b \
+    --per_device_batch_size=2
+
+  ↓ ConfigExtractor 从 cli_args + config_files 中提取关键字段
+  ↓ 写入 config.config = {"tp": 4, "dp": 8, "fsdp": 4, "model": "llama-70b", ...}
+
+阶段 2: Job 完成后回收（实际生效）
+───────────────────────────────
+  ↓ 从 rank-0 日志中解析 resolved config（MaxText 启动时会打印）
+  ↓ 或从 GCS 中回收 effective_config.json
+  ↓ 写入 raw.effective_config = {...}
+  ↓ 同步更新 config.config — 用 effective 中的 well-known keys 覆盖 intent 值
+  ↓ 可选：对比 intent vs effective，标记 diff
+```
+
+### ConfigExtractor — 关键字段提取
+
+`ConfigExtractor` 始终在提交阶段对**内存中的原始内容**执行提取，此时配置文件尚未上传到 GCS。GCS 大文件 URI 替换（> 64KB 时）发生在 `SessionStore.create()` 持久化阶段，即 `extract()` 之后。因此 `_parse_file` 不需要处理 GCS URI。
+
+```python
+class ConfigExtractor:
+    """从原始配置中提取关键字段到扁平 dict"""
+
+    # well-known keys — 提取时识别，但不强制存在
+    WELL_KNOWN_KEYS = {
+        # 并行度
+        "tp", "dp", "pp", "ep", "fsdp", "cp",
+        # 训练
+        "per_device_batch_size", "seq_len", "grad_accum", "remat",
+        # 模型
+        "model_name", "model_config",
+        # 推理
+        "batch_size", "max_decode_len", "quantization", "engine",
+        # Kernel
+        "kernel_name", "dtype", "num_iterations",
+    }
+
+    def extract(self, raw: RawConfig, workload_type: WorkloadType) -> dict:
+        """合并 config_files + cli_args + env_overrides，提取关键字段"""
+        merged = {}
+
+        # 1. 解析配置文件（按顺序，后者覆盖前者）
+        for filename, content in raw.config_files.items():
+            parsed = self._parse_file(filename, content)  # YAML/TOML/JSON
+            merged.update(self._flatten(parsed))
+
+        # 2. 解析命令行参数（覆盖文件配置）
+        cli_parsed = self._parse_cli_args(raw.cli_args)
+        merged.update(cli_parsed)
+
+        # 3. 合并环境变量覆盖（最高优先级）
+        merged.update(raw.env_overrides)
+
+        # 4. 返回全量 — 不过滤，well-known keys 用于索引和查询优化
+        return merged
+
+    def _parse_cli_args(self, args: list[str]) -> dict:
+        """解析命令行参数为 dict"""
+        # --tp=4          → {"tp": 4}
+        # --tp 4          → {"tp": 4}
+        # --enable-profiling → {"enable_profiling": True}
+        # --no-remat      → {"remat": False}
+        ...
+
+    def _parse_file(self, filename: str, content: str) -> dict:
+        """根据扩展名选择解析器"""
+        # .yml/.yaml → yaml.safe_load
+        # .toml      → tomllib.loads
+        # .json      → json.loads
+        ...
+
+    def _flatten(self, d: dict, prefix: str = "") -> dict:
+        """嵌套 dict 扁平化: {"a": {"b": 1}} → {"a.b": 1}"""
+        ...
+```
+
+### Effective Config 回收
+
+Job 完成后，`LogCollector` 在收集日志的同时回收实际生效的配置，并同步更新 `config.config` 中的关键字段，确保索引查询反映实际运行状态：
+
+```python
+class EffectiveConfigCollector:
+    """从 job 产物中回收实际生效的配置"""
+
+    def collect_and_sync(self, rank0_log: str, session: BenchmarkSession) -> None:
+        """回收 effective config 并同步到 config.config"""
+        effective = self.collect(rank0_log, session)
+        if effective is None:
+            effective = self.collect_from_gcs(
+                f"{session.target.cluster_gcs}/profiles/{session.session_id}"
+                "/config/effective/resolved_config.json"
+            )
+        if effective is None:
+            return
+
+        # 1. 存入 raw.effective_config
+        session.config.raw.effective_config = effective
+
+        # 2. 用 effective 中的 well-known keys 覆盖 config.config
+        #    确保索引字段反映实际运行值而非仅用户意图
+        for key in ConfigExtractor.WELL_KNOWN_KEYS:
+            if key in effective:
+                session.config.config[key] = effective[key]
+
+        # 3. 计算并保存 diff
+        session.config.extra = session.config.extra or {}
+        session.config.extra["config_diff"] = self.compute_diff(
+            session.config.config, effective
+        )
+
+    def collect(self, rank0_log: str, session: BenchmarkSession) -> dict | None:
+        """从 rank-0 日志中解析 resolved config"""
+        # MaxText 启动时打印完整 config：
+        #   "Running with config: {...}"
+        # 解析该行，返回 dict
+        ...
+
+    def collect_from_gcs(self, gcs_path: str) -> dict | None:
+        """从 GCS 中回收 effective_config.json"""
+        # 训练脚本主动写出的 resolved config
+        # gs://falcon-{cluster}/profiles/{session_id}/config/effective/resolved_config.json
+        ...
+
+    def compute_diff(self, intent: dict, effective: dict) -> dict:
+        """对比意图配置与实际生效配置的差异"""
+        # 返回 {"added": {...}, "removed": {...}, "changed": {...}}
+        ...
+```
+
+### GCS 配置目录结构
+
+```text
+gs://falcon-{cluster}/profiles/{session_id}/
+  config/                              ← 新增
+    submitted/                         # 提交时的原始配置
+      base.yml                         # 原始配置文件副本
+      override.yml
+      cli_args.json                    # ["--tp=4", "--dp=8", ...]
+      env_overrides.json               # {"XLA_FLAGS": "..."}
+    effective/                         # Job 完成后回收
+      resolved_config.json             # 实际生效的完整配置
+      config_diff.json                 # intent vs effective 的差异
+```
+
+### DB 存储策略
+
+`sessions` 表的 `config` 列保持 JSONB，内部结构变更：
+
+```json
+{
+  "workload_type": "training",
+  "config": {"tp": 4, "dp": 8, "fsdp": 4, "model_name": "llama-70b", "seq_len": 2048},
+  "raw": {
+    "cli_args": ["--tp=4", "--dp=8", "--fsdp=4", "--model_name=llama-70b"],
+    "config_files": {"base.yml": "...内容..."},
+    "env_overrides": {"XLA_FLAGS": "--xla_tpu_enable_async_collective_fusion=true"},
+    "effective_config": null
+  },
+  "extra": null
+}
+```
+
+当 `config_files` 总大小 > 64KB 时，文件内容只存 GCS，DB 中存 GCS URI 引用：
+
+```json
+"config_files": {"base.yml": "gs://falcon-tpu-v4/profiles/bench-.../config/submitted/base.yml"}
+```
+
+GIN 索引自动覆盖 `config` 字段的 JSONB 路径查询，无需额外索引变更。
+
+### CLI 命令扩展
+
+```bash
+# 提交时带配置文件
+falcon session submit \
+  --workload training \
+  --accelerator tpu-v4-128 \
+  --config-file configs/base.yml \
+  --config-file configs/large_model.yml \
+  --env "XLA_FLAGS=--xla_tpu_enable_async_collective_fusion=true" \
+  -- python train.py --tp=4 --dp=8 --profile
+
+# 查看 session 的配置
+falcon session config <session-id>                # 显示提取的关键字段
+falcon session config <session-id> --raw          # 显示原始配置
+falcon session config <session-id> --effective    # 显示实际生效配置
+falcon session config <session-id> --diff         # 对比意图 vs 实际
+
+# 按配置字段查询（JSONB 路径语法）
+falcon session list --where "config.tp=4 AND config.dp>=8"
+```
+
+### MCP 工具扩展
+
+| 工具 | 用途 | 示例 |
+|------|------|------|
+| `session_config` | 查看 Session 的配置详情 | "bench-xxx 用了什么配置" |
+| `session_config_diff` | 对比意图配置与实际生效配置 | "bench-xxx 的配置有没有被覆盖" |
+| `session_compare_config` | 对比两个 Session 的配置差异 | "这两次跑的配置有什么不同" |
+
+---
+
 ## 技术选型
 
 | 组件 | 选型 | 理由 |
@@ -1102,6 +1263,7 @@ GET    /api/v1/clusters/{name}/status
 | 调度 | xpk CLI | 团队已在使用 xpk，同时支持 TPU（`--tpu-type`）和 GPU（`--device-type`），统一调度后端 |
 | CLI 框架 | click | 轻量、命令分组、Python 标准 |
 | MCP | FastMCP | 已验证可用 |
+| 配置解析 | PyYAML + tomllib | YAML 为主（MaxText），tomllib 为标准库内置 |
 
 ## 部署变更
 
