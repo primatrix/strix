@@ -105,7 +105,9 @@ class TrainingConfig:
 class InferenceConfig:
     """离线推理配置"""
     tp: int = 1
+    dp: int = 1
     pp: int = 1
+    ep: int = 1
     batch_size: int | None = None
     max_decode_len: int | None = None
     quantization: str | None = None    # "int8" | "fp8" | None
@@ -115,7 +117,9 @@ class InferenceConfig:
 class ServingConfig:
     """在线推理服务配置"""
     tp: int = 1
+    dp: int = 1
     pp: int = 1
+    ep: int = 1
     max_concurrent_requests: int | None = None
     max_decode_len: int | None = None
     quantization: str | None = None
@@ -175,6 +179,7 @@ class InferenceMetrics:
     prefill_time_ms: float | None = None
     decode_time_ms: float | None = None
     ttft_ms: float | None = None
+    tpot_ms: float | None = None
     tokens_per_sec: float | None = None
     peak_memory_gb: float | None = None
     batch_throughput: float | None = None
@@ -185,6 +190,7 @@ class ServingMetrics:
     p50_latency_ms: float | None = None
     p99_latency_ms: float | None = None
     ttft_ms: float | None = None
+    tpot_ms: float | None = None
     throughput_qps: float | None = None
     tokens_per_sec: float | None = None
     peak_memory_gb: float | None = None
@@ -720,8 +726,8 @@ class SessionStore:
 
     def list(self, *, workload_type=None, status=None, author=None,
              repo=None, cluster=None, accelerator=None,
-             branch=None, tags=None, since=None,
-             last_n=20) -> list[BenchmarkSession]
+             branch=None, tags=None, ep=None, dp=None,
+             fsdp=None, since=None, last_n=20) -> list[BenchmarkSession]
 
     def compare(self, id1: str, id2: str) -> dict
     def trend(self, metric: str, **filters) -> list[dict]
