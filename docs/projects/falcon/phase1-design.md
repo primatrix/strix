@@ -76,49 +76,141 @@ class SessionTarget:
     device_type: str                   # "tpu" | "gpu"
     device_num: int
 
+class WorkloadType(str, Enum):
+    """Workload 类型 — 决定 Config 和 Metrics 的具体类型"""
+    TRAINING = "training"
+    INFERENCE = "inference"
+    SERVING = "serving"
+    RL = "rl"
+    KERNEL = "kernel"
+
+# ── 分场景 Config ──────────────────────────────────────────
+
 @dataclass
-class Parallelism:
-    """并行策略维度"""
+class TrainingConfig:
+    """训练场景配置"""
     tp: int = 1
     dp: int = 1
     pp: int = 1
     ep: int = 1
     fsdp: int = 1
     cp: int = 1
+    remat: str | None = None           # "full" | "minimal"
+    per_device_batch_size: int | None = None
+    grad_accum: int | None = None
+    seq_len: int | None = None
+    model_config: dict | None = None
 
-    @property
-    def total_devices(self) -> int:
-        return self.tp * self.dp * self.pp * self.ep * self.fsdp * self.cp
+@dataclass
+class InferenceConfig:
+    """离线推理配置"""
+    tp: int = 1
+    pp: int = 1
+    batch_size: int | None = None
+    max_decode_len: int | None = None
+    quantization: str | None = None    # "int8" | "fp8" | None
+    model_config: dict | None = None
+
+@dataclass
+class ServingConfig:
+    """在线推理服务配置"""
+    tp: int = 1
+    pp: int = 1
+    max_concurrent_requests: int | None = None
+    max_decode_len: int | None = None
+    quantization: str | None = None
+    engine: str | None = None          # "vllm" | "trt-llm" | "jetstream"
+    model_config: dict | None = None
+
+@dataclass
+class RLConfig:
+    """强化学习场景配置"""
+    tp: int = 1
+    dp: int = 1
+    pp: int = 1
+    ep: int = 1
+    fsdp: int = 1
+    cp: int = 1
+    algorithm: str | None = None       # "grpo" | "ppo" | "dpo"
+    per_device_batch_size: int | None = None
+    rollout_batch_size: int | None = None
+    seq_len: int | None = None
+    remat: str | None = None
+    model_config: dict | None = None
+
+@dataclass
+class KernelConfig:
+    """Kernel benchmark 配置"""
+    kernel_name: str                   # "flash_attention" | "matmul" | ...
+    input_shapes: dict | None = None   # {"m": 2048, "n": 2048, "k": 512}
+    dtype: str | None = None           # "bf16" | "fp32"
+    block_shape: tuple | None = None
+    num_iterations: int = 100
+
+WorkloadConfig = TrainingConfig | InferenceConfig | ServingConfig | RLConfig | KernelConfig
 
 @dataclass
 class SessionConfig:
-    """运行配置"""
-    parallelism: Parallelism
-    remat: str | None                  # "full" | "minimal" | None
-    per_device_batch_size: int | None
-    grad_accum: int | None
-    seq_len: int | None
-    model_config: dict | None          # 模型相关配置（可扩展）
-    extra: dict | None                 # 其他配置项
+    """运行配置 — 通过 workload_type 路由到具体类型"""
+    workload_type: WorkloadType
+    workload_config: WorkloadConfig     # 强类型，按 workload_type 分发
+    extra: dict | None = None           # 保留扩展口
+
+# ── 分场景 Metrics ─────────────────────────────────────────
 
 @dataclass
-class StepMetrics:
-    """单步指标"""
-    step: int
-    seconds: float
-    tflops: float | None
-    tokens_per_sec: float | None
-    loss: float | None
+class TrainingMetrics:
+    """训练聚合指标"""
+    step_time_ms: float | None = None
+    tflops_per_device: float | None = None
+    mfu: float | None = None
+    tokens_per_sec: float | None = None
+    peak_memory_gb: float | None = None
+    compile_time_s: float | None = None
+    loss: float | None = None
 
 @dataclass
-class Metrics:
-    """聚合指标"""
-    step_time_ms: float | None
-    tflops_per_device: float | None
-    mfu: float | None
-    peak_memory_gb: float | None
-    tokens_per_sec: float | None
-    compile_time_s: float | None
+class InferenceMetrics:
+    """离线推理指标"""
+    prefill_time_ms: float | None = None
+    decode_time_ms: float | None = None
+    ttft_ms: float | None = None
+    tokens_per_sec: float | None = None
+    peak_memory_gb: float | None = None
+    batch_throughput: float | None = None
+
+@dataclass
+class ServingMetrics:
+    """在线服务指标"""
+    p50_latency_ms: float | None = None
+    p99_latency_ms: float | None = None
+    ttft_ms: float | None = None
+    throughput_qps: float | None = None
+    tokens_per_sec: float | None = None
+    peak_memory_gb: float | None = None
+
+@dataclass
+class RLMetrics:
+    """强化学习指标"""
+    step_time_ms: float | None = None
+    tflops_per_device: float | None = None
+    mfu: float | None = None
+    tokens_per_sec: float | None = None
+    peak_memory_gb: float | None = None
+    reward_mean: float | None = None
+    reward_std: float | None = None
+    kl_divergence: float | None = None
+
+@dataclass
+class KernelMetrics:
+    """Kernel benchmark 指标"""
+    kernel_time_us: float | None = None
+    flops: float | None = None
+    bandwidth_gb_s: float | None = None
+    roofline_pct: float | None = None
+    peak_memory_gb: float | None = None
+
+WorkloadMetrics = TrainingMetrics | InferenceMetrics | ServingMetrics | RLMetrics | KernelMetrics
 
 @dataclass
 class ErrorInfo:
@@ -129,10 +221,10 @@ class ErrorInfo:
 
 @dataclass
 class SessionResult:
-    """实测结果"""
-    metrics: Metrics
-    steps: list[StepMetrics]
-    error: ErrorInfo | None
+    """实测结果 — metrics 类型与 workload_type 对齐"""
+    metrics: WorkloadMetrics            # 按场景分发
+    raw_metrics: list[dict] | None = None  # 原始指标序列（训练=step、kernel=iteration、serving=request）
+    error: ErrorInfo | None = None
 
 @dataclass
 class ProfileArtifact:
@@ -185,10 +277,11 @@ class BenchmarkSession:
     """Falcon 核心实体 — 一次 benchmark 运行的完整上下文"""
     # 身份
     session_id: str                    # "bench-20260409-abc12345"
-    type: str                          # "e2e" | "operator" | "alignment"
+    workload_type: WorkloadType        # training | inference | serving | rl | kernel
     status: SessionStatus
     created_at: str
     updated_at: str
+    tags: list[str]                    # 自由标签（"e2e" / "operator" / "alignment" 等）
 
     # 上下文
     source: SessionSource
@@ -220,9 +313,40 @@ analysis_id: "ana-{session_id_suffix}-{analyzer}-{4hex}"
 job_id:      "job-{session_id_suffix}-{4hex}"
 ```
 
+### 类型注册表
+
+```python
+# 序列化/反序列化用 — 新增场景只需：枚举值 + Config + Metrics + 注册
+WORKLOAD_CONFIG_REGISTRY: dict[WorkloadType, type] = {
+    WorkloadType.TRAINING: TrainingConfig,
+    WorkloadType.INFERENCE: InferenceConfig,
+    WorkloadType.SERVING: ServingConfig,
+    WorkloadType.RL: RLConfig,
+    WorkloadType.KERNEL: KernelConfig,
+}
+
+WORKLOAD_METRICS_REGISTRY: dict[WorkloadType, type] = {
+    WorkloadType.TRAINING: TrainingMetrics,
+    WorkloadType.INFERENCE: InferenceMetrics,
+    WorkloadType.SERVING: ServingMetrics,
+    WorkloadType.RL: RLMetrics,
+    WorkloadType.KERNEL: KernelMetrics,
+}
+```
+
 ### 向后兼容
 
 旧 `RunRecord` (JSONL) 到新 `BenchmarkSession` 的迁移通过 `from_run_record()` 类方法实现无损转换，旧记录直接标记为 `ARCHIVED` 状态。
+
+迁移映射规则：
+
+| 旧字段 | 迁移策略 |
+|--------|---------|
+| `type: "e2e"` | `workload_type: "training"`, `tags: ["e2e"]` |
+| `type: "operator"` | `workload_type: "kernel"`, `tags: ["operator"]` |
+| `type: "alignment"` | `workload_type: "training"`, `tags: ["alignment"]` |
+| `config.parallelism` | 展平到 `workload_config` 的各并行维度字段 |
+| `result.steps` | 转为 `result.raw_metrics` |
 
 ---
 
@@ -458,30 +582,33 @@ class JobScheduler:
 -- 核心 Session 表
 CREATE TABLE sessions (
     session_id    TEXT PRIMARY KEY,
-    type          TEXT NOT NULL CHECK (type IN ('e2e', 'operator', 'alignment')),
+    workload_type TEXT NOT NULL CHECK (workload_type IN (
+        'training', 'inference', 'serving', 'rl', 'kernel'
+    )),
     status        TEXT NOT NULL CHECK (status IN (
         'pending', 'provisioning', 'running', 'collecting',
         'completed', 'analyzing', 'archived', 'failed', 'cancelled'
     )),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    tags          TEXT[] DEFAULT '{}', -- 自由标签（"e2e" / "operator" / "alignment" 等）
     source        JSONB NOT NULL,        -- {author, repo, branch, commit, pr, trigger, ...}
     target        JSONB NOT NULL,        -- {cluster, accelerator, device_type, device_num}
-    config        JSONB NOT NULL,        -- {parallelism, remat, batch_size, seq_len, ...}
-    result        JSONB,                 -- {metrics, steps[], error}
+    config        JSONB NOT NULL,        -- {workload_type, workload_config: {...}, extra}
+    result        JSONB,                 -- {metrics: {...}, raw_metrics: [...], error}
     prediction    JSONB,                 -- {predicted, delta}
     collaboration JSONB NOT NULL DEFAULT '{}'
 );
 
 -- 常用查询索引
-CREATE INDEX idx_sessions_status     ON sessions(status);
-CREATE INDEX idx_sessions_created    ON sessions(created_at DESC);
-CREATE INDEX idx_sessions_type       ON sessions(type);
-CREATE INDEX idx_sessions_author     ON sessions((source->>'author'));
-CREATE INDEX idx_sessions_repo       ON sessions((source->>'repo'));
-CREATE INDEX idx_sessions_cluster    ON sessions((target->>'cluster'));
-CREATE INDEX idx_sessions_config     ON sessions USING GIN(config);
-CREATE INDEX idx_sessions_tags       ON sessions USING GIN((collaboration->'tags'));
+CREATE INDEX idx_sessions_status        ON sessions(status);
+CREATE INDEX idx_sessions_created       ON sessions(created_at DESC);
+CREATE INDEX idx_sessions_workload_type ON sessions(workload_type);
+CREATE INDEX idx_sessions_author        ON sessions((source->>'author'));
+CREATE INDEX idx_sessions_repo          ON sessions((source->>'repo'));
+CREATE INDEX idx_sessions_cluster       ON sessions((target->>'cluster'));
+CREATE INDEX idx_sessions_config        ON sessions USING GIN(config);
+CREATE INDEX idx_sessions_tags          ON sessions USING GIN(tags);
 
 -- K8s Job 表
 CREATE TABLE jobs (
@@ -591,10 +718,10 @@ class SessionStore:
     def get(self, session_id: str) -> BenchmarkSession | None
     def delete(self, session_id: str) -> None
 
-    def list(self, *, type=None, status=None, author=None,
+    def list(self, *, workload_type=None, status=None, author=None,
              repo=None, cluster=None, accelerator=None,
-             branch=None, tags=None, ep=None, dp=None,
-             fsdp=None, since=None, last_n=20) -> list[BenchmarkSession]
+             branch=None, tags=None, since=None,
+             last_n=20) -> list[BenchmarkSession]
 
     def compare(self, id1: str, id2: str) -> dict
     def trend(self, metric: str, **filters) -> list[dict]
@@ -624,18 +751,33 @@ class AnalysisStore:
 
 ```bash
 # Session 管理
-falcon session list [--cluster X] [--author Y] [--type e2e] [--status completed] [--last 7d]
+falcon session list [--cluster X] [--author Y] [--workload training] [--status completed] [--last 7d]
 falcon session get <session-id>
 falcon session compare <id1> <id2>
 falcon session trend --metric mfu [--author Y] [--last 30d]
 falcon session stats
 
-# 任务提交与管理
+# 任务提交与管理（--workload 指定场景类型）
 falcon session submit \
+  --workload training \
   --cluster tpu-v4-prod \
   --accelerator tpu-v4-128 \
   --image gcr.io/.../ant-pretrain:latest \
-  --config "ep=8,dp=4,fsdp=4,remat=full"
+  --config "tp=4,dp=8,fsdp=4,remat=full,seq_len=2048"
+
+falcon session submit \
+  --workload kernel \
+  --cluster tpu-v4-prod \
+  --accelerator tpu-v4-128 \
+  --config "kernel_name=flash_attention,dtype=bf16,m=2048,n=2048"
+
+falcon session submit \
+  --workload serving \
+  --cluster gpu-a100 \
+  --accelerator nvidia-a100-80g \
+  --image gcr.io/.../vllm-server:latest \
+  --config "tp=4,engine=vllm,quantization=fp8"
+
 falcon session cancel <session-id>
 
 # Profile 数据
@@ -669,7 +811,7 @@ falcon migrate import-jsonl <path-to-runs.jsonl>
 
 | 工具 | 用途 | 示例 |
 |------|------|------|
-| `session_submit` | 提交 benchmark 到集群 | "在 v4-128 上跑 EP8 DP4 profiling" |
+| `session_submit` | 提交 benchmark 到集群 | "在 v4-128 上跑 training EP8 DP4 profiling" / "在 v4-128 上跑 kernel flash_attention" |
 | `session_status` | 查看 Session 完整状态 | "bench-xxx 现在什么状态" |
 | `job_list` | 跨集群查看运行中的 job | "现在有哪些 job 在跑" |
 | `job_cancel` | 取消 job | "取消 bench-xxx" |
@@ -681,7 +823,7 @@ falcon migrate import-jsonl <path-to-runs.jsonl>
 #### 预留 Web API（不在 Phase 1 实现）
 
 ```text
-GET    /api/v1/sessions?author=X&cluster=Y&status=completed
+GET    /api/v1/sessions?author=X&cluster=Y&workload_type=training&status=completed
 GET    /api/v1/sessions/{session_id}
 POST   /api/v1/sessions
 PATCH  /api/v1/sessions/{session_id}
