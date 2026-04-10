@@ -389,10 +389,14 @@ clusters:
     zone: us-central2-b
     cluster_id: tpu-v4-cluster
     accelerator_types:
-      - tpu-v4-64
-      - tpu-v4-128
+      - type: tpu-v4-64
+        priority: 1                # 此集群是 tpu-v4-64 的首选
+      - type: tpu-v4-128
+        priority: 1
     default_namespace: default
     gcs_bucket: gs://falcon-tpu-v4
+    max_queue_depth: 5             # 队列深度阈值，QUEUED workload 超过此值则跳过
+    probe_timeout_s: 15            # xpk probe 命令超时（秒）
     labels:
       env: prod
       team: pretrain
@@ -403,9 +407,12 @@ clusters:
     zone: us-east1-c
     cluster_id: tpu-v5e-cluster
     accelerator_types:
-      - tpu-v5e-256
+      - type: tpu-v5e-256
+        priority: 1
     default_namespace: default
     gcs_bucket: gs://falcon-tpu-v5e
+    max_queue_depth: 3
+    probe_timeout_s: 15
     labels:
       env: dev
 
@@ -415,9 +422,12 @@ clusters:
     zone: us-central1-a
     cluster_id: gpu-cluster
     accelerator_types:
-      - nvidia-a100-80g
+      - type: nvidia-a100-80g
+        priority: 1
     default_namespace: benchmark
     gcs_bucket: gs://falcon-gpu
+    max_queue_depth: 5
+    probe_timeout_s: 15
     labels:
       env: prod
       team: gpu
@@ -440,6 +450,9 @@ class SchedulingBackend(ABC):
 
     @abstractmethod
     def get_logs(self, job: JobInfo, cluster: ClusterConfig) -> str: ...
+
+    @abstractmethod
+    def probe(self, cluster: ClusterConfig) -> ClusterProbeResult: ...
 
 
 class XpkBackend(SchedulingBackend):
@@ -469,36 +482,276 @@ class XpkBackend(SchedulingBackend):
         #   --priority={spec.priority}
         ...
 
+    def probe(self, cluster: ClusterConfig) -> ClusterProbeResult:
+        # xpk workload list \
+        #   --cluster={cluster.cluster_id} \
+        #   --project={cluster.project} \
+        #   --zone={cluster.zone}
+        #
+        # 解析输出表格，统计 QUEUED / RUNNING workload 数量
+        # 超时 = cluster.probe_timeout_s (默认 15s)
+        ...
+
 
 class JobScheduler:
     """统一调度入口"""
 
-    def __init__(self, clusters: dict[str, ClusterConfig]):
+    def __init__(self, clusters: dict[str, ClusterConfig], poll_interval_s: int = 30):
         self.clusters = clusters
+        self.poll_interval_s = poll_interval_s
         self.backend = XpkBackend()  # 统一后端，所有集群共享
+        self.log_collector = LogCollector()
+
+        # 安全校验: poll_interval 必须远小于 pod TTL
+        XPK_DEFAULT_TTL = 600  # xpk 默认 ttlSecondsAfterFinished
+        if poll_interval_s >= XPK_DEFAULT_TTL:
+            raise ConfigError(
+                f"poll_interval ({poll_interval_s}s) >= pod TTL ({XPK_DEFAULT_TTL}s), "
+                "日志可能在收集前丢失"
+            )
 
     def submit(self, session: BenchmarkSession, spec: JobSpec) -> JobInfo:
         """提交 job 并关联到 Session"""
         # Session: PENDING → PROVISIONING
         # 注入 session 元数据到 job labels
-        # 调用对应后端 submit
+        # 调用后端 submit
 
     def poll(self, session: BenchmarkSession) -> JobInfo:
         """查询并更新 Session 状态"""
         # PROVISIONING → RUNNING (pod started)
-        # RUNNING → COLLECTING (job finished)
+        # RUNNING → COLLECTING (job finished → 立即触发 collect)
 
     def cancel(self, session: BenchmarkSession) -> None:
         """取消 job，Session → CANCELLED"""
 
     def collect(self, session: BenchmarkSession) -> None:
-        """Job 完成后收集结果"""
-        # 1. 获取 pod logs → 解析 metrics
-        # 2. 扫描 GCS → 收集 profile artifacts
-        # 3. Session: COLLECTING → COMPLETED / FAILED
+        """Job 完成后收集结果（由 poll 在发现 job 完成时立即触发）"""
+        # 1. log_collector.collect() → 拉取 pod 日志并上传 GCS
+        # 2. 从 rank-0 日志解析 metrics
+        # 3. 扫描 GCS → 收集 profile artifacts
+        # 4. Session: COLLECTING → COMPLETED / FAILED
 
-    def select_cluster(self, accelerator: str) -> ClusterConfig:
-        """根据 accelerator 类型选择集群"""
+    def select_cluster(self, accelerator: str) -> tuple[ClusterConfig, SchedulingDecision]:
+        """根据 accelerator 类型选择集群（Probe + 优先级）"""
+        # 见下方详细说明
+```
+
+### 集群选择策略（Probe + 优先级）
+
+用户只需指定 accelerator 类型，Falcon 自动选择最优集群：
+
+```text
+用户请求: accelerator="tpu-v4-128"
+│
+├─ 1. 查找候选集群
+│     从 clusters 配置中筛选 accelerator_types 包含 tpu-v4-128 的集群
+│     按 priority 排序 → [tpu-v4-prod(p=1), tpu-v5e-backup(p=2)]
+│
+├─ 2. Probe 首选集群
+│     ├─ 可达性: xpk workload list --cluster=... (超时 probe_timeout_s)
+│     ├─ 队列深度: 统计 QUEUED 状态的 workload 数量
+│     │   如果 queue_depth > cluster.max_queue_depth → 跳过
+│     └─ 通过 → 选中此集群
+│
+├─ 3. 首选失败/队列满 → probe 下一个候选
+│
+├─ 4. 所有候选不可用 → 返回错误
+│     error_class: "no_available_cluster"
+│
+└─ 5. 记录 SchedulingDecision 到 JobInfo（用于审计）
+```
+
+```python
+@dataclass
+class ClusterProbeResult:
+    """集群探测结果"""
+    cluster: str
+    reachable: bool
+    queue_depth: int | None        # QUEUED workload 数量
+    running_count: int | None      # RUNNING workload 数量
+    error: str | None
+    probed_at: str
+
+@dataclass
+class SchedulingDecision:
+    """调度决策记录 — 持久化到 JobInfo 用于审计"""
+    requested_accelerator: str
+    candidates: list[str]          # 候选集群名称列表
+    selected: str                  # 选中的集群
+    reason: str                    # 选择原因
+    probe_results: list[ClusterProbeResult]
+    decided_at: str
+
+class JobScheduler:
+    def select_cluster(self, accelerator: str) -> tuple[ClusterConfig, SchedulingDecision]:
+        # 1. 筛选候选集群
+        candidates = []
+        for name, cfg in self.clusters.items():
+            for acc in cfg.accelerator_types:
+                if acc.type == accelerator:
+                    candidates.append((name, cfg, acc.priority))
+        candidates.sort(key=lambda x: x[2])
+
+        if not candidates:
+            raise NoClusterError(f"无集群支持 {accelerator}")
+
+        # 2. 依次 probe
+        probe_results = []
+        for name, cfg, _ in candidates:
+            result = self.backend.probe(cfg)
+            probe_results.append(result)
+
+            if not result.reachable:
+                continue
+            if result.queue_depth and result.queue_depth > cfg.max_queue_depth:
+                continue
+
+            # 3. 选中
+            return cfg, SchedulingDecision(
+                requested_accelerator=accelerator,
+                candidates=[c[0] for c in candidates],
+                selected=name,
+                reason=f"queue_depth={result.queue_depth}",
+                probe_results=probe_results,
+                decided_at=now_iso(),
+            )
+
+        raise NoClusterError(
+            f"所有支持 {accelerator} 的集群均不可用或队列已满"
+        )
+```
+
+### 日志收集（轮询驱动 + TTL 安全窗口 + 智能多 Pod 策略）
+
+#### 核心约束
+
+```text
+poll_interval  <  pod_ttl
+    30s        <   600s (xpk 默认 ttlSecondsAfterFinished)
+
+安全余量: 600 - 30 = 570s
+```
+
+`JobScheduler` 初始化时强制校验 `poll_interval < pod_ttl`，确保 job 完成后有足够时间收集日志。
+
+#### 收集流程
+
+```text
+scheduler.poll() 循环 (每 30s)
+│
+├─ xpk workload list → 检查 workload 状态
+│
+├─ 状态: QUEUED/RUNNING → 记录心跳, 继续轮询
+│
+├─ 状态: COMPLETED / FAILED
+│   │
+│   ├─ Session: RUNNING → COLLECTING
+│   │
+│   ├─ Step 1: 收集日志（智能多 Pod 策略）
+│   │   ├─ 获取 job 关联的所有 pod 列表
+│   │   │   kubectl get pods -l xpk.google.com/workload={workload_name}
+│   │   │
+│   │   ├─ 判断收集范围
+│   │   │   ├─ Job COMPLETED → 只收集 rank-0 pod 日志
+│   │   │   └─ Job FAILED    → 收集所有 pod 日志（用于排查）
+│   │   │
+│   │   ├─ 拉取日志
+│   │   │   kubectl logs {pod_name} (对每个需要收集的 pod)
+│   │   │
+│   │   └─ 上传到 GCS
+│   │       gs://falcon-{cluster}/profiles/{session_id}/logs/
+│   │         ├─ rank-0.log            (必定收集)
+│   │         ├─ rank-1.log ... rank-N.log  (仅失败时)
+│   │         └─ collection_meta.json  (收集元数据)
+│   │
+│   ├─ Step 2: 从 rank-0 日志解析 metrics
+│   │   MetricsParser.parse(log_content, workload_type)
+│   │
+│   ├─ Step 3: 扫描 GCS profile 目录
+│   │   gcloud storage ls → 发现 xplane/, llo/, hlo/ artifacts
+│   │
+│   └─ Step 4: Session → COMPLETED / FAILED
+│
+└─ 状态: 未知/超时 → 记录 warning, 继续轮询
+```
+
+#### Pod 发现与 Rank 识别
+
+```python
+@dataclass
+class PodInfo:
+    name: str
+    rank: int              # 从 pod label 或 hostname 解析
+    status: str            # Running / Succeeded / Failed
+    exit_code: int | None
+
+@dataclass
+class CollectionResult:
+    logs: dict[str, str]   # {"rank-0": "...", "rank-1": "..."}
+    meta: dict             # 收集元数据
+    rank0_log: str | None  # rank-0 日志（用于 metrics 解析）
+
+class LogCollector:
+    """日志收集器"""
+
+    def discover_pods(self, job: JobInfo, cluster: ClusterConfig) -> list[PodInfo]:
+        """获取 job 关联的所有 pod 及其 rank"""
+        # kubectl get pods \
+        #   -l xpk.google.com/workload={job.xpk_workload} \
+        #   --context={cluster.context} \
+        #   -o json
+        #
+        # 从 pod metadata.labels 或 spec.hostname 解析 rank
+        # xpk 的 pod 命名通常为: {workload}-{rank}-{suffix}
+        ...
+
+    def collect(self, job: JobInfo, cluster: ClusterConfig,
+                failed: bool) -> CollectionResult:
+        """收集日志 — 成功时只收 rank-0，失败时收全部"""
+        pods = self.discover_pods(job, cluster)
+        pods_to_collect = pods if failed else [p for p in pods if p.rank == 0]
+
+        logs = {}
+        for pod in pods_to_collect:
+            log_content = self._fetch_log(pod, cluster)
+            logs[f"rank-{pod.rank}"] = log_content
+
+        # 上传到 GCS
+        for rank_name, content in logs.items():
+            gcs_path = (
+                f"{cluster.gcs_bucket}/profiles/{job.session_id}"
+                f"/logs/{rank_name}.log"
+            )
+            self._upload_to_gcs(content, gcs_path)
+
+        # 写收集元数据
+        meta = {
+            "session_id": job.session_id,
+            "collected_at": now_iso(),
+            "total_pods": len(pods),
+            "collected_pods": len(pods_to_collect),
+            "strategy": "all" if failed else "rank-0-only",
+            "pod_statuses": {p.name: p.status for p in pods},
+        }
+        self._upload_to_gcs(
+            json.dumps(meta),
+            f"{cluster.gcs_bucket}/profiles/{job.session_id}/logs/collection_meta.json",
+        )
+
+        return CollectionResult(
+            logs=logs, meta=meta, rank0_log=logs.get("rank-0")
+        )
+```
+
+#### GCS 日志目录结构
+
+```text
+gs://falcon-{cluster}/profiles/{session_id}/logs/
+  ├─ rank-0.log              # 主 worker 日志（必定收集）
+  ├─ rank-1.log              # 仅 job 失败时收集
+  ├─ ...
+  ├─ rank-N.log              # 仅 job 失败时收集
+  └─ collection_meta.json    # 收集元数据：策略、时间、pod 状态
 ```
 
 ### Session ↔ Job 完整生命周期
@@ -624,7 +877,8 @@ CREATE TABLE jobs (
     finished_at    TIMESTAMPTZ,
     attempt        INT NOT NULL DEFAULT 1,
     exit_code      INT,
-    resource_usage JSONB
+    resource_usage JSONB,
+    scheduling_decision JSONB    -- ClusterProbeResult 列表 + 选择原因
 );
 
 CREATE INDEX idx_jobs_cluster ON jobs(cluster);
@@ -700,9 +954,10 @@ gs://falcon-{cluster}/
         trace.json.gz
       tensorboard/                  # TensorBoard event 文件
         events.out.tfevents.*
-      logs/                         # 训练原始日志
-        training.log
-        stderr.log
+      logs/                         # Pod 日志（智能收集）
+        rank-0.log                  # 主 worker 日志（必定收集）
+        rank-1.log ... rank-N.log   # 仅 job 失败时收集
+        collection_meta.json        # 收集元数据：策略、时间、pod 状态
       metadata.json                 # 产物清单（与 DB 同步的冗余备份）
 ```
 
