@@ -373,107 +373,6 @@ clusters:
 
 ### 调度引擎
 
-```python
-class SchedulingBackend(ABC):
-    """调度后端抽象"""
-
-    @abstractmethod
-    def submit(self, spec: JobSpec, cluster: ClusterConfig) -> JobInfo: ...
-
-    @abstractmethod
-    def poll(self, job: JobInfo, cluster: ClusterConfig) -> JobInfo: ...
-
-    @abstractmethod
-    def cancel(self, job: JobInfo, cluster: ClusterConfig) -> None: ...
-
-    @abstractmethod
-    def get_logs(self, job: JobInfo, cluster: ClusterConfig) -> str: ...
-
-    @abstractmethod
-    def probe(self, cluster: ClusterConfig) -> ClusterProbeResult: ...
-
-
-class XpkBackend(SchedulingBackend):
-    """基于 xpk 的统一任务调度（TPU + GPU）"""
-
-    def submit(self, spec: JobSpec, cluster: ClusterConfig) -> JobInfo:
-        # TPU: xpk workload create \
-        #   --cluster={cluster.cluster_id} \
-        #   --project={cluster.project} \
-        #   --zone={cluster.zone} \
-        #   --workload={workload_name} \
-        #   --tpu-type={spec.accelerator} \
-        #   --num-slices={spec.num_slices} \
-        #   --docker-image={spec.docker_image} \
-        #   --command="{' '.join(spec.command)}" \
-        #   --priority={spec.priority}
-        #
-        # GPU: xpk workload create \
-        #   --cluster={cluster.cluster_id} \
-        #   --project={cluster.project} \
-        #   --zone={cluster.zone} \
-        #   --workload={workload_name} \
-        #   --device-type={spec.accelerator} \
-        #   --num-nodes={spec.num_nodes} \
-        #   --docker-image={spec.docker_image} \
-        #   --command="{' '.join(spec.command)}" \
-        #   --priority={spec.priority}
-        ...
-
-    def probe(self, cluster: ClusterConfig) -> ClusterProbeResult:
-        # xpk workload list \
-        #   --cluster={cluster.cluster_id} \
-        #   --project={cluster.project} \
-        #   --zone={cluster.zone}
-        #
-        # 解析输出表格，统计 QUEUED / RUNNING workload 数量
-        # 超时 = cluster.probe_timeout_s (默认 15s)
-        ...
-
-
-class JobScheduler:
-    """统一调度入口"""
-
-    def __init__(self, clusters: dict[str, ClusterConfig], poll_interval_s: int = 30):
-        self.clusters = clusters
-        self.poll_interval_s = poll_interval_s
-        self.backend = XpkBackend()  # 统一后端，所有集群共享
-        self.log_collector = LogCollector()
-
-        # 安全校验: poll_interval 必须远小于 pod TTL
-        XPK_DEFAULT_TTL = 600  # xpk 默认 ttlSecondsAfterFinished
-        if poll_interval_s >= XPK_DEFAULT_TTL:
-            raise ConfigError(
-                f"poll_interval ({poll_interval_s}s) >= pod TTL ({XPK_DEFAULT_TTL}s), "
-                "日志可能在收集前丢失"
-            )
-
-    def submit(self, session: BenchmarkSession, spec: JobSpec) -> JobInfo:
-        """提交 job 并关联到 Session"""
-        # Session: PENDING → PROVISIONING
-        # 注入 session 元数据到 job labels
-        # 调用后端 submit
-
-    def poll(self, session: BenchmarkSession) -> JobInfo:
-        """查询并更新 Session 状态"""
-        # PROVISIONING → RUNNING (pod started)
-        # RUNNING → COLLECTING (job finished → 立即触发 collect)
-
-    def cancel(self, session: BenchmarkSession) -> None:
-        """取消 job，Session → CANCELLED"""
-
-    def collect(self, session: BenchmarkSession) -> None:
-        """Job 完成后收集结果（由 poll 在发现 job 完成时立即触发）"""
-        # 1. log_collector.collect() → 拉取 pod 日志并上传 GCS
-        # 2. 从 rank-0 日志解析 metrics
-        # 3. 扫描 GCS → 收集 profile artifacts
-        # 4. Session: COLLECTING → COMPLETED / FAILED
-
-    def select_cluster(self, accelerator: str) -> tuple[ClusterConfig, SchedulingDecision]:
-        """根据 accelerator 类型选择集群（Probe + 优先级）"""
-        # 见下方详细说明
-```
-
 ### 集群选择策略（Probe + 优先级）
 
 用户只需指定 accelerator 类型，Falcon 自动选择最优集群：
@@ -520,43 +419,6 @@ class SchedulingDecision:
     probe_results: list[ClusterProbeResult]
     decided_at: str
 
-class JobScheduler:
-    def select_cluster(self, accelerator: str) -> tuple[ClusterConfig, SchedulingDecision]:
-        # 1. 筛选候选集群
-        candidates = []
-        for name, cfg in self.clusters.items():
-            for acc in cfg.accelerator_types:
-                if acc.type == accelerator:
-                    candidates.append((name, cfg, acc.priority))
-        candidates.sort(key=lambda x: x[2])
-
-        if not candidates:
-            raise NoClusterError(f"无集群支持 {accelerator}")
-
-        # 2. 依次 probe
-        probe_results = []
-        for name, cfg, _ in candidates:
-            result = self.backend.probe(cfg)
-            probe_results.append(result)
-
-            if not result.reachable:
-                continue
-            if result.queue_depth and result.queue_depth > cfg.max_queue_depth:
-                continue
-
-            # 3. 选中
-            return cfg, SchedulingDecision(
-                requested_accelerator=accelerator,
-                candidates=[c[0] for c in candidates],
-                selected=name,
-                reason=f"queue_depth={result.queue_depth}",
-                probe_results=probe_results,
-                decided_at=now_iso(),
-            )
-
-        raise NoClusterError(
-            f"所有支持 {accelerator} 的集群均不可用或队列已满"
-        )
 ```
 
 ### 日志收集（轮询驱动 + TTL 安全窗口 + 智能多 Pod 策略）
@@ -631,54 +493,7 @@ class CollectionResult:
 
 class LogCollector:
     """日志收集器"""
-
-    def discover_pods(self, job: JobInfo, cluster: ClusterConfig) -> list[PodInfo]:
-        """获取 job 关联的所有 pod 及其 rank"""
-        # kubectl get pods \
-        #   -l xpk.google.com/workload={job.xpk_workload} \
-        #   --context={cluster.context} \
-        #   -o json
-        #
-        # 从 pod metadata.labels 或 spec.hostname 解析 rank
-        # xpk 的 pod 命名通常为: {workload}-{rank}-{suffix}
-        ...
-
-    def collect(self, job: JobInfo, cluster: ClusterConfig,
-                failed: bool) -> CollectionResult:
-        """收集日志 — 成功时只收 rank-0，失败时收全部"""
-        pods = self.discover_pods(job, cluster)
-        pods_to_collect = pods if failed else [p for p in pods if p.rank == 0]
-
-        logs = {}
-        for pod in pods_to_collect:
-            log_content = self._fetch_log(pod, cluster)
-            logs[f"rank-{pod.rank}"] = log_content
-
-        # 上传到 GCS
-        for rank_name, content in logs.items():
-            gcs_path = (
-                f"{cluster.gcs_bucket}/profiles/{job.session_id}"
-                f"/logs/{rank_name}.log"
-            )
-            self._upload_to_gcs(content, gcs_path)
-
-        # 写收集元数据
-        meta = {
-            "session_id": job.session_id,
-            "collected_at": now_iso(),
-            "total_pods": len(pods),
-            "collected_pods": len(pods_to_collect),
-            "strategy": "all" if failed else "rank-0-only",
-            "pod_statuses": {p.name: p.status for p in pods},
-        }
-        self._upload_to_gcs(
-            json.dumps(meta),
-            f"{cluster.gcs_bucket}/profiles/{job.session_id}/logs/collection_meta.json",
-        )
-
-        return CollectionResult(
-            logs=logs, meta=meta, rank0_log=logs.get("rank-0")
-        )
+    ...
 ```
 
 #### GCS 日志目录结构
@@ -904,37 +719,15 @@ gs://falcon-{cluster}/
 ```python
 class SessionStore:
     """Session CRUD + 查询 — CLI 和 MCP 的统一数据源"""
-
-    def create(self, session: BenchmarkSession) -> None
-    def update(self, session: BenchmarkSession) -> None
-    def get(self, session_id: str) -> BenchmarkSession | None
-    def delete(self, session_id: str) -> None
-
-    def list(self, *, workload_type=None, status=None, author=None,
-             repo=None, cluster=None, accelerator=None,
-             branch=None, tags=None, ep=None, dp=None,
-             fsdp=None, since=None, last_n=20) -> list[BenchmarkSession]
-
-    def compare(self, id1: str, id2: str) -> dict
-    def trend(self, metric: str, **filters) -> list[dict]
-    def stats(self) -> dict
-    def find_similar(self, config: dict) -> list[BenchmarkSession]
-    def import_from_jsonl(self, jsonl_path: str) -> int
-
+    ...
 
 class ArtifactStore:
     """Profile 产物元数据管理"""
-    def add(self, artifact: ProfileArtifact) -> None
-    def list_by_session(self, session_id: str) -> list[ProfileArtifact]
-    def get(self, artifact_id: str) -> ProfileArtifact | None
-
+    ...
 
 class AnalysisStore:
     """分析结果管理"""
-    def add(self, result: AnalysisResult) -> None
-    def list_by_session(self, session_id: str) -> list[AnalysisResult]
-    def list_by_analyzer(self, analyzer: str) -> list[AnalysisResult]
-    def get(self, analysis_id: str) -> AnalysisResult | None
+    ...
 ```
 
 ### 展示层
@@ -1087,98 +880,11 @@ class ConfigExtractor:
         # Kernel
         "kernel_name", "dtype", "num_iterations",
     }
-
-    def extract(self, raw: RawConfig, workload_type: WorkloadType) -> dict:
-        """合并 config_files + cli_args + env_overrides，提取关键字段"""
-        merged = {}
-
-        # 1. 解析配置文件（按顺序，后者覆盖前者）
-        for filename, content in raw.config_files.items():
-            parsed = self._parse_file(filename, content)  # YAML/TOML/JSON
-            merged.update(self._flatten(parsed))
-
-        # 2. 解析命令行参数（覆盖文件配置）
-        cli_parsed = self._parse_cli_args(raw.cli_args)
-        merged.update(cli_parsed)
-
-        # 3. 合并环境变量覆盖（最高优先级）
-        merged.update(raw.env_overrides)
-
-        # 4. 返回全量 — 不过滤，well-known keys 用于索引和查询优化
-        return merged
-
-    def _parse_cli_args(self, args: list[str]) -> dict:
-        """解析命令行参数为 dict"""
-        # --tp=4          → {"tp": 4}
-        # --tp 4          → {"tp": 4}
-        # --enable-profiling → {"enable_profiling": True}
-        # --no-remat      → {"remat": False}
-        ...
-
-    def _parse_file(self, filename: str, content: str) -> dict:
-        """根据扩展名选择解析器"""
-        # .yml/.yaml → yaml.safe_load
-        # .toml      → tomllib.loads
-        # .json      → json.loads
-        ...
-
-    def _flatten(self, d: dict, prefix: str = "") -> dict:
-        """嵌套 dict 扁平化: {"a": {"b": 1}} → {"a.b": 1}"""
-        ...
 ```
 
 ### Effective Config 回收
 
 Job 完成后，`LogCollector` 在收集日志的同时回收实际生效的配置，并同步更新 `config.config` 中的关键字段，确保索引查询反映实际运行状态：
-
-```python
-class EffectiveConfigCollector:
-    """从 job 产物中回收实际生效的配置"""
-
-    def collect_and_sync(self, rank0_log: str, session: BenchmarkSession) -> None:
-        """回收 effective config 并同步到 config.config"""
-        effective = self.collect(rank0_log, session)
-        if effective is None:
-            effective = self.collect_from_gcs(
-                f"{session.target.cluster_gcs}/profiles/{session.session_id}"
-                "/config/effective/resolved_config.json"
-            )
-        if effective is None:
-            return
-
-        # 1. 存入 raw.effective_config
-        session.config.raw.effective_config = effective
-
-        # 2. 用 effective 中的 well-known keys 覆盖 config.config
-        #    确保索引字段反映实际运行值而非仅用户意图
-        for key in ConfigExtractor.WELL_KNOWN_KEYS:
-            if key in effective:
-                session.config.config[key] = effective[key]
-
-        # 3. 计算并保存 diff
-        session.config.extra = session.config.extra or {}
-        session.config.extra["config_diff"] = self.compute_diff(
-            session.config.config, effective
-        )
-
-    def collect(self, rank0_log: str, session: BenchmarkSession) -> dict | None:
-        """从 rank-0 日志中解析 resolved config"""
-        # MaxText 启动时打印完整 config：
-        #   "Running with config: {...}"
-        # 解析该行，返回 dict
-        ...
-
-    def collect_from_gcs(self, gcs_path: str) -> dict | None:
-        """从 GCS 中回收 effective_config.json"""
-        # 训练脚本主动写出的 resolved config
-        # gs://falcon-{cluster}/profiles/{session_id}/config/effective/resolved_config.json
-        ...
-
-    def compute_diff(self, intent: dict, effective: dict) -> dict:
-        """对比意图配置与实际生效配置的差异"""
-        # 返回 {"added": {...}, "removed": {...}, "changed": {...}}
-        ...
-```
 
 ### GCS 配置目录结构
 
