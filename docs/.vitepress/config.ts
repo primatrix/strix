@@ -145,6 +145,7 @@ export default withMermaid(
               { text: '概览', link: '/projects/falcon/' },
               { text: 'Phase 1 架构设计', link: '/projects/falcon/phase1-design' },
               { text: 'Phase 2 架构设计', link: '/projects/falcon/phase2-design' },
+              { text: 'Phase 3 架构设计', link: '/projects/falcon/phase3-design' },
             ],
           },
         ],
