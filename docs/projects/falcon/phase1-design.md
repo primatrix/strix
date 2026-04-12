@@ -8,11 +8,11 @@
 
 ## 设计目标
 
-将 Falcon 从一个 MCP 工具集合，改造为以 **BenchmarkSession** 为核心的性能分析平台：
+将 Falcon 从一个工具集合，改造为以 **BenchmarkSession** 为核心的性能分析平台：
 
 1. **BenchmarkSession 元数据重构** — 统一数据模型，引入生命周期状态机，支持多种 Profile 产物
 2. **多 K8s 任务调度与管理** — Falcon 作为编排者，通过 xpk 向多个 GKE 集群提交 benchmark job
-3. **Profile 数据存储与展示** — DB + GCS 分离存储，CLI/MCP 优先的展示层，预留 Web 接口
+3. **Profile 数据存储与展示** — DB + GCS 分离存储，CLI 优先的展示层（`--json` 结构化输出），预留 Web 接口
 4. **配置捕获与解析** — Schema-less 配置存储，两阶段捕获（意图 + 实际），原始配置完整保存
 
 ---
@@ -718,7 +718,7 @@ gs://falcon-{cluster}/
 
 ```python
 class SessionStore:
-    """Session CRUD + 查询 — CLI 和 MCP 的统一数据源"""
+    """Session CRUD + 查询 — CLI 的统一数据源"""
     ...
 
 class ArtifactStore:
@@ -789,21 +789,6 @@ falcon report pr <pr-number>
 # 数据迁移
 falcon migrate import-jsonl <path-to-runs.jsonl>
 ```
-
-#### MCP 工具扩展
-
-在现有工具基础上新增：
-
-| 工具 | 用途 | 示例 |
-|------|------|------|
-| `session_submit` | 提交 benchmark 到集群 | "在 v4-128 上跑 training EP8 DP4 profiling" / "在 v4-128 上跑 kernel flash_attention" |
-| `session_status` | 查看 Session 完整状态 | "bench-xxx 现在什么状态" |
-| `job_list` | 跨集群查看运行中的 job | "现在有哪些 job 在跑" |
-| `job_cancel` | 取消 job | "取消 bench-xxx" |
-| `cluster_list` | 查看可用集群和资源 | "有哪些集群可用" |
-| `cluster_status` | 查看集群队列和资源使用 | "v4-prod 集群现在忙不忙" |
-| `profile_list` | 列出 Session 的所有 profile 产物 | "bench-xxx 有哪些 profile 数据" |
-| `profile_analyze` | 对指定 artifact 执行分析 | "分析 bench-xxx 的 LLO 数据" |
 
 #### 预留 Web API（不在 Phase 1 实现）
 
@@ -949,14 +934,6 @@ falcon session config <session-id> --diff         # 对比意图 vs 实际
 falcon session list --where "config.tp=4 AND config.dp>=8"
 ```
 
-### MCP 工具扩展
-
-| 工具 | 用途 | 示例 |
-|------|------|------|
-| `session_config` | 查看 Session 的配置详情 | "bench-xxx 用了什么配置" |
-| `session_config_diff` | 对比意图配置与实际生效配置 | "bench-xxx 的配置有没有被覆盖" |
-| `session_compare_config` | 对比两个 Session 的配置差异 | "这两次跑的配置有什么不同" |
-
 ---
 
 ## 技术选型
@@ -964,16 +941,15 @@ falcon session list --where "config.tp=4 AND config.dp>=8"
 | 组件 | 选型 | 理由 |
 |------|------|------|
 | DB | PostgreSQL 15+ | JSONB 原生支持、GIN 索引、成熟生态 |
-| DB 客户端 | psycopg 3 | 同步模式，MCP server 单线程足够 |
+| DB 客户端 | psycopg 3 | 同步模式，CLI 单线程足够 |
 | GCS | gcloud CLI | 已验证可用，避免引入额外依赖 |
 | 调度 | xpk CLI | 团队已在使用 xpk，同时支持 TPU（`--tpu-type`）和 GPU（`--device-type`），统一调度后端 |
 | CLI 框架 | click | 轻量、命令分组、Python 标准 |
-| MCP | FastMCP | 已验证可用 |
 | 配置解析 | PyYAML + tomllib | YAML 为主（MaxText），tomllib 为标准库内置 |
 
 ## 部署变更
 
-MCP Server 容器新增 `DB_URL` 环境变量，连接 PostgreSQL：
+CLI 容器新增 `DB_URL` 环境变量，连接 PostgreSQL：
 
 - **开发/小团队:** K8s 内嵌 PostgreSQL StatefulSet + PVC
 - **生产:** Cloud SQL for PostgreSQL + Auth Proxy sidecar

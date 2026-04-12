@@ -143,6 +143,7 @@ export default withMermaid(
             text: 'Falcon',
             items: [
               { text: '概览', link: '/projects/falcon/' },
+              { text: '整体架构与模块分界', link: '/projects/falcon/architecture' },
               { text: 'Phase 1 架构设计', link: '/projects/falcon/phase1-design' },
               { text: 'Phase 2 架构设计', link: '/projects/falcon/phase2-design' },
               { text: 'Phase 3 架构设计', link: '/projects/falcon/phase3-design' },

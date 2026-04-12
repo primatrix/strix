@@ -13,7 +13,7 @@
 
 1. **Goal 模型增强** — 将 Goal 从简单的标签提升为一等实体，关联 baseline、target metric、达标标准
 2. **全维度 Comparison 引擎** — 无状态计算层，支持 Metrics 数值对比、Config 参数差异、Profile 分析结果对比、硬件环境差异
-3. **自动触发 + 报告** — Session COMPLETED 时自动触发对比，生成 CLI 表格 / MCP 结构化输出 / Markdown 报告
+3. **自动触发 + 报告** — Session COMPLETED 时自动触发对比，生成 CLI 表格 / `--json` 结构化输出 / Markdown 报告
 
 ---
 
@@ -212,16 +212,6 @@ falcon goal report <goal-id> --output report.md     # 保存到文件
 falcon goal report <goal-id> --format json          # 结构化 JSON 输出
 ```
 
-### MCP 工具扩展
-
-| 工具 | 用途 | 示例 |
-|------|------|------|
-| `goal_create` | 创建优化目标 | "创建一个 EP8 MFU 提升的目标" |
-| `goal_compare` | 对比 Goal 下所有 Session | "EP8 目标的对比情况怎样" |
-| `goal_report` | 生成 Markdown 对比报告 | "生成 EP8 目标的对比报告" |
-| `goal_set_baseline` | 手动更换 baseline | "把 bench-xxx 设为 baseline" |
-| `session_diff` | 任意两个 Session 的 pairwise diff | "对比 bench-aaa 和 bench-bbb" |
-
 ### Markdown 报告格式
 
 ```markdown
@@ -279,7 +269,7 @@ GET    /api/v1/sessions/{id1}/diff/{id2}
 |------|------|------|
 | ComparisonEngine | 纯 Python dataclass 反射 | 利用 Phase 1 的 Registry，零额外依赖 |
 | ReportRenderer | Jinja2 模板 | Markdown 报告生成，轻量灵活 |
-| 其余组件 | 复用 Phase 1 | PostgreSQL / psycopg 3 / click / FastMCP |
+| 其余组件 | 复用 Phase 1 | PostgreSQL / psycopg 3 / click |
 
 ## 不在 Phase 2 范围
 
