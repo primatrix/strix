@@ -185,7 +185,16 @@ class LogExportResult:
 
 ### 1. ClusterRegistry
 
-**职责：** 从 `repos.yaml` 加载集群配置，提供按 accelerator 类型筛选候选集群的查询能力。
+**职责：** 从静态配置文件 `repos.yaml` 中加载集群配置，提供按 accelerator 类型筛选候选集群的查询能力。
+
+**存储与使用方式：**
+
+- **存储介质（非数据库）**：集群配置**不存储在数据库中**，也不在运行时动态调用 GitHub API 获取，而是完全基于本地静态配置文件 `repos.yaml` 进行持久化（配置即代码，Configuration as Code）。
+- **版本控制**：该 `repos.yaml` 文件随代码库一起提交至 Git/GitHub 进行版本控制，集群的变更（如新增集群、修改配额）通过正常的 PR (Pull Request) 代码审查流程进行，保证变更可追溯。
+- **加载与使用机制**：
+  1. **启动时加载**：应用服务（`ClusterFabric`）在初始化时，调用 `load()` 将配置一次性加载并缓存到内存中。
+  2. **运行时只读**：系统运行期间配置在内存中是完全只读的，以保障极高的查询性能和并发安全。
+  3. **变更生效**：若需修改集群配置，修改者需提交代码变更，合并后通过 CI/CD 流程触发服务的重新部署（或通过发送 HUP 信号/Webhook 触发重新加载），从而使新配置生效。
 
 **对外接口：**
 
@@ -459,14 +468,47 @@ ClusterFabric(config_path: str)
 
 ---
 
-## 外部依赖
+## 外部依赖与权限要求
+
+### 1. 软件依赖
 
 | 依赖 | 用途 | 安装方式 |
 |------|------|---------|
 | `xpk` CLI | 任务调度（workload create/list/delete）+ 集群探测 | `pip install xpk` |
+| `gcloud` CLI | Google Cloud SDK，为 xpk 提供底层认证与 API 调用支持 | [官方文档安装](https://cloud.google.com/sdk/docs/install) |
 | `google-cloud-logging` SDK | Pod 日志的流式读取和查询 | `pip install google-cloud-logging` |
 | `google-cloud-storage` SDK | 日志流式上传到 GCS | `pip install google-cloud-storage` |
 | `PyYAML` | 读取 repos.yaml 集群配置 | `pip install pyyaml` |
+
+### 2. Google Cloud 权限与套件依赖 (xpk 环境要求)
+
+xpk 是一个基于 GKE (Google Kubernetes Engine) 封装的 TPU/GPU 调度工具。要使 xpk 正常工作，运行 Falcon 集群编排层的环境（如调度服务所在的 VM 或 Pod）必须具备正确的 GCP 套件和凭据。
+
+#### 2.1 基础套件要求
+
+- **Google Cloud SDK (`gcloud`)**：xpk 底层强依赖 `gcloud` 命令行工具来获取集群凭据和执行部分云资源查询。必须确保运行环境中 `gcloud` 可执行，且版本符合 xpk 的要求。
+- **Kubeconfig 写入权限**：xpk 每次与集群交互前，可能会调用 `gcloud container clusters get-credentials`。程序运行时的用户需要对本地 `~/.kube/config` 或由 `KUBECONFIG` 环境变量指定的路径拥有写权限。
+
+#### 2.2 身份凭证机制
+
+调度程序不能使用个人账号运行，应使用 Google Cloud Service Account (GSA)。认证方式按部署环境区分：
+
+- **GKE 内部署 (推荐)**：使用 Workload Identity (WIF)。将 Kubernetes Service Account 绑定到具有权限的 GSA，应用代码和 CLI 会自动获取凭证，无需下载密钥文件。
+- **GCE VM 部署**：在创建 VM 实例时绑定 GSA。
+- **本地开发**：使用 `gcloud auth application-default login` 获取开发者凭据。
+
+#### 2.3 核心 IAM 权限要求
+
+用于执行调度的 Service Account 必须在目标 GCP Project 具备以下角色（或组合等效自定义权限）：
+
+| 权限领域 | 推荐角色 | 用途说明 |
+|---------|---------|----------|
+| **GKE 集群交互** | `roles/container.developer` <br>(Kubernetes Engine Developer) | 这是最核心的权限。允许 xpk 获取集群的 admin/developer 凭据，并执行 Kubernetes 资源的 CRUD 操作（包括提交 Job/Pod）。 |
+| **日志获取** | `roles/logging.viewer` <br>(Logs Viewer) | 允许 `CloudLogRetriever` 通过 API 查询属于该项目的 GKE Pod 容器日志（对应 `resource.type="k8s_container"`）。 |
+| **云存储读写** | `roles/storage.objectAdmin` <br>(Storage Object Admin) | 允许 `CloudLogRetriever` 将日志流式导出至指定的 GCS bucket，以及允许底层引擎读写 checkpoint/profile 数据（权限可以收敛到特定 Bucket）。 |
+| **计算资源查看** | `roles/compute.viewer` <br>(Compute Viewer) | xpk 内部可能需要查询节点池拓扑、加速器配额或网络可达性。 |
+
+> **并发注意事项**：由于 `ClusterProber` 会并发向多个集群发起探测（执行 `xpk workload list`），每个线程底层都可能会调用 `gcloud` 获取凭据。建议在服务启动阶段，提前遍历 `ClusterRegistry` 中的所有集群，预热（预先执行并缓存）所有集群的 `kubeconfig`，以避免高并发探测时引发竞争或过多的 API 限流 (Rate Limit) 错误。
 
 ---
 
