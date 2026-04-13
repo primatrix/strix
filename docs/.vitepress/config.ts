@@ -144,6 +144,7 @@ export default withMermaid(
             items: [
               { text: '概览', link: '/projects/falcon/' },
               { text: '整体架构与模块分界', link: '/projects/falcon/architecture' },
+              { text: '集群编排层设计', link: '/projects/falcon/cluster-layer-design' },
               { text: 'Phase 1 架构设计', link: '/projects/falcon/phase1-design' },
               { text: 'Phase 2 架构设计', link: '/projects/falcon/phase2-design' },
               { text: 'Phase 3 架构设计', link: '/projects/falcon/phase3-design' },
