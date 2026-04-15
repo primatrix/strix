@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 470" font-family="'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <marker id="a" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+      <polygon points="0 0, 6 2.5, 0 5" fill="#78909C"/>
+    </marker>
+    <marker id="ad" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+      <polygon points="0 0, 6 2.5, 0 5" fill="#B0BEC5"/>
+    </marker>
+    <filter id="s">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <rect width="760" height="470" fill="#FFFFFF" rx="10"/>
+  <text x="380" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#212121">Falcon Platform</text>
+
+  <!-- ======== AI 编排层 ======== -->
+  <g filter="url(#s)">
+    <rect x="50" y="46" width="660" height="36" rx="6" fill="#EDE7F6" stroke="#D1C4E9" stroke-width="1"/>
+    <text x="380" y="69" text-anchor="middle" font-size="11" font-weight="600" fill="#4527A0">AI &#32534;&#25490;&#23618;    Agent Skills / Workflow</text>
+  </g>
+  <line x1="380" y1="82" x2="380" y2="96" stroke="#78909C" stroke-width="1" marker-end="url(#a)"/>
+
+  <!-- ======== 接口层 ======== -->
+  <g filter="url(#s)">
+    <rect x="50" y="99" width="660" height="36" rx="6" fill="#E0F2F1" stroke="#B2DFDB" stroke-width="1"/>
+    <text x="380" y="122" text-anchor="middle" font-size="11" font-weight="600" fill="#00695C">&#25509;&#21475;&#23618;    CLI  |  Web API</text>
+  </g>
+
+  <line x1="210" y1="135" x2="210" y2="152" stroke="#78909C" stroke-width="1" marker-end="url(#a)"/>
+  <line x1="550" y1="135" x2="550" y2="152" stroke="#78909C" stroke-width="1" marker-end="url(#a)"/>
+
+  <!-- ======== EXP 实验管理 ======== -->
+  <g filter="url(#s)">
+    <rect x="50" y="156" width="320" height="100" rx="6" fill="#FFF3E0" stroke="#FFCC80" stroke-width="1"/>
+    <text x="210" y="178" text-anchor="middle" font-size="12" font-weight="600" fill="#E65100">EXP &#23454;&#39564;&#31649;&#29702;</text>
+    <line x1="70" y1="187" x2="350" y2="187" stroke="#FFE0B2" stroke-width="0.8"/>
+    <text x="210" y="206" text-anchor="middle" font-size="10" fill="#EF6C00">&#20250;&#35805; / &#37197;&#32622; / &#29256;&#26412; / &#23454;&#39564;&#23545;&#27604;</text>
+    <text x="210" y="224" text-anchor="middle" font-size="9" fill="#FB8C00">&#22330;&#26223;: &#31639;&#27861;&#23454;&#39564; | Benchmark | &#31934;&#24230;&#23545;&#40784; | Profiling | &#8230;</text>
+  </g>
+
+  <!-- ======== 数据分析 ======== -->
+  <g filter="url(#s)">
+    <rect x="390" y="156" width="320" height="100" rx="6" fill="#FCE4EC" stroke="#F8BBD0" stroke-width="1"/>
+    <text x="550" y="178" text-anchor="middle" font-size="12" font-weight="600" fill="#AD1457">&#25968;&#25454;&#20998;&#26512;</text>
+    <line x1="410" y1="187" x2="690" y2="187" stroke="#F8BBD0" stroke-width="0.8"/>
+    <text x="550" y="206" text-anchor="middle" font-size="10" fill="#C2185B">MFU / HBM / Trace / Op Profile</text>
+    <text x="550" y="224" text-anchor="middle" font-size="10" fill="#C2185B">A/B Compare / &#31934;&#24230;&#23545;&#27604; / Report</text>
+    <text x="550" y="242" text-anchor="middle" font-size="10" fill="#C2185B">Kernel Bench &#20998;&#26512;</text>
+  </g>
+
+  <!-- EXP → Job -->
+  <line x1="210" y1="256" x2="210" y2="276" stroke="#78909C" stroke-width="1" marker-end="url(#a)"/>
+
+  <!-- ======== Job 任务/资源编排 ======== -->
+  <g filter="url(#s)">
+    <rect x="50" y="280" width="320" height="70" rx="6" fill="#E8F5E9" stroke="#A5D6A7" stroke-width="1"/>
+    <text x="210" y="306" text-anchor="middle" font-size="12" font-weight="600" fill="#2E7D32">Job &#20219;&#21153;/&#36164;&#28304;&#32534;&#25490;</text>
+    <line x1="70" y1="315" x2="350" y2="315" stroke="#C8E6C9" stroke-width="0.8"/>
+    <text x="210" y="334" text-anchor="middle" font-size="10" fill="#43A047">&#20219;&#21153;&#35843;&#24230; / &#36164;&#28304;&#20998;&#37197; / &#29366;&#24577;&#30417;&#25511;</text>
+  </g>
+
+  <!-- ======== 制品 ======== -->
+  <g filter="url(#s)">
+    <rect x="390" y="280" width="320" height="70" rx="6" fill="#FFF8E1" stroke="#FFE082" stroke-width="1"/>
+    <text x="550" y="306" text-anchor="middle" font-size="12" font-weight="600" fill="#F57F17">&#21046;&#21697; Artifacts</text>
+    <line x1="410" y1="315" x2="690" y2="315" stroke="#FFE082" stroke-width="0.8"/>
+    <text x="550" y="334" text-anchor="middle" font-size="10" fill="#F9A825">XProf / Metrics / Log / Trace &#8230;</text>
+  </g>
+
+  <!-- Job → 制品 -->
+  <line x1="370" y1="315" x2="388" y2="315" stroke="#78909C" stroke-width="1" marker-end="url(#a)"/>
+
+  <!-- 制品 → 数据分析 -->
+  <line x1="550" y1="280" x2="550" y2="258" stroke="#78909C" stroke-width="1" marker-end="url(#a)"/>
+
+  <!-- ======== 基础资源层 ======== -->
+  <g filter="url(#s)">
+    <rect x="50" y="376" width="660" height="50" rx="6" fill="#F5F5F5" stroke="#E0E0E0" stroke-width="1"/>
+
+    <rect x="70" y="384" width="200" height="34" rx="4" fill="#F3E5F5" stroke="#E1BEE7" stroke-width="0.8"/>
+    <text x="170" y="405" text-anchor="middle" font-size="10" font-weight="600" fill="#6A1B9A">&#22810;&#38598;&#32676;&#36164;&#28304;&#27744; (TPU/GPU)</text>
+
+    <rect x="290" y="384" width="200" height="34" rx="4" fill="#EFEBE9" stroke="#D7CCC8" stroke-width="0.8"/>
+    <text x="390" y="405" text-anchor="middle" font-size="10" font-weight="600" fill="#4E342E">MySQL</text>
+
+    <rect x="510" y="384" width="180" height="34" rx="4" fill="#EFEBE9" stroke="#D7CCC8" stroke-width="0.8"/>
+    <text x="600" y="405" text-anchor="middle" font-size="10" font-weight="600" fill="#4E342E">GCS</text>
+  </g>
+
+  <!-- Job → 资源池 (虚折线) -->
+  <path d="M 170 350 L 170 366 L 170 382" stroke="#B0BEC5" stroke-width="1" stroke-dasharray="4,3" fill="none" marker-end="url(#ad)"/>
+
+  <!-- ======== 底部数据流 ======== -->
+  <text x="380" y="455" text-anchor="middle" font-size="10" fill="#9E9E9E">&#25968;&#25454;&#27969;: Workflow &#8594; Skill &#8594; CLI &#8594; EXP &#8594; Job &#8594; &#21046;&#21697; &#8594; &#25968;&#25454;&#20998;&#26512; &#8594; &#20998;&#26512;&#32467;&#26524;</text>
+
+</svg>
