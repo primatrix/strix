@@ -145,6 +145,13 @@ export default withMermaid(
               { text: '概览', link: '/projects/falcon/' },
               { text: '整体架构与模块分界', link: '/projects/falcon/architecture' },
               { text: '集群编排层设计', link: '/projects/falcon/cluster-layer-design' },
+              {
+                text: '设计文档',
+                collapsed: false,
+                items: [
+                  { text: 'falcon-resource-manager', link: '/projects/falcon/design/0000-falcon-resource-manager' },
+                ],
+              },
             ],
           },
         ],
