@@ -8,9 +8,8 @@ title: 新人入门
 
 ## 入职指南
 
-- [项目管理框架](./project-management.md) — 团队五层管理结构：Goal, Project, Roadmap, Task, SubTask
+- [项目管理框架](./project-management.md) — 五层管理结构与端到端工作流程（Roadmap → 开发 → 审查）
 - [团队目标](./goals.md) — 四个核心方向：计算引擎、性能优化、基础设施、AI 辅助
-- [当我们谈论性能优化的时候，到底在说什么？](./performance-overview.md) — 团队性能优化基础理念
 
 <!-- 以下内容暂时隐藏
 - [当我们谈论 TPU/DSA 性能优化时，我们在说什么？](./performance-tpu.md) — GPU Kernel 开发者 TPU 避坑指南
