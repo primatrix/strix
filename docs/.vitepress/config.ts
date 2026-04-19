@@ -180,6 +180,7 @@ export default withMermaid(
             text: '新人入门',
             items: [
               { text: '概览', link: '/onboarding/' },
+              { text: '项目管理框架', link: '/onboarding/project-management' },
               { text: '性能优化基础理念', link: '/onboarding/performance-overview' },
               { text: 'TPU 性能优化指南', link: '/onboarding/performance-tpu' },
               { text: 'Pallas Kernel 编写指南', link: '/onboarding/pallas-kernel-guide' },
