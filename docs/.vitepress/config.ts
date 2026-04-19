@@ -180,8 +180,10 @@ export default withMermaid(
             text: '新人入门',
             items: [
               { text: '概览', link: '/onboarding/' },
-              { text: '开发环境搭建', link: '/onboarding/dev-environment' },
-              { text: 'Cloudflare 配置', link: '/onboarding/cloudflare-setup' },
+              { text: '性能优化基础理念', link: '/onboarding/performance-overview' },
+              { text: 'TPU 性能优化指南', link: '/onboarding/performance-tpu' },
+              { text: 'Pallas Kernel 编写指南', link: '/onboarding/pallas-kernel-guide' },
+              { text: 'JAX TPU 显存分析指南', link: '/onboarding/profiling-hbm-guide' },
             ],
           },
         ],
