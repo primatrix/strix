@@ -9,6 +9,7 @@ title: 新人入门
 ## 入职指南
 
 - [项目管理框架](./project-management.md) — 团队五层管理结构：Goal, Project, Roadmap, Task, SubTask
+- [团队目标](./goals.md) — 四个核心方向：计算引擎、性能优化、基础设施、AI 辅助
 - [当我们谈论性能优化的时候，到底在说什么？](./performance-overview.md) — 团队性能优化基础理念
 - [当我们谈论 TPU/DSA 性能优化时，我们在说什么？](./performance-tpu.md) — GPU Kernel 开发者 TPU 避坑指南
 - [Pallas Kernel 编写经验总结](./pallas-kernel-guide.md) — TPU Pallas kernel API 约束、性能优化与 profiling
