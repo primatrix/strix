@@ -181,10 +181,8 @@ export default withMermaid(
             items: [
               { text: '概览', link: '/onboarding/' },
               { text: '项目管理框架', link: '/onboarding/project-management' },
+              { text: '团队目标', link: '/onboarding/goals' },
               { text: '性能优化基础理念', link: '/onboarding/performance-overview' },
-              { text: 'TPU 性能优化指南', link: '/onboarding/performance-tpu' },
-              { text: 'Pallas Kernel 编写指南', link: '/onboarding/pallas-kernel-guide' },
-              { text: 'JAX TPU 显存分析指南', link: '/onboarding/profiling-hbm-guide' },
             ],
           },
         ],
