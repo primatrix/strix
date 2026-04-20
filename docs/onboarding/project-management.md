@@ -192,12 +192,16 @@ Bug 类型的 Issue（`type/bug`）走独立于 Feature 的并行通道，根据
 - 开发者自行 Review Draft PR
 - 自审完成后将 PR 状态改为 Open
 - Reviewer 审查 PR 代码
-- 作者根据反馈修改，通过后合并
+- 作者根据反馈修改
+- 满足以下全部条件后，由**作者**执行合并：
+  1. 至少 2 个 Reviewer Approve
+  2. CI 检查全部通过
+  3. Beaver 门控 GitHub App 检查通过
 
 **Beaver 预期行为：**
 
 - Worker（自动）：PR 状态从 Draft 变为 Open 时，自动将关联 Issue 流转到 `status/review-needed`，并指派 Reviewer（基于 CODEOWNERS + 工作量均衡）
-- Worker（自动）：PR 合并后，自动将关联 Issue 从 `status/review-needed` → `status/done`
+- Worker（自动）：PR 合并后，自动将关联 Issue 从 `status/review-needed` → `status/done`；对于 size/S 的 Task 同时关闭 Issue
 
 ### Phase 7: 完成与回顾
 
@@ -228,7 +232,7 @@ Bug 类型的 Issue（`type/bug`）走独立于 Feature 的并行通道，根据
 | 开发 | Worker | 自动 | blocked 状态流转与恢复 |
 | 开发 | `beaver-pr` | 用户触发 | 合规检查（标签完整性、测试证据） + 创建 Draft PR |
 | 代码审查 | Worker | 自动 | PR 从 Draft → Open 时，Issue 流转到 review-needed + 指派 Reviewer |
-| 代码审查 | Worker | 自动 | PR 合并 → Issue 流转到 done |
+| 代码审查 | Worker | 自动 | PR 合并（需 2 Approve + CI 绿 + Beaver 门控通过，作者合并） → Issue 流转到 done；size/S 同时关闭 Issue |
 | 完成 | Worker | 自动 | SubTask 全关闭 → 父 Task done |
 | 回顾 | `beaver-report` | 用户触发 | 生成周期回顾报告 |
 | Bug 创建 | `beaver-issue` | 用户触发 | 检测 `type/bug`，填充 Bug 模板，强制 size/S，p/0 直接 in-progress 并 @mention 负责人 |
