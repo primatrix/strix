@@ -183,7 +183,7 @@ Bug 类型的 Issue（`type/bug`）走独立于 Feature 的并行通道，根据
 - `beaver-focus`（Skill，用户触发）：查看个人工作看板——当前任务、待 Review PR、阻塞项、DDL 预警，获得优先级建议
 - `beaver-focus` Bug 优先级（Skill，用户触发）：`p/0-blocker` 的 bug 始终置顶显示，`type/bug` 的 Issue 独立分组展示，`p/0-blocker` bug 创建后 24 小时未关闭即预警
 - Worker（自动）：支持 `status/blocked` 状态流转，阻塞解除后恢复到 `status/in-progress`
-- 开发完毕后，`beaver-pr`（Skill，用户触发）：执行合规检查（G006 标签完整性、G004 测试证据），创建 Draft PR
+- 开发完毕后，`beaver-pr`（Skill，用户触发）：执行合规检查（G006 标签完整性、G004 测试证据），创建 Draft PR，PR 描述中自动添加 `Closes #issue` 以在合并时关闭关联 Issue
 
 ### Phase 6: 代码审查
 
@@ -201,7 +201,7 @@ Bug 类型的 Issue（`type/bug`）走独立于 Feature 的并行通道，根据
 **Beaver 预期行为：**
 
 - Worker（自动）：PR 状态从 Draft 变为 Open 时，自动将关联 Issue 流转到 `status/review-needed`，并指派 Reviewer（基于 CODEOWNERS + 工作量均衡）
-- Worker（自动）：PR 合并后，自动将关联 Issue 从 `status/review-needed` → `status/done`；对于 size/S 的 Task 同时关闭 Issue
+- Worker（自动）：监听 Issue 关闭事件，自动将关联 Issue 流转到 `status/done`
 
 ### Phase 7: 完成与回顾
 
@@ -230,9 +230,9 @@ Bug 类型的 Issue（`type/bug`）走独立于 Feature 的并行通道，根据
 | 开发 | Beaver Skills（从 Superpowers 迁移） | 用户触发 | TDD、调试辅助 |
 | 开发 | `beaver-focus` | 用户触发 | 个人看板与优先级建议 |
 | 开发 | Worker | 自动 | blocked 状态流转与恢复 |
-| 开发 | `beaver-pr` | 用户触发 | 合规检查（标签完整性、测试证据） + 创建 Draft PR |
+| 开发 | `beaver-pr` | 用户触发 | 合规检查（标签完整性、测试证据） + 创建 Draft PR + `Closes #issue` 关联 |
 | 代码审查 | Worker | 自动 | PR 从 Draft → Open 时，Issue 流转到 review-needed + 指派 Reviewer |
-| 代码审查 | Worker | 自动 | PR 合并（需 2 Approve + CI 绿 + Beaver 门控通过，作者合并） → Issue 流转到 done；size/S 同时关闭 Issue |
+| 代码审查 | Worker | 自动 | Issue 关闭 → 流转到 status/done |
 | 完成 | Worker | 自动 | SubTask 全关闭 → 父 Task done |
 | 回顾 | `beaver-report` | 用户触发 | 生成周期回顾报告 |
 | Bug 创建 | `beaver-issue` | 用户触发 | 检测 `type/bug`，填充 Bug 模板，强制 size/S，p/0 直接 in-progress 并 @mention 负责人 |
