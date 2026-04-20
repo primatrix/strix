@@ -182,7 +182,6 @@ export default withMermaid(
               { text: '概览', link: '/onboarding/' },
               { text: '项目管理框架', link: '/onboarding/project-management' },
               { text: '团队目标', link: '/onboarding/goals' },
-              { text: '性能优化基础理念', link: '/onboarding/performance-overview' },
             ],
           },
         ],
