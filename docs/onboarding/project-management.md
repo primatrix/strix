@@ -127,7 +127,13 @@ Bug 类型的 Issue（`type/bug`）走独立于 Feature 的并行通道，根据
 
 **Beaver 预期行为：**
 
-- `beaver-issue`（Skill，用户触发）：创建 Issue 时自动填充标准模板（目标/验收标准）、添加到 Project V2、设置 type/size/priority 标签、关联父 Issue。创建时 Issue 初始为 `status/triage`，Beaver 根据 size 自动路由：size/S → `status/in-progress`；size/L 保持 `status/triage`（可能不在当前 Roadmap 中实现）
+- `beaver-issue`（Skill，用户触发）：通过交互式流程引导创建 Issue，具体步骤如下：
+  1. 加载项目配置与历史默认值
+  2. 逐一收集 Issue 信息：层级（Goal/Task/SubTask）、父 Issue、标题、描述（目标与验收标准）、type 标签、priority 标签
+  3. 根据描述复杂度自动建议 size（S/L），展示推理依据，等待用户确认
+  4. 预览完整 Issue 详情，等待用户明确批准后再创建
+  5. 创建 Issue 并添加到 Project V2，设置 Level/Status/Progress 字段，关联父 Issue
+  6. 根据 size 自动路由状态：size/S → `status/in-progress`；size/L → `status/design-pending`
 - `beaver-issue` Bug 模式（Skill，用户触发）：检测到 `type/bug` 时自动填充 Bug 报告模板、强制 `size/S`、要求设置优先级标签（`p/0` ~ `p/3`）。`p/0-blocker` 时自动跳过 `status/triage` 直接 `status/in-progress`，并 @mention CODEOWNERS 中对应模块负责人
 - Worker（自动）：size/L 的 Task 被加入 Milestone 后，自动流转到 `status/design-pending`
 
@@ -140,7 +146,15 @@ Bug 类型的 Issue（`type/bug`）走独立于 Feature 的并行通道，根据
 
 **Beaver 预期行为：**
 
-- `beaver-design-doc`（Skill，用户触发）：辅助撰写 Design Doc 并提交 wiki PR，要求开发者关联 Task Issue
+- `beaver-design-doc`（Skill，用户触发）：通过迭代式 Q&A 引导撰写设计文档，具体步骤如下：
+  1. 加载并验证 Issue（必须为 `size/L` + `status/design-pending`），提取目标与验收标准作为起点
+  2. 迭代式上下文收集——按四个维度逐一深入提问（每次只问一个问题），主动搜索代码库获取背景信息：
+     - **Context & Scope**：技术环境、系统边界、客观背景事实
+     - **Design Goals**：目标、非目标（明确不做的事）、可量化的成功指标
+     - **The Design**：架构、组件、接口、数据流、技术选型理由、关键 trade-offs、测试策略、部署依赖
+     - **Alternatives Considered**：其他可行方案及其被否决的原因
+  3. 基于收集的信息撰写完整设计文档，逐段展示并等待用户审批，修改直到每段都被确认
+  4. 最终确认后，在 wiki 仓库创建分支、提交 Design Doc PR，并在原 Issue 中评论关联 PR 链接
 - Worker（自动）：观测到 Design Doc PR 合并后，自动将关联 Issue 从 `status/design-pending` → `status/ready-to-develop`
 
 ### Phase 4: 任务拆解（size/L）
@@ -203,9 +217,9 @@ Bug 类型的 Issue（`type/bug`）走独立于 Feature 的并行通道，根据
 | Roadmap 制定 | `beaver-roadmap` | 用户触发 | 创建 Milestone，筛选 Task 纳入并设定优先级 |
 | Roadmap 制定 | `beaver-report` | 用户触发 | 生成健康报告，辅助 Roadmap 决策 |
 | Roadmap 制定 | Worker | 自动 | 标记 stale/overdue Issue |
-| Task 创建 | `beaver-issue` | 用户触发 | 创建标准 Issue，设置标签，size/S → in-progress，size/L 保持 triage |
+| Task 创建 | `beaver-issue` | 用户触发 | 交互式引导收集信息→自动建议 size→预览确认→创建 Issue 并设置标签，size/S → in-progress，size/L → design-pending |
 | Task 创建 | Worker | 自动 | size/L 加入 Milestone → design-pending |
-| 设计评审 | `beaver-design-doc` | 用户触发 | 辅助撰写 Design Doc，要求关联 Task Issue |
+| 设计评审 | `beaver-design-doc` | 用户触发 | 迭代式 Q&A 收集四维度设计信息→逐段撰写并审批→提交 wiki PR 并关联 Issue |
 | 设计评审 | Worker | 自动 | 观测到 Doc PR 合并 → Issue 流转到 ready-to-develop |
 | 任务拆解 | `beaver-decompose` | 用户触发 | 输入 Issue + Design Doc，LLM 辅助拆解，批量创建子 Issue |
 | 认领 | `beaver-issue` | 用户触发 | 认领任务，流转到 in-progress |
