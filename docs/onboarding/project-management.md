@@ -30,13 +30,15 @@ Goal 是团队级别的长期工作方向，通常跨越多个项目、持续数
 
 Project 是代码开发和项目管理的基本单元，通常与一个代码仓库对应。每个 Project 有独立的定位说明和技术文档。多个 Project 可以服务于同一个 Goal，而 Task 在 Project 下创建和管理。Project 是日常开发工作的组织边界，也是权限管理和持续集成的配置单元，团队成员在 Project 范围内协作完成开发与交付。
 
-- **工具映射**：存在于 wiki 页面并与 Github 联动。
+Roadmap 与 Project 统一体现在同一个 [GitHub Project](https://github.com/orgs/primatrix/projects/13) 中，便于集中管理项目规划与任务跟踪。Roadmap 通过 GitHub Project 的迭代（Iteration）或 Milestone 视图呈现，按时间周期划定阶段性交付范围。
+
+- **工具映射**：[GitHub Project V2](https://github.com/orgs/primatrix/projects/13)。
 
 ## Roadmap（路线图）
 
 Roadmap 是按时间周期进行的规划，通常以月或双月为单位。在每个周期开始时，将处于草案状态的 Task 纳入 Roadmap，并约定完成日期。Roadmap 横切 Task 层，定义当前周期内需要完成哪些 Task，是连接长期目标与短期执行的桥梁。周期结束时团队回顾完成情况，未完成的 Task 会顺延至下一周期重新评估优先级。
 
-- **工具映射**：存在于 Github 中，使用 Milestones。
+- **工具映射**：与 Project 共用同一个 [GitHub Project](https://github.com/orgs/primatrix/projects/13)，使用 Milestones 划分周期。
 - **角色与责任**：由团队内 Senior 的人轮值制定，由其他团队成员 Review。
 
 ## Task（任务）
