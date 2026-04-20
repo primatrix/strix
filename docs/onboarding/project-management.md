@@ -186,8 +186,10 @@ Task 通过用户与系统的交互式对话创建。用户提供意图，系统
    - **The Design**：架构、组件、接口、数据流、技术选型理由、关键 trade-offs、测试策略、部署依赖
    - **Alternatives Considered**：其他可行方案及其被否决的原因
 3. 系统基于收集到的信息生成完整设计文档，逐段展示；用户审批每一段，可要求修改直到满意。
-4. 用户最终确认后，系统在 wiki 仓库创建分支、提交 Design Doc PR，并在原 Issue 中评论关联 PR 链接。
-5. 团队成员 Review Design Doc PR；PR 合并后系统自动将 Issue 从 `status/design-pending` 流转到 `status/ready-to-develop`。
+4. 用户最终确认后，系统在 wiki 仓库创建分支、以 Draft 状态提交 Design Doc PR，并在原 Issue 中评论关联 PR 链接。
+5. 开发者自审 Draft PR，确认无误后将 PR 状态改为 Open；系统监听到状态变更后，基于 CODEOWNERS 与工作量均衡自动分配 Reviewer。
+6. Reviewer 按团队约定在每天上午进行 Review；两位 Reviewer 均提交 Review 后，作者组织线上会议进行对齐讨论，并根据反馈迭代设计文档。
+7. 满足合并条件后由作者合并 PR；PR 合并后系统自动将 Issue 从 `status/design-pending` 流转到 `status/ready-to-develop`。
 
 ### Phase 5: 任务拆解（size/L）
 
