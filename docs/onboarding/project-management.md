@@ -80,7 +80,27 @@ graph LR
     P4 --> P5
     P5 --> P6["Phase 6\n代码审查"]
     P6 --> P7["Phase 7\n完成与回顾"]
+    B["Bug 发现"] -->|type/bug| P2B["Phase 2\nBug 创建"]
+    P2B -->|常规 bug| P5
+    P2B -->|"p/0-blocker\n紧急 bug"| P5
 ```
+
+### Bugfix 通道
+
+Bug 类型的 Issue（`type/bug`）走独立于 Feature 的并行通道，根据优先级分为紧急和常规两种路由：
+
+| 条件 | 路由 | 说明 |
+|------|------|------|
+| `type/bug` + `p/0-blocker` | 紧急通道 | 跳过 Phase 1-4，创建后直接进入 Phase 5 开发，自动 `status/in-progress` |
+| `type/bug` + 其他优先级 | 常规 Bug | 跳过 Phase 1，进入 Phase 2 创建 Issue（强制 `size/S`），然后 Phase 5 → 6 → 7 |
+
+紧急 bug 的关键差异在于自动化行为：
+
+- 自动跳过 `status/triage`，直接流转到 `status/in-progress`
+- 自动 @mention CODEOWNERS 中对应模块的负责人
+- 无需提前纳入 Roadmap Milestone（可事后回溯关联）
+
+所有 Bug 强制 `size/S`（guardrail：不允许设置 `size/L`），使用 Bug 专用 Issue 模板（复现步骤、期望/实际行为、影响范围、环境信息）。
 
 ### Phase 1: Roadmap 制定
 
@@ -103,10 +123,12 @@ graph LR
 - 创建时指定 size 标签：size/S 或 size/L
 - size/S 的 Task 直接进入开发（跳到 Phase 5）
 - size/L 的 Task 进入设计评审流程（Phase 3）
+- type/bug 的 Issue 强制 size/S，使用 Bug 报告模板（复现步骤、期望/实际行为、影响范围、环境信息），跳过 Phase 1/3/4
 
 **Beaver 预期行为：**
 
 - `beaver-issue`（Skill，用户触发）：创建 Issue 时自动填充标准模板（目标/验收标准）、添加到 Project V2、设置 type/size/priority 标签、关联父 Issue。创建时 Issue 初始为 `status/triage`，Beaver 根据 size 自动路由：size/S → `status/in-progress`；size/L 保持 `status/triage`（可能不在当前 Roadmap 中实现）
+- `beaver-issue` Bug 模式（Skill，用户触发）：检测到 `type/bug` 时自动填充 Bug 报告模板、强制 `size/S`、要求设置优先级标签（`p/0` ~ `p/3`）。`p/0-blocker` 时自动跳过 `status/triage` 直接 `status/in-progress`，并 @mention CODEOWNERS 中对应模块负责人
 - Worker（自动）：size/L 的 Task 被加入 Milestone 后，自动流转到 `status/design-pending`
 
 ### Phase 3: 设计评审（size/L）
@@ -145,6 +167,7 @@ graph LR
 - `beaver-issue` 认领模式（Skill，用户触发）：认领任务，自动分配 assignee 并流转到 `status/in-progress`
 - Beaver Skills（开发辅助，从 Superpowers 迁移）：TDD 驱动开发、systematic-debugging 等辅助测试驱动开发和系统化调试
 - `beaver-focus`（Skill，用户触发）：查看个人工作看板——当前任务、待 Review PR、阻塞项、DDL 预警，获得优先级建议
+- `beaver-focus` Bug 优先级（Skill，用户触发）：`p/0-blocker` 的 bug 始终置顶显示，`type/bug` 的 Issue 独立分组展示，`p/0-blocker` bug 创建后 24 小时未关闭即预警
 - Worker（自动）：支持 `status/blocked` 状态流转，阻塞解除后恢复到 `status/in-progress`
 - 开发完毕后，`beaver-pr`（Skill，用户触发）：执行合规检查（G006 标签完整性、G004 测试证据），创建 Draft PR
 
@@ -194,3 +217,6 @@ graph LR
 | 代码审查 | Worker | 自动 | PR 合并 → Issue 流转到 done |
 | 完成 | Worker | 自动 | SubTask 全关闭 → 父 Task done |
 | 回顾 | `beaver-report` | 用户触发 | 生成周期回顾报告 |
+| Bug 创建 | `beaver-issue` | 用户触发 | 检测 `type/bug`，填充 Bug 模板，强制 size/S，p/0 直接 in-progress 并 @mention 负责人 |
+| Bug 开发 | `beaver-focus` | 用户触发 | 紧急 bug 置顶，24h 未关闭 p/0 预警 |
+| Bug 回顾 | `beaver-report` | 用户触发 | Bug 统计板块（数量、修复时间、趋势） |
