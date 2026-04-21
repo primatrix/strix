@@ -22,6 +22,8 @@ Ling3 是 Ling2（百灵 v2.5）的架构演进，两者的核心差异：
 5. **Scan 层支持**：Ling2 不支持 `scan_layers=True`，Ling3 通过 ScannableBlock 支持
 6. **Muon 优化器**：Ling3 使用不同优化器（不在本 RFC 范围）
 
+> **本 RFC 涉及的代码改动**：仅 #1（KDA 替换 GLA）和 #5（Scan 支持）需要新写实现，落在 `ling3.py`、`decoders.py`、`multi_token_prediction.py`、`common_types.py`（详见 4.1–4.5）。#2 (MLA 门控) 与 #4 (QK Clip) 是 MLA 模块的内置能力 + YAML 开关，由前置 PR 提供；#3 是 YAML 配置；#6 与本 RFC 无关。
+
 **设计目标**：最小改动、最大复用现有架构，同时保持 Ling2 完全向后兼容。
 
 ### 模型配置对比
@@ -129,9 +131,10 @@ Ling3ScannableBlockToLinen               # to_linen_class(Ling3ScannableBlock)
 class Ling3GenericLayer(nnx.Module):
   """Ling3 基础解码层。
 
-  与 Ling2GenericLayer 的差异:
-    1. 非 MLA 层使用 KDA（KDAAttention）而非 GLA（BailingMoeV2LinearAttention）
-    2. MLA 层门控输出由 config.enable_gated_attention 自动控制（MLA 内部实现）
+  与 Ling2GenericLayer 的唯一代码差异：非 MLA 层使用 KDA（KDAAttention）
+  而非 GLA（BailingMoeV2LinearAttention）。MLA 实例化与 Ling2 完全相同——
+  gated attention 是 MLA 模块自身的能力，由 config.enable_gated_attention
+  开关控制，不在 Ling3 这一层做任何额外处理。
   """
 
   def __init__(self, config, mesh, model_mode, layer_idx, quant=None, *, rngs):
@@ -142,7 +145,7 @@ class Ling3GenericLayer(nnx.Module):
         or self.layer_idx >= cfg.num_decoder_layers
     )
     if is_full_attention_layer:
-      # MLA — 门控由 config.enable_gated_attention 在 MLA 内部自动启用
+      # MLA — 与 Ling2 完全相同的实例化（gated attention 由配置 + MLA 模块自身支持）
       self.attention = attention_mla.MLA(
           config=cfg,
           # ... 与 Ling2 完全相同的参数列表 ...
@@ -173,10 +176,11 @@ class Ling3GenericLayer(nnx.Module):
 
 **设计决策 — 为什么不继承 Ling2GenericLayer**：
 
-1. **注意力类型差异**：`__init__` 中 KDA vs GLA 是核心分支差异。继承后覆盖会比平行实现更脆弱。
-2. **向后兼容**：独立文件确保 Ling2 代码零改动，降低回归风险。
-3. **Scan 支持**：Ling3 的 ScannableBlock 需要在 `ling3.py` 中定义，独立模块更清晰。
-4. **代码量可控**：`Ling2GenericLayer` 本身约 300 行，核心逻辑（`__call__` + `post_process` + properties）模式固定，平行实现的维护成本低。
+唯一的结构差异是 `__init__` 中非 MLA 分支选用 KDA 而非 GLA，技术上完全可以通过子类化 + hook 复用 `Ling2GenericLayer`。但仍选择平行实现，理由如下：
+
+1. **向后兼容**：独立文件确保 Ling2 代码零改动，降低回归风险——共享父类的话，任何 Ling3 需求都可能反向影响 Ling2 的稳定性。
+2. **Scan 支持**：Ling3 的 ScannableBlock 需要在 `ling3.py` 中定义，与解码层放同一模块更内聚。
+3. **代码量可控**：`Ling2GenericLayer` 本身约 300 行，核心逻辑（`__call__` + `post_process` + properties）模式固定，平行实现的维护成本远低于跨文件抽象一个 hook 接口。
 
 #### `Ling3DenseDecoderLayer` 和 `Ling3MoEDecoderLayer`
 
@@ -612,16 +616,6 @@ class Ling3DecoderLayerTest:
 2. **训练 step**：验证一个训练 step 的 loss 计算
 3. **Scan vs Unscan 对齐**：比较 `scan_layers=True/False` 的输出一致性
 4. **Ling2 回归**：确保现有 Ling2 测试全部通过
-
----
-
-## PR 拆分建议
-
-| PR | 范围 | 依赖 |
-|----|------|------|
-| PR1 | Ling3 解码层 + unscan 路径（`ling3.py` + `decoders.py` unscan + `multi_token_prediction.py`） | 前置依赖（KDA、MLA 门控、配置扩展）已合并 |
-| PR2 | ScannableBlock + scan 路径（`ling3.py` ScannableBlock + `decoders.py` scan） | PR1 |
-| PR3 | 测试（`ling3_decoder_test.py`） | PR2 |
 
 ---
 
