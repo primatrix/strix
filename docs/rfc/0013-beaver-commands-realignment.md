@@ -16,23 +16,26 @@ reviewers: []
 
 ### 技术现状
 
-Beaver 当前位于 `plugins/beaver/` (v3.2.0)：9 个命令 (`beaver-{create,claim,design,decompose,dev,pr,tracker,focus,setup}.md`) + 1 个内部 skill (`beaver-engine`) + 9 个配套 bash 脚本于 `scripts/`。后端使用 GitHub Projects V2 (`primatrix/projects` org-project #14)，已存在的自定义字段为 `Level / Status / Progress / Iteration`，并已通过 `beaver-setup` 创建了原生 Issue Type `Goal / Task / SubTask / Milestone`。
+Beaver 当前位于 `plugins/beaver/` (v3.2.0)：9 个命令 (`beaver-{create,claim,design,decompose,dev,pr,tracker,focus,setup}.md`) + 1 个内部 skill (`beaver-engine`) + 9 个配套 bash 脚本于 `scripts/`。后端使用 GitHub Projects V2 (`primatrix/projects` org-project #14)，已存在的自定义字段为 `Level / Status / Progress / Iteration`，并已通过 `beaver-setup` 创建了原生 Issue Type `Goal / Task / SubTask / Milestone`（spec 在 PR #106 合并后已不再使用 Milestone，需在本次重构中一并淘汰）。
 
 ### 与 spec 的差异
 
 [项目管理框架](../onboarding/project-management.md) 是本次对齐的权威 spec。当前 Beaver 与 spec 在以下维度不一致：
 
 - **Status 载体**：spec 描述为 Project V2 单选字段（7 个值），Beaver 用 `status/*` 标签实现。
-- **Type 载体**：spec 使用原生 Issue Type（`Goal / Task / SubTask / Milestone / Bug / Feature`），Beaver 用 `type/*` 标签 (`feat/bug/refactor/docs/chore`)，枚举集合与字段位置都不一致。
+- **Type 载体**：spec（wiki PR #106 已合并）使用原生 Issue Type，集合精简为 `Goal / Task / SubTask / Bug / Feature` 共 5 个值（不再包含 Milestone）；Beaver 用 `type/*` 标签 (`feat/bug/refactor/docs/chore`)，枚举集合与字段位置都不一致，且现有 `beaver-setup` 创建的 `Milestone` Type 在 spec 中已不再使用。
 - **Size 载体**：spec 定义 `XS / S / M / L / XL` 五档，Beaver 仅有 `size/S` / `size/L` 两档。
 - **系统触发的状态迁移**（Iteration 加入 → Design Pending；Design Doc PR 合并 → Ready to Develop；SubTask 关闭 → 父 Done）：spec 描述为系统行为，Beaver 当前完全没有实现。
-- **Bug 通道**：spec Phase 1.6 说 Bug 强制 `size/S` + 强制 priority；当前 G008 实现该约束，但 spec 即将更新——放宽 Bug 的 size 与 priority 强制，改为 Bug 创建时自动加入其所属 repo 的最新 Iteration。
+- **Roadmap 载体**：spec（wiki PR #106 已合并）将 Roadmap 工具映射定为 Project V2 原生 **Iteration** 字段，明确不再使用 Milestone（既不是 GitHub Milestone API，也不是 Issue Type）；Beaver 的 9 个命令与 scripts 已完成 Milestone → Iteration 的迁移（参见 commits `1f0b6bc / 7638710 / 7bb5d5e / 11ea69f / c5a59e8`），但 `beaver-engine` 文档与 `beaver-setup` 的 Issue Type 创建清单仍残留 `Milestone`，需一并清理。
+- **Project tracker issue**：spec 要求每个 Project 在当前 Iteration 内维护一个 tracker issue 集中追踪本周期任务；Beaver 已存在 `beaver-tracker` 命令承担该职责，本次重构需保证 (a) tracker 创建/更新走 `beaver-lib.sh` 字段写路径而非 `status/*` 标签，(b) tracker 的 sub-issue 列表与 Project V2 内「Iteration=当前周期 ∧ repo 归属」的 Task 集合保持一致。
+- **Task 起止时间**：spec 要求通过 Project 原生的 **Start date** / **Target date** 字段记录，不再依赖 Milestone 截止日。Beaver 不主动写这两个字段（保持 spec 中「由 Senior 在 Roadmap 制定阶段约定」的语义），但 `beaver-engine` 文档需声明此约束并避免误导命令去覆写。
+- **Bug 通道**：spec（wiki PR #104 已合并）已放宽 Bug 的 size 与 priority 强制，并要求 Bug 创建时自动加入其所属 repo 的最新 Iteration；Beaver 当前 G008 仍强制 `size/S`，需删除并以 G011（Iteration 强制）替代。
 
 ### 范围
 
-In-scope：所有 9 个 Beaver 命令 + `beaver-engine`；Project V2 #14 字段读写；命令间交接 `create → tracker → claim → design → decompose → dev → pr` 与 Bug 快速通道。
+In-scope：所有 9 个 Beaver 命令 + `beaver-engine`；Project V2 #14 字段读写；命令间交接 `create → tracker → claim → design → decompose → dev → pr` 与 Bug 快速通道；`beaver-tracker` 的 per-Project tracker issue 维护（包含 sub-issue 列表与 Iteration 字段双向同步）；移除残留的 Milestone Issue Type 引用。
 
-Out-of-scope（明示延迟）：(a) 系统触发的自动状态迁移（GitHub Actions / 后台 bot 基础设施），作为后续 Goal 处理；(b) wiki spec 本身的 Bug 规则修订，由作者在另一个 PR 中完成；(c) `beaver-pr` 的 2-Reviewer + CI-green 合并门禁，保持当前 Draft + warning 行为。
+Out-of-scope（明示延迟）：(a) 系统触发的自动状态迁移（GitHub Actions / 后台 bot 基础设施），作为后续 Goal 处理；(b) `beaver-pr` 的 2-Reviewer + CI-green 合并门禁，保持当前 Draft + warning 行为；(c) Beaver 不主动写 Project V2 的 **Start date** / **Target date** 字段——spec 将其归为 Senior 在 Roadmap 制定阶段的人工约定，本次重构不引入相关命令；`beaver-engine` 仅声明该约束以避免命令误覆写。
 
 ## 方案
 
@@ -126,6 +129,12 @@ A3 重写 `beaver-setup` 中的 Issue Type 创建逻辑，统一通过 `beaver-l
 3. `scripts/<command>.sh`：`source scripts/beaver-lib.sh`，将 `gh api repos/.../labels` 调用替换为库函数调用。
 4. 沙盒 smoke：在 `primatrix/projects` 上跑一遍命令的 lifecycle 步骤，PR 描述记录会话。
 
+`beaver-tracker` 的 SubTask 额外承担 spec 中「每个 Project 在当前 Iteration 内维护一个 tracker issue」的语义实现：
+
+- tracker issue 的 sub-issue 列表 = `{Project V2 #14 内 ∧ Iteration=当前周期 ∧ repo 归属=<repo> ∧ Type ∈ {Task, Bug, Feature}}`，每次命令运行需做一次差集同步（add 缺失 sub-issue，remove 已不属于当前 Iteration 的 sub-issue）。
+- tracker issue 自身的 Iteration 字段通过 `beaver-lib.sh::set_iteration` 写入，标识其归属周期。
+- 上述差集查询走 `beaver-lib.sh::get_iteration` + GraphQL `projectV2.items` 过滤，不依赖 `status/*` 标签。
+
 ### 接口与数据流
 
 - **读路径**：command-script → `beaver-lib.sh` `get_*` → GraphQL `projectV2Item.fieldValueByName` → typed value（单选 option name / iteration title）。
@@ -142,7 +151,7 @@ A3 重写 `beaver-setup` 中的 Issue Type 创建逻辑，统一通过 `beaver-l
 | 共享 lib vs 每个 script 内联 helper | 共享 `beaver-lib.sh` | 消除漂移；`resolve-iteration` 等 helper 已在 `beaver-create.sh` 与 `beaver-tracker.sh` 中重复出现 |
 | 仓库侧标签定义 | 保留在 `primatrix/projects`；移除的是源代码侧引用 | 可逆性——错误回滚不会丢失历史标签数据 |
 | 系统侧自动迁移 | 本次不实现 | Actions 基础设施扩展范围约 2 倍；作为后续 Goal |
-| Bug size / priority 强制 | 移除（删除 G008；G011 强制 Iteration） | 作者另行修订 wiki spec |
+| Bug size / priority 强制 | 移除（删除 G008；G011 强制 Iteration） | wiki PR #104 已合并到 main，spec 与本 RFC 同步 |
 
 ### 测试策略
 
@@ -164,16 +173,17 @@ A3 重写 `beaver-setup` 中的 Issue Type 创建逻辑，统一通过 `beaver-l
 
 - **代码**：`plugins/beaver/` 下 9 个命令 + 1 个 engine SKILL + 9 个 scripts，新增 1 个共享 lib（`scripts/beaver-lib.sh`）。
 - **GitHub Projects V2 #14**：新增 Project 单选字段 `Size`（`XS/S/M/L/XL`）。
-- **GitHub 组织级 Issue Types**：新增 `Bug` 与 `Feature`（`Goal/Task/SubTask/Milestone` 已存在）。
+- **GitHub 组织级 Issue Types**：新增 `Bug` 与 `Feature`；`Goal/Task/SubTask` 已存在；`Milestone` 标记为弃用（不再被任何命令引用，但历史已创建的实例不主动删除）。
 - **`primatrix/projects` 仓库标签**：`status/*` / `type/*` / `size/*` 标签定义本次保留不删除（仅停止源代码引用）。
 - **使用方**：所有用 Beaver 命令做项目管理流转的开发者（迁移期内既有 Issue 的字段需用 `beaver-setup` 重跑或手工补齐 Status/Size 字段）。
 
 ### 成功指标
 
 1. **End-to-end smoke（Draft-PR 终态）**：一个新建 size/M Issue 走完 `create → tracker → claim → design → decompose → dev → pr` 后落在 `Status=In Progress` + 一个 Draft PR + Project V2 字段值与 spec 表对齐，过程中无任何手动标签 / 字段编辑、无 Beaver script 之外的 `gh api` 调用。Pass = 录制的 session 日志。
-2. **字段形态**：`gh project field-list primatrix 14 --format json | jq '.fields[] | select(.name=="Status") | .options[].name'` 精确返回 7 个 wiki 值；同样查询 `Size` 返回 `XS / S / M / L / XL`；`gh api /orgs/primatrix/issue-types` 返回包含 6 个 wiki Type 值（`Goal / Task / SubTask / Milestone / Bug / Feature`）。
+2. **字段形态**：`gh project field-list primatrix 14 --format json | jq '.fields[] | select(.name=="Status") | .options[].name'` 精确返回 7 个 wiki 值；同样查询 `Size` 返回 `XS / S / M / L / XL`；`gh api /orgs/primatrix/issue-types` 返回包含 5 个 wiki Type 值（`Goal / Task / SubTask / Bug / Feature`），且 `git grep -nE "issue-type.*Milestone|--issue-type ['\"]?Milestone" plugins/beaver/` 在源码侧零命中。
 3. **源码侧标签清理**：`git grep -nE "(gh label (add|create|delete|remove))|gh api[^|]*labels.*(status/|type/|size/)" plugins/beaver/` 在命令正文 / scripts / engine 上返回零命中。仓库侧标签定义保留不动。
 4. **Bug fast-path smoke**：新建 `Bug` Issue 且 `Priority = P0`，单次 `/beaver-create` 完成后即落在 `Status = In Progress` 且按 G011 算法解析的 Iteration 已分配。
+5. **Project tracker 一致性**：在已存在若干 Iteration=当前周期 Task 的 repo 上跑 `/beaver-tracker <repo>`，运行后 (a) `primatrix/projects` 中存在标 `tracker/<YYYY-MM>` + `tracker/<repo>` 的 issue；(b) 该 issue 的 sub-issue 集合等于「Project V2 #14 内 Iteration=当前周期 ∧ repo 归属=`<repo>` ∧ Type ∈ {Task, Bug, Feature}」的 Task 集合（差集为空）；(c) 该 tracker issue 自身的 Iteration 字段已设为当前周期。
 
 ## 实施计划
 
@@ -183,7 +193,7 @@ A3 重写 `beaver-setup` 中的 Issue Type 创建逻辑，统一通过 `beaver-l
 | Phase A.2 | `beaver-engine` 重写 | A.1 | 字段化 §1–§4，guardrail G008 删除 / G011 新增 |
 | Phase A.3 | `beaver-setup` 迁移 | A.1 | `Bug`/`Feature` Issue Type + Project V2 `Size` 字段 |
 | Phase B (×8) | 每命令一个 SubTask（`beaver-{create,claim,design,decompose,dev,pr,tracker,focus}`） | Phase A 全部合并 | 命令 + script 字段化 + 沙盒 smoke |
-| 收尾 | 父 Issue #111 关闭 | Phase B 全部合并 | 4 项成功指标全部通过 |
+| 收尾 | 父 Issue #111 关闭 | Phase B 全部合并 | 5 项成功指标全部通过 |
 
 Phase A 的三个 SubTask 之间可并行评审（仅 A.2 / A.3 实现上引用 A.1），但合并顺序仍为 A.1 → 然后 A.2 / A.3。Phase B 八个 SubTask 完全并行。
 
@@ -194,7 +204,7 @@ Phase A 的三个 SubTask 之间可并行评审（仅 A.2 / A.3 实现上引用 
 | 既有 Issue 的 Project V2 字段未填值 | 迁移完成后旧 Issue 在 dashboard 上显示为空 Status / Size | A.3 可附带一次性扫描脚本，把仍带 `status/*` / `size/*` 标签的 Issue 写入对应字段 |
 | `set_type` 需要 `admin:org` scope | 个别 contributor 的 token 缺少 scope | 命令在 `set_type` 失败时打印明确的 `gh auth refresh -h github.com -s admin:org` 提示 |
 | 系统侧自动迁移仍未实现 | 用户要手动跑 `/beaver-claim` 才能 `ready-to-claim → design-pending`，与 wiki 描述的 "system behavior" 不符 | 在本 RFC 末尾建立后续 Goal「Beaver 自动迁移基础设施」，并在 `beaver-engine` §2 注明哪些迁移目前是手工触发 |
-| Bug 通道 wiki spec 修订未先于本次合并 | G011 已上线但 wiki 仍说 Bug 强制 `size/S` | 把 wiki PR 与 A.2 PR 列为互相 link 的依赖；任一未合并不能宣告 Phase A 完成 |
+| Bug 通道 wiki spec 修订未先于本次合并 | G011 已上线但 wiki 仍说 Bug 强制 `size/S` | 已解除：wiki PR #104（Bug 不强制 Size，自动加入 Iteration）与 PR #106（Roadmap 改用 Iteration 字段 + per-Project tracker）均已合并到 main，本 RFC 已基于该状态对齐。 |
 | Phase B 八个 SubTask 并行触发对 `primatrix/projects` Project #14 的写竞争 | 沙盒 smoke 之间相互污染 | 每个 SubTask 创建独立的 `[smoke] <command>` Issue，跑完即 close；review 后由作者手动归档 |
 
 <!-- provenance
@@ -225,4 +235,8 @@ Phase A 的三个 SubTask 之间可并行评审（仅 A.2 / A.3 实现上引用 
 - "Phase A 拆为 A1/A2/A3 三个有序 SubTask" ← Spec review round 2 fix
 - "Metric 3 grep scope 限定于源码侧调用" ← Spec review round 2 fix
 - "Type 6 值在 Metric 2 中显式断言" ← Spec review round 2 minor fix
+- "Roadmap 改用 Project V2 Iteration 字段 + per-Project tracker issue + Start/Target date 字段" ← wiki PR #106 (commit 63c2e06)
+- "Bug 不强制 Size，自动加入当前 Iteration" ← wiki PR #104 (commit 38fcec1)
+- "Type 集合精简为 5 个值（去掉 Milestone）" ← wiki PR #106 main (latest project-management.md line 66)
+- "Metric 5 (tracker 一致性) + Phase B beaver-tracker 额外职责" ← 对齐 wiki PR #106 spec
 -->
