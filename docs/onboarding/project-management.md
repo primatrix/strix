@@ -63,7 +63,7 @@ Task 在生命周期中流转于一组明确的状态，由 GitHub Project 的 *
 - `Blocked`：开发被外部依赖阻塞，暂停推进。阻塞解除后回到 `In Progress`。
 - `Done`：完成。Size = XS/S 在自身 PR 合并后到达；Size = M/L/XL 在所有 SubTask Issue 关闭后由系统自动汇总到达。
 
-> 上述字段值均为 GitHub Project 中已配置的 **Status** 选项；Size、Priority、Iteration 均为 Project 内置字段；Task 起止时间由 Project 原生的 **Start date** 与 **Target date** 字段记录；Type（Bug/Feature/Task/SubTask/Goal）使用 GitHub Issue 原生 Type 字段，无需额外标签。
+> 上述字段值均为 GitHub Project 中已配置的 **Status** 选项；Size、Priority、Iteration 均为 Project 内置字段；Task 起止时间由 Project 原生的 **Start date** 与 **Target date** 字段记录；Type（Bug/Task/SubTask）使用 GitHub Issue 原生 Type 字段，无需额外标签。
 
 **触发方：**
 
@@ -124,7 +124,7 @@ graph LR
 
 ### Bugfix 通道
 
-Type = `Bug` 的 Issue 走独立于 Feature 的并行通道，跳过 Roadmap 与设计评审，创建时自动纳入当前仓库的当前 Iteration。根据 Priority 字段分为紧急和常规两种路由：
+Type = `Bug` 的 Issue 走独立通道，跳过 Roadmap 与设计评审，创建时自动纳入当前仓库的当前 Iteration。根据 Priority 字段分为紧急和常规两种路由：
 
 | 条件 | 路由 | 说明 |
 |------|------|------|
@@ -143,7 +143,7 @@ Bug 不设 Size 字段，使用 Bug 专用 Issue 模板（复现步骤、期望/
 Task 通过用户与系统的交互式对话创建。用户提供意图，系统逐步收集结构化信息并完成落库。
 
 1. 用户发起创建请求；系统加载项目配置与历史默认值。
-2. 系统逐项询问以下信息，用户依次回答：层级（Goal/Task/SubTask，对应 GitHub Issue Type）、父 Issue、标题、描述（目标与验收标准）、Type（Feature/Bug/...）、Priority（P0/P1/P2）。
+2. 系统逐项询问以下信息，用户依次回答：Type（Task/SubTask/Bug）、父 Issue、标题、描述（目标与验收标准）、Priority（P0/P1/P2）。
 3. 系统根据描述复杂度自动建议 Size（XS/S/M/L/XL）并展示推理依据；用户确认或修改。
 4. 系统给出完整 Issue 预览；用户明确批准后系统才执行创建。
 5. 系统创建 Issue（设置原生 Type 字段）、加入 Project，设置 Level/Status/Size/Priority/Progress 字段，关联父 Issue，并按 Size 设置初始 Status：所有新建 Task → Status = `Triage`（待 Roadmap 纳入或直接认领）。
