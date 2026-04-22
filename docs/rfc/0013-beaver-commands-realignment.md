@@ -326,9 +326,9 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 1. **入参**：无（所有 `org` / `project number` 硬编码为 `primatrix` + Project #14，避免被误指向其他 project）。
 2. **scope 自检**：命令检查 `gh auth status` 与 token scope，需含 `project` 与 `admin:org`；任一缺失立即提示 `gh auth refresh -h github.com -s project,admin:org` 并退出，避免后续中途失败留下半完成状态。
-3. **HARD-GATE 用户审批**：命令把"将要做的全部变更"作为一份清单展示给用户（要新建 / 补齐哪些字段、要创建哪些 Issue Type、要创建哪些标签、要写哪些 README 段），等待用户显式输入 `yes`。任何 `no` / Ctrl-C 都使命令零副作用退出。
+3. **HARD-GATE 用户审批**：命令把"将要做的全部变更"作为一份清单展示给用户（要新建 / 补齐哪些字段、要创建哪些 Issue Type、要写哪些 README 段），等待用户显式输入 `yes`。任何 `no` / Ctrl-C 都使命令零副作用退出。
 4. **Project V2 字段 ensure**（按字段逐个 ensure 存在 + 选项匹配，不一致则补差）：
-   - `Level`：SINGLE_SELECT，选项 `Task / SubTask`；
+   - `Level`：SINGLE_SELECT，选项 `Task / SubTask / Bug`；
    - `Status`：SINGLE_SELECT，**全量替换**为 wiki spec 的 7 个值（`Triage / Ready to Claim / Design Pending / Ready to Develop / In Progress / Blocked / Done`）——若现存选项数量或名称与之不符，命令打印 diff 并要求用户二次确认后替换；
    - `Size`：SINGLE_SELECT，选项 `XS / S / M / L / XL`（**新增字段**）；
    - `Progress`：NUMBER；
@@ -337,15 +337,12 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    - 通过 `gh api /orgs/primatrix/issue-types`（GET）列出已存在 Type；
    - 缺失的 `Bug / Task / SubTask` 通过 POST 补齐；
    - **不再创建 `Milestone`**（已弃用）；若历史已存在 `Milestone`，命令打印「检测到弃用 Type，建议人工迁移已存在的实例后再删」但不主动删，避免破坏历史数据。
-6. **仓库级标签 ensure**（在 `primatrix/projects` 上）：
-   - 创建 / 补齐 Beaver 自身使用的元数据标签集合：`Control-By-Beaver / beaver-missing-test / beaver-needs-split / beaver-missing-context / tracker / tracker/<repo>` 模板等；
-   - **不再创建** `status/* / type/* / size/* / p*-*` taxonomy（这些已迁移为 Project V2 字段或原生 Issue Type）；历史定义保留不动。
-7. **`beaver-config` 写入**：在 `primatrix/projects` README 中维护一个 YAML 块，含本 RFC 约定的 `issueRepo / projectNumber / fieldNames` 等配置，供其他命令读取。已存在则按 key 合并，不已有覆盖。
-8. **执行总结**：命令打印一份 setup summary：本次新增 / 已存在 / 跳过 的字段、Type、标签数量；并附一个针对成功指标 2 的自检 grep 结果（确保源码侧无 `Milestone` Issue Type 引用）。
+6. **`beaver-config` 写入**：在 `primatrix/projects` README 中维护一个 YAML 块，含本 RFC 约定的 `issueRepo / projectNumber / fieldNames` 等配置，供其他命令读取。已存在则按 key 合并，不已有覆盖。
+7. **执行总结**：命令打印一份 setup summary：本次新增 / 已存在 / 跳过 的字段、Type 数量；并附一个针对成功指标 2 的自检 grep 结果（确保源码侧无 `Milestone` Issue Type 引用）。
 
 **Guardrail**：scope 缺失时立即退出；Status 选项数量不为 7 时给出 diff 警告并要求二次确认；任何写操作前必须经过第 3 步 HARD-GATE。命令在源码侧不再调用 `Milestone` Issue Type 的创建路径（成功指标 2 的 grep 断言）。
 
-**期望终态**：Project #14 上 `Level / Status (7 项) / Size (5 项) / Progress / Iteration` 五个字段形态正确；组织级 Issue Type 含 `Bug / Task / SubTask` 三个值；`primatrix/projects` 仓库标签含 Beaver 元数据集合；`beaver-config` 在 README 中可被其他命令读取；终端给出 setup summary。
+**期望终态**：Project #14 上 `Level / Status (7 项) / Size (5 项) / Progress / Iteration` 五个字段形态正确；组织级 Issue Type 含 `Bug / Task / SubTask` 三个值；`beaver-config` 在 README 中可被其他命令读取；终端给出 setup summary。
 
 ### 分阶段重构
 
