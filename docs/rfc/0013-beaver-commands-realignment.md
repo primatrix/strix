@@ -124,9 +124,9 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 3. **tracker Issue 创建**：在 `primatrix/projects` 创建标题为 `[Iteration] <repo> <YYYY-MM>` 的 Issue，body 含一段固定模板（说明该 tracker 的用途、所属周期、所属 repo），并打上仓库级标签 `tracker / tracker/<repo> / tracker/<YYYY-MM>`。这三个标签是 Beaver 自身的元数据通道，独立于被淘汰的 `status/* / type/* / size/*` taxonomy。tracker Issue 自身被加入 Project #14，并通过字段写入 `Iteration=<YYYY-MM>`。
 4. **上月 carry-over**：命令查上一个 `YYYY-MM-1` 的 tracker（若有）；将其下所有 `state=open` 的 sub-issue 收集为 carry-over 候选集，并向用户展示「这些是上月未完成的，是否全部带入本月？」。用户可全选、全拒、或逐项勾选。被选中的 sub-issue 在第 6 步统一处理。
 5. **Backlog 拉取**：命令从 Project #14 中查询「`Iteration` 字段未填 ∧ `Status=Triage` ∧ repo 归属=`<repo>` ∧ Type ∈ {Task, Bug}」的 Issue 集合作为 backlog 候选；以列表形式展示，让用户逐项决定是否纳入本周期。
-6. **批量挂载（写差集）**：对第 4、5 两步选中的每个 sub-issue：
-   a. 若尚未在 Project #14 中，先 `add-to-project`；
-   b. 通过 Sub-Issues API 把 sub-issue 挂到本月 tracker 下；
+6. **批量挂载（写差集）**：对第 4、5 两步选中的每个 sub-issue（先加入 sub-issue、再 add-to-project，与 `/beaver-decompose` 的落库顺序一致，避免父卡出现 "sub-issue not in this project" 的不一致）：
+   a. 通过 Sub-Issues API 把 sub-issue 挂到本月 tracker 下；
+   b. 若尚未在 Project #14 中，`add-to-project`；
    c. 写 Project V2 字段 `Iteration=<YYYY-MM>`。
 7. **解挂同步**：命令查询本月 tracker 当前已有的 sub-issue 集合，识别出「已挂在 tracker 下，但 `Iteration` 字段不再是 `<YYYY-MM>` 或 repo 归属不再是 `<repo>`」的过期项，逐个从 tracker 下解除挂载（不删 Issue、不改其它字段）。这是把 tracker 视图变成 Project V2 字段的"投影"，确保两侧一致。
 8. **完成回执**：命令打印 tracker Issue URL、本周期 sub-issue 数量、carry-over 数量、新拉取数量、解挂数量四项统计，便于 Senior 在周会上对账。
