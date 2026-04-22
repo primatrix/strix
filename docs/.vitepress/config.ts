@@ -150,6 +150,7 @@ export default withMermaid(
                 collapsed: false,
                 items: [
                   { text: 'falcon-resource-manager', link: '/projects/falcon/design/0000-falcon-resource-manager' },
+                  { text: '实验以及 APIServer 和 Controller 设计', link: '/projects/falcon/experiment_core_components' },
                 ],
               },
             ],
