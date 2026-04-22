@@ -57,7 +57,7 @@ Task 在生命周期中流转于一组明确的状态，由 GitHub Project 的 *
 - `Ready to Claim`：Task 已被纳入 Roadmap Milestone，等待团队成员认领。
 - `Design Pending`（仅 Size = M/L/XL）：Task 已被某成员认领，需先撰写并合并 Design Doc。Size = XS/S 跳过此状态。
 - `Ready to Develop`（仅 Size = M/L/XL）：Design Doc PR 合并后到达，等待认领人推进开发与 SubTask 拆解。
-- `In Progress`：Task 进入实质开发。Size = XS/S 在认领后直接进入；Size = M/L/XL 在 `Ready to Develop` 之后进入，期间认领人按 Design Doc 拆出 SubTask 并推进各 SubTask。Priority = P0 的 Bug 创建时直接进入此状态。
+- `In Progress`：Task 进入实质开发。Size = XS/S 在认领后直接进入；Size = M/L/XL 在 `Ready to Develop` 之后进入，期间认领人按 Design Doc 拆出 SubTask 并推进各 SubTask。Priority = P0 的 Bug 创建时直接进入此状态；其他 Bug 创建时自动纳入当前 Iteration 并进入 `Ready to Claim`。
 - `Blocked`：开发被外部依赖阻塞，暂停推进。阻塞解除后回到 `In Progress`。
 - `Done`：完成。Size = XS/S 在自身 PR 合并后到达；Size = M/L/XL 在所有 SubTask Issue 关闭后由系统自动汇总到达。
 
@@ -122,20 +122,19 @@ graph LR
 
 ### Bugfix 通道
 
-Type = `Bug` 的 Issue 走独立于 Feature 的并行通道，根据 Priority 字段分为紧急和常规两种路由：
+Type = `Bug` 的 Issue 走独立于 Feature 的并行通道，跳过 Roadmap 与设计评审，创建时自动纳入当前仓库的当前 Iteration。根据 Priority 字段分为紧急和常规两种路由：
 
 | 条件 | 路由 | 说明 |
 |------|------|------|
-| Type = Bug + Priority = P0 | 紧急通道 | 跳过 Roadmap 与设计评审，创建后直接进入开发，Status 自动置为 `In Progress` |
-| Type = Bug + Priority = P1/P2 | 常规 Bug | 跳过 Roadmap 与设计评审，创建 Issue（强制 Size = S）后直接进入开发 |
+| Type = Bug + Priority = P0 | 紧急通道 | 创建后跳过 `Triage`，Status 自动置为 `In Progress` |
+| Type = Bug + Priority = P1/P2 | 常规 Bug | 创建后跳过 `Triage`，Status 自动置为 `Ready to Claim`，等待认领 |
 
 紧急 bug 的关键差异在于自动化行为：
 
-- 自动跳过 `Triage`，直接流转到 `In Progress`
+- 自动跳过 `Ready to Claim`，直接流转到 `In Progress`
 - 自动 @mention CODEOWNERS 中对应模块的负责人
-- 无需提前纳入 Roadmap Milestone（可事后回溯关联）
 
-所有 Bug 强制 Size = `S`（不允许设置 Size = M/L/XL），使用 Bug 专用 Issue 模板（复现步骤、期望/实际行为、影响范围、环境信息）。
+Bug 不设 Size 字段，使用 Bug 专用 Issue 模板（复现步骤、期望/实际行为、影响范围、环境信息）。
 
 ### Phase 1: Task 创建
 
@@ -146,7 +145,7 @@ Task 通过用户与系统的交互式对话创建。用户提供意图，系统
 3. 系统根据描述复杂度自动建议 Size（XS/S/M/L/XL）并展示推理依据；用户确认或修改。
 4. 系统给出完整 Issue 预览；用户明确批准后系统才执行创建。
 5. 系统创建 Issue（设置原生 Type 字段）、加入 Project，设置 Level/Status/Size/Priority/Progress 字段，关联父 Issue，并按 Size 设置初始 Status：所有新建 Task → Status = `Triage`（待 Roadmap 纳入或直接认领）。
-6. **Bug 模式**：当 Type = `Bug` 时，系统自动填充 Bug 报告模板、强制 Size = `S`、要求设置 Priority（P0/P1/P2）。若 Priority = `P0`，系统跳过 Status = `Triage` 直接置为 `In Progress`，并 @mention CODEOWNERS 中对应模块负责人。
+6. **Bug 模式**：当 Type = `Bug` 时，系统自动填充 Bug 报告模板、不设置 Size 字段，要求设置 Priority（P0/P1/P2），并自动将 Issue 纳入当前仓库的当前 Iteration。Status 跳过 `Triage`：Priority = `P0` 直接置为 `In Progress` 并 @mention CODEOWNERS 中对应模块负责人；Priority = `P1/P2` 置为 `Ready to Claim`。
 
 ### Phase 2: Roadmap 制定
 
