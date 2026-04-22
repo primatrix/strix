@@ -67,7 +67,7 @@ Out-of-scope（明示延迟）：(a) 系统触发的自动状态迁移（GitHub 
 
 ### 命令规约（重构后预期 workflow）
 
-以下小节描述 9 个 Beaver 命令在重构完成后**期望**的端到端工作流程，作为 Phase B 各 SubTask 的对齐基线与最终验收的可枚举依据。每个命令以「触发场景 → 用户与系统的逐步交互 → 期望终态」的叙事形式给出，并不假设当前 plugins/beaver 实现的具体形态——若现有实现与本节描述存在差异，应以本节为准、由 Phase B 中相应 SubTask 把实现对齐到本节。
+以下小节描述 9 个 Beaver 命令在重构完成后**期望**的端到端工作流程，以及 1 个新增命令 `/beaver-fix`，合计 10 条命令规约，作为 Phase B 各 SubTask 的对齐基线与最终验收的可枚举依据。每个命令以「触发场景 → 用户与系统的逐步交互 → 期望终态」的叙事形式给出，并不假设当前 plugins/beaver 实现的具体形态——若现有实现与本节描述存在差异，应以本节为准、由 Phase B 中相应 SubTask 把实现对齐到本节。`/beaver-fix` 为本 RFC 新增命令，其实现 SubTask 不包含在 Phase B 的 8 个并行 SubTask 中，需另行拆解。
 
 所有「字段」均指 Project V2 #14 的自定义字段；所有 Type 值均指原生 GitHub Issue Type；不再出现 `status/*` / `type/*` / `size/*` 标签。
 
@@ -325,6 +325,36 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 **Guardrail**：scope 缺失时立即退出；Status 选项数量不为 7 时给出 diff 警告并要求二次确认；任何写操作前必须经过第 3 步 HARD-GATE。命令在源码侧不再调用 `Milestone` Issue Type 的创建路径（成功指标 2 的 grep 断言）。
 
 **期望终态**：Project #14 上 `Level / Status (7 项) / Size (5 项) / Progress / Iteration` 五个字段形态正确；组织级 Issue Type 含 `Bug / Task / SubTask` 三个值；`beaver-config` 在 README 中可被其他命令读取；终端给出 setup summary。
+
+#### 10. `/beaver-fix`
+
+**触发场景**：开发者在 `/beaver-pr` 开出 Draft 或 Open PR 后，收到了 Reviewer 的 review comments；希望由命令统一收集所有 open comments、给出修复建议、经用户 QA 确认后自动应用修改，并在所有 fix 完成后批量 resolve 所有 comments 并推送变更。
+
+**入参**：`<pr-number>`（必填，且必须是当前用户自己发起的 PR）。
+
+**预期 workflow**：
+
+1. **入参与权限校验**：命令读取 `<pr-number>`，通过 `gh pr view` 确认 (a) 该 PR 确实存在于当前 repo；(b) PR author 与当前 `gh` 用户身份一致——若不一致立即中止并提示「只能对自己发起的 PR 运行 /beaver-fix」。
+2. **评论收集**：命令通过 `gh api` 拉取该 PR 的所有 **review comments**（line-level）与 **issue comments**（PR-level 评论）；过滤掉 `state=RESOLVED` 的 review threads，仅保留 open / unresolved 的条目；若无 open comments，打印「无待处理评论」并退出。
+3. **逐条修复建议**：对每个 open comment，命令：
+   a. 在终端渲染评论内容（路径 + 行号 + 评论原文），并读取对应代码片段作为上下文；
+   b. 生成一条具体的修复建议（diff 或自然语言描述），标注修复依据（遵循原评论意图 / 与 CLAUDE.md 约定一致 / 与 spec 一致 / 存疑需用户裁断）；
+   c. 向用户发问（每次一条）：`[接受修复] / [修改建议] / [跳过，不修复] / [标为已知，仅 resolve comment]`，等待用户选择后再处理下一条；
+   d. 若用户选择「接受修复」，命令立即把对应代码变更写入文件（不提前批量写，避免相互冲突）；
+   e. 若用户选择「修改建议」，命令展示当前建议并允许用户补充意图，重新生成后再回到第 3.c 步。
+4. **全局 QA 确认（HARD-GATE）**：所有 open comments 逐条处理完毕后，命令把本轮「已修复 / 跳过 / 仅 resolve」的汇总展示给用户，并等待用户输入 `yes` 确认继续；`no` / Ctrl-C 回滚所有文件修改并退出（不推送、不 resolve）。
+5. **resolve comments**：用户确认后，命令通过 `gh api graphql` 对步骤 3 中「接受修复」与「仅 resolve」的每一条 review thread 调用 `resolveReviewThread`（mutation），批量标记为 resolved；「跳过」的 thread 保持 open 不触碰。
+6. **commit 与 push**：命令把本轮所有文件修改组成一次 conventional commit（`fix(<scope>): address review comments`），commit message body 中以无序列表列出各条 comment 的简要描述与处置方式（修复 / resolve），push 到 PR 的远端分支。若无任何文件修改（所有 open comments 均选「仅 resolve」或「跳过」），跳过 commit 步骤，仅做 resolve。
+7. **下一步指引**：命令打印 PR URL、本轮 resolved 数、剩余 open 数、push commit SHA（如有），并提示：
+   - 若剩余 open 数 > 0：「仍有 N 条 open comment，可再次运行 `/beaver-fix <pr-number>` 处理」；
+   - 若剩余 open 数 = 0 且 PR 仍为 Draft：「所有评论已 resolved；如已完成自审，可运行 `gh pr ready <pr-number>` 转 Open」；
+   - 若剩余 open 数 = 0 且 PR 已为 Open：「所有评论已 resolved；等待 Reviewer 重新审核或批准」。
+
+**写字段**：本命令**不修改** Project V2 字段。Push 到 PR 分支后由 GitHub 自动重新请求 review（若 CODEOWNERS 配置了 `dismiss stale reviews`），不需命令额外操作。
+
+**Guardrail**：PR author 一致性检查（步骤 1，强制）；HARD-GATE（步骤 4，强制）；`discard` 路径（HARD-GATE 拒绝）回滚文件修改不推送；`resolveReviewThread` 仅对「接受修复」或「仅 resolve」的 thread 执行，「跳过」的不触碰。
+
+**期望终态**：PR 对应分支上存在一次新 commit（如有文件修改）；「接受修复」与「仅 resolve」的 review threads 均处于 resolved 状态；「跳过」的 threads 保持 open；终端给出剩余 open comment 数与下一步指引；Project V2 字段未被修改。
 
 ### 分阶段重构
 
