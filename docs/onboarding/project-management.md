@@ -30,7 +30,7 @@ Goal 是团队级别的长期工作方向，通常跨越多个项目、持续数
 
 Project 是代码开发和项目管理的基本单元，通常与一个代码仓库对应。每个 Project 有独立的定位说明和技术文档。多个 Project 可以服务于同一个 Goal，而 Task 在 Project 下创建和管理。Project 是日常开发工作的组织边界，也是权限管理和持续集成的配置单元，团队成员在 Project 范围内协作完成开发与交付。
 
-Roadmap 与 Project 统一体现在同一个 [GitHub Project](https://github.com/orgs/primatrix/projects/14) 中，便于集中管理项目规划与任务跟踪。Roadmap 通过 GitHub Project 的迭代（Iteration）或 Milestone 视图呈现，按时间周期划定阶段性交付范围。
+Roadmap 与 Project 统一体现在同一个 [GitHub Project](https://github.com/orgs/primatrix/projects/14) 中，便于集中管理项目规划与任务跟踪。Roadmap 通过 GitHub Project 原生的 **Iteration** 字段呈现，按时间周期划定阶段性交付范围。
 
 - **工具映射**：[GitHub Project V2](https://github.com/orgs/primatrix/projects/14)。
 
@@ -38,7 +38,9 @@ Roadmap 与 Project 统一体现在同一个 [GitHub Project](https://github.com
 
 Roadmap 是按时间周期进行的规划，通常以月或双月为单位。在每个周期开始时，将处于草案状态的 Task 纳入 Roadmap，并约定完成日期。Roadmap 横切 Task 层，定义当前周期内需要完成哪些 Task，是连接长期目标与短期执行的桥梁。周期结束时团队回顾完成情况，未完成的 Task 会顺延至下一周期重新评估优先级。
 
-- **工具映射**：与 Project 共用同一个 [GitHub Project](https://github.com/orgs/primatrix/projects/14)，使用 Milestones 划分周期。
+每个 Project 在当前 Iteration 内维护一个 **tracker issue**，集中追踪本周期内待完成的全部任务，便于成员快速查看 Project 的迭代进度与风险。
+
+- **工具映射**：与 Project 共用同一个 [GitHub Project](https://github.com/orgs/primatrix/projects/14)，使用 GitHub Project 原生的 **Iteration** 字段划分周期，Task 的起止时间通过 Project 原生的 **Start date** 与 **Target date** 字段记录。
 - **角色与责任**：由团队内 Senior 的人轮值制定，由其他团队成员 Review。
 
 ## Task（任务）
@@ -54,26 +56,26 @@ Task 在生命周期中流转于一组明确的状态，由 GitHub Project 的 *
 **Status 字段取值：**
 
 - `Triage`：初始状态。Task 创建后所处的状态，等待被纳入 Roadmap。
-- `Ready to Claim`：Task 已被纳入 Roadmap Milestone，等待团队成员认领。
+- `Ready to Claim`：Task 已被纳入 Roadmap Iteration，等待团队成员认领。
 - `Design Pending`（仅 Size = M/L/XL）：Task 已被某成员认领，需先撰写并合并 Design Doc。Size = XS/S 跳过此状态。
 - `Ready to Develop`（仅 Size = M/L/XL）：Design Doc PR 合并后到达，等待认领人推进开发与 SubTask 拆解。
 - `In Progress`：Task 进入实质开发。Size = XS/S 在认领后直接进入；Size = M/L/XL 在 `Ready to Develop` 之后进入，期间认领人按 Design Doc 拆出 SubTask 并推进各 SubTask。Priority = P0 的 Bug 创建时直接进入此状态；其他 Bug 创建时自动纳入当前 Iteration 并进入 `Ready to Claim`。
 - `Blocked`：开发被外部依赖阻塞，暂停推进。阻塞解除后回到 `In Progress`。
 - `Done`：完成。Size = XS/S 在自身 PR 合并后到达；Size = M/L/XL 在所有 SubTask Issue 关闭后由系统自动汇总到达。
 
-> 上述字段值均为 GitHub Project 中已配置的 **Status** 选项；Size、Priority 均为 Project 内置单选字段；Type（Bug/Feature/Task/SubTask/Goal/Milestone）使用 GitHub Issue 原生 Type 字段，无需额外标签。
+> 上述字段值均为 GitHub Project 中已配置的 **Status** 选项；Size、Priority、Iteration 均为 Project 内置字段；Task 起止时间由 Project 原生的 **Start date** 与 **Target date** 字段记录；Type（Bug/Feature/Task/SubTask/Goal）使用 GitHub Issue 原生 Type 字段，无需额外标签。
 
 **触发方：**
 
-- 用户触发：创建 Task、纳入 Milestone、认领、标记/解除阻塞、提交并合并 PR。
-- 系统触发：纳入 Milestone 后置为待认领、Design Doc PR 合并后进入开发、SubTask 全部关闭后将父 Size = M/L/XL Task 标为 Done。
+- 用户触发：创建 Task、纳入 Iteration、认领、标记/解除阻塞、提交并合并 PR。
+- 系统触发：纳入 Iteration 后置为待认领、Design Doc PR 合并后进入开发、SubTask 全部关闭后将父 Size = M/L/XL Task 标为 Done。
 
 **合法迁移：**
 
 ```mermaid
 stateDiagram-v2
     [*] --> Triage
-    Triage --> ReadyToClaim : 加入 Roadmap Milestone
+    Triage --> ReadyToClaim : 加入 Roadmap Iteration
     ReadyToClaim --> DesignPending : Size=M/L/XL 被认领
     ReadyToClaim --> InProgress : Size=XS/S 被认领
     DesignPending --> ReadyToDevelop : Design Doc PR 合并
@@ -151,14 +153,15 @@ Task 通过用户与系统的交互式对话创建。用户提供意图，系统
 
 **用户行为：**
 
-- Senior 轮值负责，创建本周期的 Milestone 并设定起止日期，从 backlog 已有 Task 中筛选纳入 Milestone 并确定优先级
+- Senior 轮值负责，为本周期的 **Iteration** 设定起止日期，从 backlog 已有 Task 中筛选纳入当前 Iteration 并确定优先级；通过 Project 原生的 **Start date** / **Target date** 字段为关键 Task 约定起止时间
+- 在每个 Project 下创建/更新一个 **tracker issue**，集中列出本 Iteration 内该 Project 待完成的全部任务
 - 其他团队成员 Review Roadmap 并发起讨论
 
 **系统行为：**
 
-- 提供项目健康报告，展示 Milestone 进度、逾期/停滞检测、阻塞链分析，辅助纳入决策与风险判断
-- 自动为超过 3 天无更新的 Issue 标记 `status/stale`，超过 DDL 的标记 `status/overdue`（运营辅助 Label，不进入 Project Status 枚举）
-- Size = M/L/XL 的 Task 被加入 Milestone 后，自动流转 Status 到 `Design Pending`
+- 提供项目健康报告，展示 Iteration 进度、逾期/停滞检测、阻塞链分析，辅助纳入决策与风险判断
+- Size = M/L/XL 的 Task 被加入 Iteration 后，自动流转 Status 到 `Design Pending`
+- 自动维护各 Project 的 tracker issue：将本 Iteration 内归属该 Project 的 Task 同步到 tracker issue 的清单中
 
 ### Phase 3: 认领与开发
 
