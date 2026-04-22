@@ -84,31 +84,33 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 **预期 workflow**：
 
-1. **意图收集**：用户运行命令；命令询问本次创建的 Issue Type（`bug / task` 二选一），或接受用户在命令行附带的同名参数。命令据此把意图分流为两条子流程：Task 或 Bug。
-2. **目标 repo 解析**：命令从 Project #14 README 中嵌入的 `beaver-config` 读出当前 `issueRepo`（团队约定的「本周期 issue 创建落点」），不要求用户输入。`beaver-config` 缺失或解析失败时命令立即中止，并提示用户先运行 `/beaver-setup`。
-3. **结构化问答（QA 循环）**：命令通过逐段问答收集 Issue 内容，每段一个问题、一个回答、一次回显确认，禁止用户在命令行一次性传入完整 body。两条子流程问答模板不同：
+1. **意图收集**：用户运行命令，并以自然语言描述要创建的 Issue 内容（一段话或若干要点均可）。命令根据描述内容推断 Issue Type（`bug` 或 `task`），向用户展示推断结果与依据，等待用户确认或纠正。用户也可在命令行直接附带 `--type bug|task` 跳过推断。确认后意图分流为两条子流程：Task 或 Bug。
+2. **目标 repo 解析**：命令从 Project #14 README 中嵌入的 `beaver-config` 读出当前 `issueRepo`（即 Issue 创建的目标仓库，不存在「关联 repo」字段——`beaver-config` 中 `issueRepo` 若为 `all` 则默认 `primatrix/projects`），不要求用户输入。`beaver-config` 缺失或解析失败时命令立即中止，并提示用户先运行 `/beaver-setup`。
+3. **代码调研（上下文补充）**：在进入结构化问答前，命令在 `issueRepo` 下根据用户在第 1 步描述的内容，检索并阅读相关代码文件（文件名关键词匹配、函数签名搜索等），将调研摘要作为后续 QA 的「已有上下文」展示给用户，并在 Issue body 中以 `<!-- context -->` 块附注关键发现。此步骤自动执行，无需用户操作，但若 `issueRepo` 为非代码仓库（如 `primatrix/projects`）则跳过。
+4. **结构化问答（QA 循环）**：命令通过逐段问答收集 Issue 内容，每段一个问题、一个回答、一次回显确认，禁止用户在命令行一次性传入完整 body。两条子流程问答模板不同：
    - **Size=L Task**：4 段——(a) 层级与父 Issue（用以推导 `Level`）、(b) 客观 objective、(c) 验收标准、(d) 已知约束 / 风险。
    - **Size=S Task**：3 段最小问答——objective、验收标准、依赖项。
    - **Bug**：4 段——复现步骤、期望行为、实际行为、影响范围 + 环境。
-4. **Size 推荐与确认**：QA 收集 objective 后，命令基于描述复杂度（行数、是否跨模块、是否引入新依赖）自动建议 `Size ∈ {XS, S, M, L, XL}`，并展示推理依据。用户确认或在五档内覆盖；这是用户唯一直接编辑的 Project V2 字段。
-5. **Iteration 决策**：
-   - Task 路径：命令询问用户「跳过 / 加入当前 Iteration / 选择某月 Iteration」，三选一。选择 `skip` 时 Issue 创建后 `Iteration` 字段留空，等待 `/beaver-tracker` 在后续周期把它纳入。
+5. **Size 推荐与确认**：QA 收集 objective 后，命令基于描述复杂度（行数、是否跨模块、是否引入新依赖）自动建议 `Size ∈ {XS, S, M, L, XL}`，并展示推理依据。用户确认或在五档内覆盖；这是用户唯一直接编辑的 Project V2 字段。
+6. **Iteration 决策**：
+   - Task 路径：命令询问用户「跳过 / 加入当前 Iteration / 选择某月 Iteration」，三选一。选择 `skip` 时 Issue 创建后 `Iteration` 字段留空，等待 `/beaver-tracker` 在后续周期把它纳入。**若用户选择加入某个 Iteration 且在第 4 步声明了父 Issue，命令额外把父 Issue 关联到该 Iteration 的 tracker issue（`[Iteration] <repo> <YYYY-MM>`）作为 sub-issue，使父卡在 tracker 视图中可见；若 tracker issue 不存在，命令打印提示「建议先运行 `/beaver-tracker <repo> <YYYY-MM>` 再创建子任务」，但不阻断本次创建。**
    - Bug 路径：用户不被询问；命令按 §「`latest_iteration_for_repo` 解析算法」自动解析「当前 Iteration 或下一个未来 Iteration」并写入。算法返回空 → G011 失败 → 命令中止并提示 `/beaver-tracker <repo>`。
-6. **Issue 预览 HARD-GATE**：所有写操作之前，命令把即将创建的 Issue 完整渲染（标题、body、推导出的所有字段值、父 Issue 链接、是否会 `@CODEOWNERS`）一次性展示给用户，等待用户显式输入 `yes` 才进入第 7 步。任何 `no` / Ctrl-C 都使命令零副作用退出。
-7. **落库**（按以下顺序，前一步失败即整体回滚或人工干预提示）：
-   a. 在 `issueRepo` 创建 Issue，body 即第 3 步收集的内容；P0 Bug 在 body 中 `@CODEOWNERS` mention。
-   b. 若用户在第 3 步声明了 parent，通过 Sub-Issues API 链接到 parent —— **必须先于** 把 child 加入 Project #14，否则父卡会出现 "1 sub-issue not in this project" 的不一致。
+7. **Issue 预览 HARD-GATE**：所有写操作之前，命令把即将创建的 Issue 完整渲染（标题、body、推导出的所有字段值、父 Issue 链接、是否会 `@CODEOWNERS`）一次性展示给用户，等待用户显式输入 `yes` 才进入第 8 步。任何 `no` / Ctrl-C 都使命令零副作用退出。
+8. **落库**（按以下顺序，前一步失败即整体回滚或人工干预提示）：
+   a. 在 `issueRepo` 创建 Issue，body 即第 4 步收集的内容；P0 Bug 在 body 中 `@CODEOWNERS` mention。
+   b. 若用户在第 4 步声明了 parent，通过 Sub-Issues API 链接到 parent —— **必须先于** 把 child 加入 Project #14，否则父卡会出现 "1 sub-issue not in this project" 的不一致。
    c. 把 Issue 加入 Project #14。
    d. 写入 Project V2 字段：`Type`（推导自 `<issue-type>`）、`Level`（推导自父子结构）、`Size`（用户确认值）、`Status`（默认 `Triage`；P0/blocker Bug 直接 `In Progress`）、`Iteration`（Bug 必填、Task 按用户选择）。每个字段的写入相互独立，不存在「写 Status 同时改 Type」的复合操作。
-8. **下一步建议**：命令打印 Issue URL 与下一步指引——
+   e. 若第 6 步 Task 路径触发了父 Issue 关联 tracker，把父 Issue 通过 Sub-Issues API 挂到该 tracker issue 下，并写入父 Issue 的 `Iteration` 字段为所选 `<YYYY-MM>`。
+9. **下一步建议**：命令打印 Issue URL 与下一步指引——
    - Task 未挂 Iteration → `/beaver-tracker <repo>`；
    - Task 已挂 Iteration → 等待系统迁移 `Triage → Ready to Claim` 后由其他成员 `/beaver-claim <number>`（系统迁移本次 out-of-scope，可能仍需人工触发）；
    - 常规 Bug（P1/P2）→ 直接 `/beaver-claim <number>`；
    - P0 Bug → 已为 `In Progress`，可直接 `/beaver-dev <number>` 或等待被 mention 的负责人响应。
 
-**Guardrail**：G002（Type 必填，QA 第 1 步未给 type 即拒绝继续）、G011（Bug 路径下 Iteration 解析失败即拒绝创建）；G008（Bug 强制 size/S）已删除。
+**Guardrail**：G002（Type 必填，第 1 步推断后用户拒绝确认即中止）、G011（Bug 路径下 Iteration 解析失败即拒绝创建）；G008（Bug 强制 size/S）已删除。
 
-**期望终态**：`issueRepo` 中存在新 Issue；该 Issue 已加入 Project #14；该 Project 项的 `Type / Level / Size / Status / Iteration` 字段值与上文 7.d 一致；终端给出明确的 next-step 指引；本命令未触碰任何 `status/* / type/* / size/*` 标签。
+**期望终态**：`issueRepo` 中存在新 Issue；该 Issue 已加入 Project #14；该 Project 项的 `Type / Level / Size / Status / Iteration` 字段值与上文 8.d 一致；若有父 Issue 且用户选择了 Iteration，父 Issue 已关联到对应 tracker；终端给出明确的 next-step 指引；本命令未触碰任何 `status/* / type/* / size/*` 标签。
 
 #### 2. `/beaver-tracker`
 
