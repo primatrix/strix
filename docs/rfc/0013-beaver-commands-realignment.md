@@ -104,8 +104,8 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    e. 若第 6 步 Task 路径触发了父 Issue 关联 tracker，把父 Issue 通过 Sub-Issues API 挂到该 tracker issue 下，并写入父 Issue 的 `Iteration` 字段为所选 `<YYYY-MM>`。
 9. **下一步建议**：命令打印 Issue URL 与下一步指引——
    - Task 未挂 Iteration → `/beaver-tracker <repo>`；
-   - Task 已挂 Iteration → 等待系统迁移 `Triage → Ready to Claim` 后由其他成员 `/beaver-claim <number>`（系统迁移本次 out-of-scope，可能仍需人工触发）；
-   - 常规 Bug（P1/P2）→ 直接 `/beaver-claim <number>`；
+   - Task 已挂 Iteration → 等待系统迁移 `Triage → Ready to Claim` 后由其他成员在 GitHub UI assign 自己并手动切 Status（系统迁移本次 out-of-scope，可能仍需人工触发）；
+   - 常规 Bug（P1/P2）→ 在 GitHub UI assign 自己并手动将 Status 切为 `In Progress`；
    - P0 Bug → 已为 `In Progress`，可直接 `/beaver-dev <number>` 或等待被 mention 的负责人响应。
 
 **Guardrail**：G002（Type 必填，第 1 步推断后用户拒绝确认即中止）、G011（Bug 路径下 Iteration 解析失败即拒绝创建）；G008（Bug 强制 size/S）已删除。
@@ -137,36 +137,16 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 **期望终态**：`primatrix/projects` 下当月恰好存在 1 个 `[Iteration] <repo> <YYYY-MM>` Issue；该 Issue 的 sub-issue 集合等于 `{Project V2 #14 内 ∧ Iteration=<YYYY-MM> ∧ repo 归属=<repo> ∧ Type ∈ {Task, Bug}}`；tracker Issue 自身的 `Iteration` 字段已写入；所有被纳入的 sub-issue 的 `Iteration` 字段已对齐到 `<YYYY-MM>`（成功指标 5）。
 
-#### 3. `/beaver-claim`
+#### 3. `/beaver-claim` ~~（已删除）~~
 
-**触发场景**：团队成员浏览本月 tracker 或 `/beaver-focus` dashboard 后，决定承担某一项工作；或常规 Bug 流入后由值班同学接手。命令把"承担意愿"沉淀为 GitHub Assignee + Project Status 的双重事实，使其他人可以从 dashboard 看出该项已经被某人接走。
-
-**预期 workflow**：
-
-1. **入参解析**：用户运行命令并给出 `<issue-number>`（必填）。命令读取该 Issue 在 Project #14 中的 `Type / Size / Status / Iteration` 与 GitHub Assignees。
-2. **冲突预检**：若当前 `gh` 用户已经是该 Issue 的 assignee，命令打印「你已经认领过这一项」并退出，避免重复触发后续状态写入。
-3. **可认领性校验**（按 Type 与 Size 分支匹配下表，任一不满足即中止并向用户解释原因）：
-
-   | Issue Type | 要求 Status | 备注 |
-   |---|---|---|
-   | Task (Size=S) | `Ready to Claim` | 必须已挂 Iteration |
-   | Task (Size=L) | `Ready to Claim` | 必须已挂 Iteration |
-   | Bug（非 P0） | `Triage` | Bug 已通过 G011 在 create 阶段挂入 Iteration |
-   | Bug（P0/blocker） | 已为 `In Progress` | 命令打印警告并退出（已有 owner / 处理中） |
-
-4. **状态预览门**：命令把即将进行的两步写入（`assignee += 当前用户`、`Status` 切换值）一次性展示给用户确认，避免误触。
-5. **状态迁移**：用户确认后命令执行：
-   a. GitHub Assignee 上加入当前用户。
-   b. 写 Project V2 `Status` 字段——
-      - Size=S Task 或 Bug → `In Progress`（直接进入开发态）；
-      - Size=L Task → `Design Pending`（等待 `/beaver-design` 撰写设计）。
-6. **下一步建议**：根据 Size 给出明确指引：
-   - Size=L → `/beaver-design <n>`，并提示「Design Doc PR 合并前请勿启动 `/beaver-dev`」；
-   - Size=S 或 Bug → `/beaver-dev <n>`。
-
-**Guardrail**：G001（Size 必填，缺失即拒绝）、G007（非 Bug 必须有 Iteration，缺失即提示先 `/beaver-tracker`）。
-
-**期望终态**：当前用户成为该 Issue 的 GitHub Assignee；Project V2 `Status` 已迁移到表中对应值；终端给出按 Size 区分的 next-step 指引；本命令未触碰 Iteration / Size / Type 字段。
+> **⚠️ 本命令在本次重构中删除。**
+>
+> 原设计中，`/beaver-claim` 同时承担「写 GitHub Assignee」与「迁移 Project V2 Status」两个职责。重新梳理后，两者应解耦：
+>
+> - **写 Assignee**：用户直接在 GitHub UI 或 `gh issue edit --add-assignee @me` 操作，无需专用命令。
+> - **状态迁移**（`Ready to Claim → Design Pending / In Progress`）：预期由**系统根据 assign 事件自动触发**（GitHub Actions webhook），属于系统行为，不应由用户命令驱动。该自动化与其他系统迁移一同纳入 out-of-scope 的后续 Goal「Beaver 自动迁移基础设施」。
+>
+> **过渡期**（自动化上线前）：用户认领时，直接在 GitHub UI assign 自己，再手动在 Project #14 将 Status 切换到对应值（Size=L → `Design Pending`；Size=S / Bug → `In Progress`）。`/beaver-engine` §2 会列明哪些迁移目前仍需手工触发。
 
 #### 4. `/beaver-design`
 
@@ -216,7 +196,7 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    d. 写 Project V2 字段：`Type`（Task→SubTask 拆得 `SubTask` + `Size=S`）、`Level`、`Size`、`Status=Triage`；**不**写 `Iteration`（留给后续 `/beaver-tracker` 或 `/beaver-create` 流程显式处理）。
    e. 若该 child 在第 5 步审计未通过，按结果贴对应 `beaver/*` 标签。
 7. **父 Issue 总结**：命令在父 Issue 上发一条评论，列出所有 child Issue 编号 + 审计结果摘要，便于 Reviewer 快速对照设计与拆解。
-8. **下一步指引**：终端提示「N 个 child 处于 `Status=Triage`；将这些 child 加入 Iteration 后由系统迁移转为 `Ready to Claim`；之后由开发者用 `/beaver-claim <child-n>` 认领」。
+8. **下一步指引**：终端提示「N 个 child 处于 `Status=Triage`；将这些 child 加入 Iteration 后由系统迁移转为 `Ready to Claim`；之后由开发者在 GitHub UI assign 自己并手动切 Status 认领（`/beaver-claim` 已删除，见 §3）」。
 
 **Guardrail**：自动 audit（仅打 Beaver agent 标签，不阻断创建）；前置校验失败即中止。
 
@@ -405,7 +385,7 @@ A3 重写 `beaver-setup` 中的 Issue Type **赋值**逻辑（如初始化时给
 
 #### Phase B — 命令逐个迁移（8 SubTasks，并行）
 
-每个命令一个 SubTask，作用对象：`beaver-create / beaver-claim / beaver-design / beaver-decompose / beaver-dev / beaver-pr / beaver-tracker / beaver-focus`（`beaver-setup` 已在 A3 处理）。
+每个命令一个 SubTask，作用对象：`beaver-create / beaver-design / beaver-decompose / beaver-dev / beaver-pr / beaver-tracker / beaver-focus`（`beaver-setup` 已在 A3 处理；`beaver-claim` 已删除，见 §3）。
 
 每个 SubTask 工作量：
 
@@ -424,7 +404,7 @@ A3 重写 `beaver-setup` 中的 Issue Type **赋值**逻辑（如初始化时给
 
 - **读路径**：command-script → `beaver-lib.sh` `get_*` → GraphQL `projectV2Item.fieldValueByName` → typed value（单选 option name / iteration title）。
 - **写路径**：command-script → `beaver-lib.sh` `set_*` → GraphQL `updateProjectV2ItemFieldValue` 或 `updateIssueIssueType`。每字段原子。
-- **跨命令交接**：形态不变，每个命令把 Status 切到下一个合法值（通过 `set_status`），并打印下一步提示（如 `/beaver-create` 之后输出 `/beaver-claim N`）。
+- **跨命令交接**：形态不变，每个命令把 Status 切到下一个合法值（通过 `set_status`），并打印下一步提示（如 `/beaver-create` 之后输出「请在 GitHub UI assign 自己后手动将 Status 切换」）。
 
 ### 关键 trade-off
 
@@ -488,7 +468,7 @@ Phase A 的三个 SubTask 之间可并行评审（仅 A.2 / A.3 实现上引用 
 |---|---|---|
 | 既有 Issue 的 Project V2 字段未填值 | 迁移完成后旧 Issue 在 dashboard 上显示为空 Status / Size | A.3 可附带一次性扫描脚本，把仍带 `status/*` / `size/*` 标签的 Issue 写入对应字段 |
 | `set_type` 需要 `admin:org` scope | 个别 contributor 的 token 缺少 scope | 命令在 `set_type` 失败时打印明确的 `gh auth refresh -h github.com -s admin:org` 提示 |
-| 系统侧自动迁移仍未实现 | 用户要手动跑 `/beaver-claim` 才能 `ready-to-claim → design-pending`，与 wiki 描述的 "system behavior" 不符 | 在本 RFC 末尾建立后续 Goal「Beaver 自动迁移基础设施」，并在 `beaver-engine` §2 注明哪些迁移目前是手工触发 |
+| 系统侧自动迁移仍未实现 | 用户 assign 后需手动在 Project #14 切换 Status，与 wiki 描述的 "system behavior" 不符 | 在 `beaver-engine` §2 注明哪些迁移目前仍需手工触发；后续 Goal「Beaver 自动迁移基础设施」跟进 |
 | Bug 通道 wiki spec 修订未先于本次合并 | G011 已上线但 wiki 仍说 Bug 强制 `size/S` | 已解除：wiki PR #104（Bug 不强制 Size，自动加入 Iteration）与 PR #106（Roadmap 改用 Iteration 字段 + per-Project tracker）均已合并到 main，本 RFC 已基于该状态对齐。 |
 | Phase B 八个 SubTask 并行触发对 `primatrix/projects` Project #14 的写竞争 | 沙盒 smoke 之间相互污染 | 每个 SubTask 创建独立的 `[smoke] <command>` Issue，跑完即 close；review 后由作者手动归档 |
 
