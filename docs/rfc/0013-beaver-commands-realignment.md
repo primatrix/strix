@@ -78,10 +78,16 @@ size/S Feature 与 Bug 跳过 Design Pending / Ready to Develop。
 
 #### 1. `/beaver-create`
 
-- **输入**：可选 `<issue-type>` 参数（`feat / bug / refactor / docs / chore` 之一，未传则交互询问）。size/L 路径下追加 4 段 QA 收集 Goal/Task 关系；size/S 与 Bug 路径追加最小 QA。
-- **前置条件**：`gh auth status` 通过；`primatrix/projects` Project #14 已通过 `/beaver-setup` 初始化；通过 §7.2 HARD-GATE 用户显式审批。
-- **写入字段**：`Type`（原生 Issue Type，从输入推导：`feat→Feature`、`bug→Bug`、其他暂归 `Feature`）、`Level`（Goal / Task / SubTask 之一）、`Size`（`XS/S/M/L/XL`，由 QA 自动建议 + 用户确认）、`Status`（默认 `Triage`；Bug + `Priority=P0/blocker` 时直接写 `In Progress`）、`Iteration`（仅 Bug 通道由 G011 自动写入「当前或下一个未来」Iteration；Feature 走交互式 `skip / current / YYYY-MM`）。
-- **副作用**：在 `primatrix/projects` 创建 Issue；通过 Sub-Issues API 链接到 parent（若有；必须先于 add-to-project，避免父卡显示 "1 sub-issue not in this project"）；将 Issue 加入 Project #14；P0 Bug 在 Issue body 中 `@CODEOWNERS`。
+- **输入**：
+  - 可选 `<issue-type>` 参数（`feat / bug / refactor / docs / chore` 之一）；未传则命令交互询问用户选择。
+  - 目标 repo（`issueRepo`）：从 Project #14 `beaver-config` 读取，不要求用户输入；读取失败则报错退出。
+  - Issue 内容（标题、objective、验收标准，或 Bug 的复现步骤 / 期望 / 实际 / 影响 / 环境）：通过 QA 循环逐段收集，不接受命令行参数。size/L Feature 走 4 段 QA；size/S Feature 走 3 问最小 QA；Bug 走 4 段 QA。
+- **前置条件**：`gh auth status` 通过；`primatrix/projects` Project #14 已通过 `/beaver-setup` 初始化（命令在读取 `beaver-config` 时隐式验证，读取失败即报错）。
+- **写入字段**：
+  - 自动推导（无需用户输入）：`Type`（从 `<issue-type>` 推导：`feat→Feature`、`bug→Bug`、其他暂归 `Feature`）、`Level`（Goal / Task / SubTask，从 size/L QA 第 1 段收集的层级关系推导）、`Status`（默认 `Triage`；P0/blocker Bug 直接写 `In Progress`）、Bug 的 `Iteration`（G011 自动解析当前或下一个未来 Iteration）。
+  - 用户 QA 确认：`Size`（`XS/S/M/L/XL`，系统在收集 objective 后自动建议，用户确认或覆盖）。
+  - 用户交互选择（Feature 专属）：`Iteration`（用户选择 `skip / current / YYYY-MM`；`skip` 则不写入）。
+- **副作用**：在 `issueRepo` 创建 Issue，body 写入 QA 收集的用户描述内容；通过 Sub-Issues API 链接到 parent（若有；必须先于 add-to-project，避免父卡显示 "1 sub-issue not in this project"）；将 Issue 加入 Project #14；P0 Bug 在 Issue body 中 `@CODEOWNERS`。所有写操作在 QA 循环结束、用户通过 §7.2 HARD-GATE 审批 Issue 预览后执行。
 - **Guardrail**：G002（Type 必填）、G011（Bug 必须有 Iteration，否则提示运行 `/beaver-tracker <repo>` 并失败）；不再触发 G008。
 - **终态**：Issue 存在于 `primatrix/projects`；Project #14 字段值与上文一致；终端提示下一步 `/beaver-tracker <repo>`（Feature，未指定 Iteration）或 `/beaver-claim <number>`（Feature，已分配 Iteration 后由 system-trigger 转 Ready to Claim）或 `/beaver-dev <number>`（P0 Bug 直入 In Progress）。
 
