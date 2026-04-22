@@ -74,6 +74,8 @@ Out-of-scope（明示延迟）：(a) 系统触发的自动状态迁移（GitHub 
 size/S Feature 与 Bug 跳过 Design Pending / Ready to Develop。
 本表中「自动迁移」标注本次仍由命令本身写入；「系统迁移」标注由 out-of-scope 的 GitHub Actions 完成（本次不实现，命令侧不写）。
 
+**语言约定**：所有命令的交互式问答（QA）与终端输出（提示、错误、下一步建议）均使用**中文**。
+
 #### 1. `/beaver-create`
 
 - **输入**：可选 `<issue-type>` 参数（`feat / bug / refactor / docs / chore` 之一，未传则交互询问）。size/L 路径下追加 4 段 QA 收集 Goal/Task 关系；size/S 与 Bug 路径追加最小 QA。
@@ -343,4 +345,5 @@ Phase A 的三个 SubTask 之间可并行评审（仅 A.2 / A.3 实现上引用 
 - "Metric 5 (tracker 一致性) + Phase B beaver-tracker 额外职责" ← 对齐 wiki PR #106 spec
 - "命令规约表 9 条目（输入/前置/写入字段/副作用/Guardrail/终态）" ← 对齐 plugins/beaver/commands/*.md 当前实现 + 本 RFC §方案的字段化重写目标，作为 Phase B 各 SubTask 的对齐基线
 - "/beaver-tracker 与 /beaver-setup 中保留 tracker-* / Control-By-Beaver / beaver-* 等仓库级标签" ← 这些是 Beaver 自身元数据，不属于 Status/Type/Size taxonomy，本次重构不淘汰；Metric 3 的 grep 仅断言 `status/|type/|size/` 三类前缀
+- "所有命令的 QA 与终端输出均使用中文" ← wiki PR #105 声明（design/111-beaver-commands-realignment）
 -->
