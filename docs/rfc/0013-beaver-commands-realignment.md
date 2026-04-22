@@ -16,7 +16,7 @@ reviewers: []
 
 ### 技术现状
 
-Beaver 当前位于 `plugins/beaver/` (v3.2.0)：9 个命令 (`beaver-{create,claim,design,decompose,dev,pr,tracker,focus,setup}.md`) + 1 个内部 skill (`beaver-engine`) + 9 个配套 bash 脚本于 `scripts/`。后端使用 GitHub Projects V2 (`primatrix/projects` org-project #14)，已存在的自定义字段为 `Level / Status / Progress / Iteration`，并已通过 `beaver-setup` 创建了原生 Issue Type `Goal / Task / SubTask / Milestone`（spec 在 PR #106 合并后已不再使用 Milestone，需在本次重构中一并淘汰）。
+Beaver 当前位于 `plugins/beaver/` (v3.2.0)：9 个命令 (`beaver-{create,claim,design,decompose,dev,pr,tracker,focus,setup}.md`) + 1 个内部 skill (`beaver-engine`) + 9 个配套 bash 脚本于 `plugins/beaver/scripts/`（即本 RFC 后文出现的 `scripts/beaver-lib.sh` 等路径均为 `plugins/beaver/scripts/` 的简写，Metric 3 的 grep 范围 `plugins/beaver/` 已覆盖该子目录）。后端使用 GitHub Projects V2 (`primatrix/projects` org-project #14)，已存在的自定义字段为 `Level / Status / Progress / Iteration`，并已通过 `beaver-setup` 创建了原生 Issue Type `Goal / Task / SubTask / Milestone`（spec 在 PR #106 合并后已不再使用 Milestone，需在本次重构中一并淘汰）。
 
 ### 与 spec 的差异
 
@@ -173,7 +173,7 @@ size/S Feature 与 Bug 跳过 Design Pending / Ready to Develop。
 |---|---|---|---|
 | A1 | `scripts/beaver-lib.sh` 初始库 + `--self-test` 子命令 | — | 新文件，含下列 public API；`bash scripts/beaver-lib.sh self-test` 通过 |
 | A2 | `beaver-engine` 重写（§1 删除标签行；§2 状态机改为字段语义；§3 guardrail 重写；§4 Label Ops 替换为 Field Ops） | A1 | 重写后的 SKILL.md |
-| A3 | `beaver-setup` 迁移：通过 `beaver-lib.sh::set_type` 创建 `Bug` 与 `Feature` 原生 Issue Type；创建 Project V2 单选 `Size` 字段（`XS / S / M / L / XL`） | A1 | `beaver-setup.md` + `beaver-setup.sh` 更新 |
+| A3 | `beaver-setup` 迁移：通过 `gh api /orgs/primatrix/issue-types`（POST）创建 `Bug` 与 `Feature` 原生 Issue Type 定义；通过 `beaver-lib.sh::set_type` 完成所有后续实例赋值；创建 Project V2 单选 `Size` 字段（`XS / S / M / L / XL`） | A1 | `beaver-setup.md` + `beaver-setup.sh` 更新 |
 
 A1 / A2 / A3 可在独立 PR 中提交，但 Phase B 任一 SubTask 启动前必须 **全部三者合并**。这符合 Issue #111 验收标准 2「对每个 Diff 点创建 Sub Task」。
 
@@ -184,6 +184,8 @@ A1 / A2 / A3 可在独立 PR 中提交，但 Phase B 任一 SubTask 启动前必
 - G011（新增）：在 `/beaver-create` 处理 `Type=Bug` 时强制设置 Iteration，由下文算法解析。算法返回 null 时 G011 失败并提示用户运行 `/beaver-tracker <repo>`。
 
 #### `latest_iteration_for_repo <repo>` 解析算法（G011 使用）
+
+`<repo>` 参数的角色：Iteration 候选集本身是 Project #14 全局的，但**挂载动作**有 repo 维度——`/beaver-create` 把 Bug Issue 创建在某个 repo 后，需要先把该 issue 加入 Project #14、再把解析出的 Iteration 写到该 issue 的 project item 上。`<repo>` 在算法层用于：(a) 失败时拼出 `/beaver-tracker <repo>` 错误提示；(b) 与上游 `add-to-project` 步骤的 caller 上下文对齐。算法本体（下列 5 步）不读 `<repo>`，仅返回当前/未来 Iteration 候选；caller 负责把结果写到属于该 repo 的 issue 上。
 
 Iteration 字段定义在 Project V2 #14 上（不是 repo 级别），每个 entry 含 `title / startDate / duration`。"为该 repo 找最新 Iteration" 的语义被解释为「项目当前会把这个 repo 的任务路由到哪个 Iteration」：
 
@@ -206,7 +208,7 @@ Step A 返回 > 1 个的歧义路径：报错 `"Ambiguous current Iteration for 
 | `get_option_id <field_name> <option_name>` | Project V2 #14 单选字段 | GraphQL field options 查找 |
 | `set_status <issue_number> <status>` | Project V2 #14 Status 字段 | `updateProjectV2ItemFieldValue`（singleSelectOptionId） |
 | `set_size <issue_number> <size>` | Project V2 #14 Size 字段 | `updateProjectV2ItemFieldValue`（singleSelectOptionId） |
-| `set_type <issue_number> <type>` | **原生 GitHub Issue Type**（org 范围） | `updateIssueIssueType`；要求 `admin:org` scope（与现有 `beaver-setup` 一致） |
+| `set_type <issue_number> <type>` | **原生 GitHub Issue Type**（给单个 issue 赋类型） | `updateIssueIssueType`（GraphQL，需 header `GraphQL-Features: issue_types`，issue_types 在 public preview）；要求 `admin:org` scope（与现有 `beaver-setup` 一致） |
 | `get_type <issue_number>` | 原生 Issue Type | `repository.issue.issueType` |
 | `get_iteration <issue_number>` | Project V2 #14 Iteration 字段 | `projectV2Item.fieldValueByName(name: "Iteration")` |
 | `set_iteration <issue_number> <iteration_title>` | Project V2 #14 Iteration 字段 | `updateProjectV2ItemFieldValue`（iterationId） |
@@ -214,7 +216,9 @@ Step A 返回 > 1 个的歧义路径：报错 `"Ambiguous current Iteration for 
 
 `set_type` 在调用界面上与 `set_status` / `set_size` 同形，但底层走 `updateIssueIssueType` 而非 `updateProjectV2ItemFieldValue`——Type 是仓库/组织级原生属性，不是 Project V2 字段。这种非对称性被 `beaver-lib.sh` 屏蔽在调用方之外。
 
-A3 重写 `beaver-setup` 中的 Issue Type 创建逻辑，统一通过 `beaver-lib.sh::set_type`（而非现有的直接 `gh api /orgs/<org>/issue-types`），保证全仓单一调用路径。
+`set_type` 仅做**实例赋值**（给单个 issue 选一个已存在的 Type）。**创建组织级 Type 定义**（如新增 `Bug` / `Feature` 这两个 Type 本身）走另一条 REST 接口 `POST /orgs/{org}/issue-types`，不属于 `beaver-lib.sh` 的 public API；A.3 中创建 Type 的逻辑保留在 `beaver-setup.sh` 内联的 `gh api /orgs/primatrix/issue-types` 调用中（与现有实现一致），仅 Type 的**赋值**收敛到 `set_type`。
+
+A3 重写 `beaver-setup` 中的 Issue Type **赋值**逻辑（如初始化时给样例 issue 设 Type）统一通过 `beaver-lib.sh::set_type`；Type **定义**的创建仍走 `gh api /orgs/<org>/issue-types`，因为它是组织级一次性元数据操作，不需要库屏蔽。
 
 #### Phase B — 命令逐个迁移（8 SubTasks，并行）
 
