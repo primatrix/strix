@@ -65,111 +65,287 @@ Out-of-scope（明示延迟）：(a) 系统触发的自动状态迁移（GitHub 
                           └────────────────────────────────────────────┘
 ```
 
-### 命令规约（重构后预期行为）
+### 命令规约（重构后预期 workflow）
 
-下表是 9 个 Beaver 命令在重构完成后的契约定义，作为 Phase B 各 SubTask 的对齐基线与最终验收的可枚举依据。所有「字段」均指 Project V2 #14 的自定义字段；所有 Type 值均指原生 GitHub Issue Type；不再出现 `status/*` / `type/*` / `size/*` 标签。
+以下小节描述 9 个 Beaver 命令在重构完成后**期望**的端到端工作流程，作为 Phase B 各 SubTask 的对齐基线与最终验收的可枚举依据。每个命令以「触发场景 → 用户与系统的逐步交互 → 期望终态」的叙事形式给出，并不假设当前 plugins/beaver 实现的具体形态——若现有实现与本节描述存在差异，应以本节为准、由 Phase B 中相应 SubTask 把实现对齐到本节。
+
+所有「字段」均指 Project V2 #14 的自定义字段；所有 Type 值均指原生 GitHub Issue Type；不再出现 `status/*` / `type/*` / `size/*` 标签。
 
 跨命令的状态机主路径（size/L Feature）：
 `Triage → Ready to Claim → Design Pending → Ready to Develop → In Progress → Done`。
 size/S Feature 与 Bug 跳过 Design Pending / Ready to Develop。
-本表中「自动迁移」标注本次仍由命令本身写入；「系统迁移」标注由 out-of-scope 的 GitHub Actions 完成（本次不实现，命令侧不写）。
+若描述中出现「命令写入 Status」即指本次实现的命令侧迁移；「系统迁移」指由 out-of-scope 的 GitHub Actions 完成（本次不实现，命令侧不写，可能仍需人工触发）。
 
 **语言约定**：所有命令的交互式问答（QA）与终端输出（提示、错误、下一步建议）均使用**中文**。
 
 #### 1. `/beaver-create`
 
-- **输入**：
-  - 可选 `<issue-type>` 参数（`feat / bug / refactor / docs / chore` 之一）；未传则命令交互询问用户选择。
-  - 目标 repo（`issueRepo`）：从 Project #14 `beaver-config` 读取，不要求用户输入；读取失败则报错退出。
-  - Issue 内容（标题、objective、验收标准，或 Bug 的复现步骤 / 期望 / 实际 / 影响 / 环境）：通过 QA 循环逐段收集，不接受命令行参数。size/L Feature 走 4 段 QA；size/S Feature 走 3 问最小 QA；Bug 走 4 段 QA。
-- **前置条件**：`gh auth status` 通过；`primatrix/projects` Project #14 已通过 `/beaver-setup` 初始化（命令在读取 `beaver-config` 时隐式验证，读取失败即报错）。
-- **写入字段**：
-  - 自动推导（无需用户输入）：`Type`（从 `<issue-type>` 推导：`feat→Feature`、`bug→Bug`、其他暂归 `Feature`）、`Level`（Goal / Task / SubTask，从 size/L QA 第 1 段收集的层级关系推导）、`Status`（默认 `Triage`；P0/blocker Bug 直接写 `In Progress`）、Bug 的 `Iteration`（G011 自动解析当前或下一个未来 Iteration）。
-  - 用户 QA 确认：`Size`（`XS/S/M/L/XL`，系统在收集 objective 后自动建议，用户确认或覆盖）。
-  - 用户交互选择（Feature 专属）：`Iteration`（用户选择 `skip / current / YYYY-MM`；`skip` 则不写入）。
-- **副作用**：在 `issueRepo` 创建 Issue，body 写入 QA 收集的用户描述内容；通过 Sub-Issues API 链接到 parent（若有；必须先于 add-to-project，避免父卡显示 "1 sub-issue not in this project"）；将 Issue 加入 Project #14；P0 Bug 在 Issue body 中 `@CODEOWNERS`。所有写操作在 QA 循环结束、用户通过 §7.2 HARD-GATE 审批 Issue 预览后执行。
-- **Guardrail**：G002（Type 必填）、G011（Bug 必须有 Iteration，否则提示运行 `/beaver-tracker <repo>` 并失败）；不再触发 G008。
-- **终态**：Issue 存在于 `primatrix/projects`；Project #14 字段值与上文一致；终端提示下一步 `/beaver-tracker <repo>`（Feature，未指定 Iteration）或 `/beaver-claim <number>`（Feature，已分配 Iteration 后由 system-trigger 转 Ready to Claim）或 `/beaver-dev <number>`（P0 Bug 直入 In Progress）。
+**触发场景**：用户希望把一项尚未存在的工作落库——可能是一个新的 Goal/Task/SubTask、一个 Feature 想法，或一个刚被发现的 Bug——并希望走团队约定的字段化、状态化流程，而不是直接 `gh issue create` 然后手工补字段。
+
+**预期 workflow**：
+
+1. **意图收集**：用户运行命令；命令询问本次创建的 Issue Type（`feat / bug / refactor / docs / chore` 五选一），或接受用户在命令行附带的同名参数。命令据此把意图分流为三条子流程：Feature（含 refactor / docs / chore，统一写入 `Type=Feature`）、Bug、或后续 Type 集合扩展时的新分支。
+2. **目标 repo 解析**：命令从 Project #14 README 中嵌入的 `beaver-config` 读出当前 `issueRepo`（团队约定的「本周期 issue 创建落点」），不要求用户输入。`beaver-config` 缺失或解析失败时命令立即中止，并提示用户先运行 `/beaver-setup`。
+3. **结构化问答（QA 循环）**：命令通过逐段问答收集 Issue 内容，每段一个问题、一个回答、一次回显确认，禁止用户在命令行一次性传入完整 body。三条子流程问答模板不同：
+   - **Size=L Feature**：4 段——(a) 层级与父 Issue（用以推导 `Level`）、(b) 客观 objective、(c) 验收标准、(d) 已知约束 / 风险。
+   - **Size=S Feature**：3 段最小问答——objective、验收标准、依赖项。
+   - **Bug**：4 段——复现步骤、期望行为、实际行为、影响范围 + 环境。
+4. **Size 推荐与确认**：QA 收集 objective 后，命令基于描述复杂度（行数、是否跨模块、是否引入新依赖）自动建议 `Size ∈ {XS, S, M, L, XL}`，并展示推理依据。用户确认或在五档内覆盖；这是用户唯一直接编辑的 Project V2 字段。
+5. **Iteration 决策**：
+   - Feature 路径：命令询问用户「跳过 / 加入当前 Iteration / 选择某月 Iteration」，三选一。选择 `skip` 时 Issue 创建后 `Iteration` 字段留空，等待 `/beaver-tracker` 在后续周期把它纳入。
+   - Bug 路径：用户不被询问；命令按 §「`latest_iteration_for_repo` 解析算法」自动解析「当前 Iteration 或下一个未来 Iteration」并写入。算法返回空 → G011 失败 → 命令中止并提示 `/beaver-tracker <repo>`。
+6. **Issue 预览 HARD-GATE**：所有写操作之前，命令把即将创建的 Issue 完整渲染（标题、body、推导出的所有字段值、父 Issue 链接、是否会 `@CODEOWNERS`）一次性展示给用户，等待用户显式输入 `yes` 才进入第 7 步。任何 `no` / Ctrl-C 都使命令零副作用退出。
+7. **落库**（按以下顺序，前一步失败即整体回滚或人工干预提示）：
+   a. 在 `issueRepo` 创建 Issue，body 即第 3 步收集的内容；P0 Bug 在 body 中 `@CODEOWNERS` mention。
+   b. 若用户在第 3 步声明了 parent，通过 Sub-Issues API 链接到 parent —— **必须先于** 把 child 加入 Project #14，否则父卡会出现 "1 sub-issue not in this project" 的不一致。
+   c. 把 Issue 加入 Project #14。
+   d. 写入 Project V2 字段：`Type`（推导自 `<issue-type>`）、`Level`（推导自父子结构）、`Size`（用户确认值）、`Status`（默认 `Triage`；P0/blocker Bug 直接 `In Progress`）、`Iteration`（Bug 必填、Feature 按用户选择）。每个字段的写入相互独立，不存在「写 Status 同时改 Type」的复合操作。
+8. **下一步建议**：命令打印 Issue URL 与下一步指引——
+   - Feature 未挂 Iteration → `/beaver-tracker <repo>`；
+   - Feature 已挂 Iteration → 等待系统迁移 `Triage → Ready to Claim` 后由其他成员 `/beaver-claim <number>`（系统迁移本次 out-of-scope，可能仍需人工触发）；
+   - 常规 Bug（P1/P2）→ 直接 `/beaver-claim <number>`；
+   - P0 Bug → 已为 `In Progress`，可直接 `/beaver-dev <number>` 或等待被 mention 的负责人响应。
+
+**Guardrail**：G002（Type 必填，QA 第 1 步未给 type 即拒绝继续）、G011（Bug 路径下 Iteration 解析失败即拒绝创建）；G008（Bug 强制 size/S）已删除。
+
+**期望终态**：`issueRepo` 中存在新 Issue；该 Issue 已加入 Project #14；该 Project 项的 `Type / Level / Size / Status / Iteration` 字段值与上文 7.d 一致；终端给出明确的 next-step 指引；本命令未触碰任何 `status/* / type/* / size/*` 标签。
 
 #### 2. `/beaver-tracker`
 
-- **输入**：`<repo>` 必填（`primatrix` 下的仓库名）；`[YYYY-MM]` 可选，默认本地当前年月。
-- **前置条件**：`gh auth status` 通过；Project #14 上存在标题以 `<YYYY-MM>` 开头的 Iteration entry（缺失则提示运行 `/beaver-setup`）。
-- **写入字段**：tracker issue 自身 `Iteration = <YYYY-MM>`；所有挂在 tracker 下的 sub-issue `Iteration = <YYYY-MM>`（差集同步：不在当前周期 ∧ repo 归属的 sub-issue 会被解除挂载）。
-- **副作用**：在 `primatrix/projects` 创建（或复用）标题为 `[Iteration] <repo> <YYYY-MM>` 的 tracker Issue，带 `tracker / tracker/<repo> / tracker/<YYYY-MM>` 三个仓库级标签（这些是 Beaver 自身的 tracker 元数据标签，不属于被淘汰的 `status/*` / `type/*` / `size/*` taxonomy）；从上月 tracker 迁移所有 `state=open` sub-issue；交互式从 `Status=Triage` 且未分配 Iteration 的 backlog 中拉取选中项；逐个 sub-issue 调用 `add-to-project`（如尚未在 Project #14 中）+ `set_iteration`。
-- **Guardrail**：仅本命令固有的「同月 tracker 不允许多份」检查；不再涉及 `status/*` 标签校验。
-- **终态**：当月 tracker Issue 唯一存在；其 sub-issue 集合 = 「Project #14 内 ∧ Iteration=当前周期 ∧ repo 归属=`<repo>` ∧ Type ∈ {Task, Bug, Feature}」；所有 sub-issue 的 Iteration 字段已对齐（Metric 5）。
+**触发场景**：每个月初，团队需要为某个 repo 在 Project #14 上"开一个新本月的工作面"——把本月要推进的 Task 集中挂到一张 tracker Issue 下，把上月没做完的 open sub-issue 滚进本月，并从 backlog 中拉取本月新承接的项目。或者月中需要补一个之前忘了拉进 Iteration 的 Task。
+
+**预期 workflow**：
+
+1. **入参解析**：用户运行命令并给出 `<repo>`（必填，限定 `primatrix/<repo>`）与可选 `[YYYY-MM]`（默认本地当前年月）。命令立即校验 Project #14 上是否存在标题以 `<YYYY-MM>` 开头的 Iteration entry——缺失则中止并提示 `/beaver-setup`。
+2. **唯一性检查**：命令在 `primatrix/projects` 上搜索是否已存在标题为 `[Iteration] <repo> <YYYY-MM>` 的 Issue。
+   - 不存在：进入第 3 步创建。
+   - 存在恰好 1 个：复用，进入第 4 步同步。
+   - 存在多个：中止并打印冲突列表，要求人工合并。
+3. **tracker Issue 创建**：在 `primatrix/projects` 创建标题为 `[Iteration] <repo> <YYYY-MM>` 的 Issue，body 含一段固定模板（说明该 tracker 的用途、所属周期、所属 repo），并打上仓库级标签 `tracker / tracker/<repo> / tracker/<YYYY-MM>`。这三个标签是 Beaver 自身的元数据通道，独立于被淘汰的 `status/* / type/* / size/*` taxonomy。tracker Issue 自身被加入 Project #14，并通过字段写入 `Iteration=<YYYY-MM>`。
+4. **上月 carry-over**：命令查上一个 `YYYY-MM-1` 的 tracker（若有）；将其下所有 `state=open` 的 sub-issue 收集为 carry-over 候选集，并向用户展示「这些是上月未完成的，是否全部带入本月？」。用户可全选、全拒、或逐项勾选。被选中的 sub-issue 在第 6 步统一处理。
+5. **Backlog 拉取**：命令从 Project #14 中查询「`Iteration` 字段未填 ∧ `Status=Triage` ∧ repo 归属=`<repo>` ∧ Type ∈ {Task, Bug, Feature}」的 Issue 集合作为 backlog 候选；以列表形式展示，让用户逐项决定是否纳入本周期。
+6. **批量挂载（写差集）**：对第 4、5 两步选中的每个 sub-issue：
+   a. 若尚未在 Project #14 中，先 `add-to-project`；
+   b. 通过 Sub-Issues API 把 sub-issue 挂到本月 tracker 下；
+   c. 写 Project V2 字段 `Iteration=<YYYY-MM>`。
+7. **解挂同步**：命令查询本月 tracker 当前已有的 sub-issue 集合，识别出「已挂在 tracker 下，但 `Iteration` 字段不再是 `<YYYY-MM>` 或 repo 归属不再是 `<repo>`」的过期项，逐个从 tracker 下解除挂载（不删 Issue、不改其它字段）。这是把 tracker 视图变成 Project V2 字段的"投影"，确保两侧一致。
+8. **完成回执**：命令打印 tracker Issue URL、本周期 sub-issue 数量、carry-over 数量、新拉取数量、解挂数量四项统计，便于 Senior 在周会上对账。
+
+**Guardrail**：唯一性检查（第 2 步）；不再涉及任何 `status/*` 标签校验。
+
+**期望终态**：`primatrix/projects` 下当月恰好存在 1 个 `[Iteration] <repo> <YYYY-MM>` Issue；该 Issue 的 sub-issue 集合等于 `{Project V2 #14 内 ∧ Iteration=<YYYY-MM> ∧ repo 归属=<repo> ∧ Type ∈ {Task, Bug, Feature}}`；tracker Issue 自身的 `Iteration` 字段已写入；所有被纳入的 sub-issue 的 `Iteration` 字段已对齐到 `<YYYY-MM>`（成功指标 5）。
 
 #### 3. `/beaver-claim`
 
-- **输入**：`<issue-number>` 必填。
-- **前置条件**：当前 `gh` 用户未被分配；Issue Type 与 Status 满足下表：
+**触发场景**：团队成员浏览本月 tracker 或 `/beaver-focus` dashboard 后，决定承担某一项工作；或常规 Bug 流入后由值班同学接手。命令把"承担意愿"沉淀为 GitHub Assignee + Project Status 的双重事实，使其他人可以从 dashboard 看出该项已经被某人接走。
 
-  | Issue Type | 要求 Status | 备注 |
-  |---|---|---|
-  | Feature (Size=S) | `Ready to Claim` | 必须已挂 Iteration |
-  | Feature (Size=L) | `Ready to Claim` | 必须已挂 Iteration |
-  | Bug（非 P0） | `Triage` | Bug 已通过 G011 在 create 阶段挂入 Iteration |
-  | Bug（P0/blocker） | 已为 `In Progress` | 命令打印警告并退出 |
+**预期 workflow**：
 
-- **写入字段**：`Status`（Size=S / Bug → `In Progress`；Size=L → `Design Pending`）；GitHub Assignee += 当前用户。
-- **副作用**：Issue 上新增 assignee。
-- **Guardrail**：G001（Size 必填）、G007（非 Bug 必须有 Iteration）。
-- **终态**：当前用户成为 assignee；Status 已迁移；终端按 Size 给出下一步：`/beaver-design <n>`（Size=L）或 `/beaver-dev <n>`（Size=S / Bug）。
+1. **入参解析**：用户运行命令并给出 `<issue-number>`（必填）。命令读取该 Issue 在 Project #14 中的 `Type / Size / Status / Iteration` 与 GitHub Assignees。
+2. **冲突预检**：若当前 `gh` 用户已经是该 Issue 的 assignee，命令打印「你已经认领过这一项」并退出，避免重复触发后续状态写入。
+3. **可认领性校验**（按 Type 与 Size 分支匹配下表，任一不满足即中止并向用户解释原因）：
+
+   | Issue Type | 要求 Status | 备注 |
+   |---|---|---|
+   | Feature (Size=S) | `Ready to Claim` | 必须已挂 Iteration |
+   | Feature (Size=L) | `Ready to Claim` | 必须已挂 Iteration |
+   | Bug（非 P0） | `Triage` | Bug 已通过 G011 在 create 阶段挂入 Iteration |
+   | Bug（P0/blocker） | 已为 `In Progress` | 命令打印警告并退出（已有 owner / 处理中） |
+
+4. **状态预览门**：命令把即将进行的两步写入（`assignee += 当前用户`、`Status` 切换值）一次性展示给用户确认，避免误触。
+5. **状态迁移**：用户确认后命令执行：
+   a. GitHub Assignee 上加入当前用户。
+   b. 写 Project V2 `Status` 字段——
+      - Size=S Feature 或 Bug → `In Progress`（直接进入开发态）；
+      - Size=L Feature → `Design Pending`（等待 `/beaver-design` 撰写设计）。
+6. **下一步建议**：根据 Size 给出明确指引：
+   - Size=L → `/beaver-design <n>`，并提示「Design Doc PR 合并前请勿启动 `/beaver-dev`」；
+   - Size=S 或 Bug → `/beaver-dev <n>`。
+
+**Guardrail**：G001（Size 必填，缺失即拒绝）、G007（非 Bug 必须有 Iteration，缺失即提示先 `/beaver-tracker`）。
+
+**期望终态**：当前用户成为该 Issue 的 GitHub Assignee；Project V2 `Status` 已迁移到表中对应值；终端给出按 Size 区分的 next-step 指引；本命令未触碰 Iteration / Size / Type 字段。
 
 #### 4. `/beaver-design`
 
-- **输入**：`<issue-number>` 必填。
-- **前置条件**：Issue `Type=Feature ∧ Size=L ∧ Status=Design Pending`，且当前用户为 assignee；本地存在 `~/Code/wiki` 工作树（命令会自动 clone 或刷新）。
-- **写入字段**：本命令本身**不写** Project #14 字段——`Status` 保持 `Design Pending`；当对应 Design Doc PR 在 `primatrix/wiki` 上**合并**后由系统迁移把 Status 推进到 `Ready to Develop`（out-of-scope，本次仍可能需要人工触发）。
-- **副作用**：在 `primatrix/wiki` 创建 `design/<n>-<slug>` 分支；写入 `docs/rfc/NNNN-<slug>.md` 与 `docs/rfc/index.md` 一行；推送并打开 Draft PR；在原 Issue 上评论 Design Doc PR 链接。RFC 内容遵循 §9.1–§9.3，含 `<!-- provenance -->` 块。
-- **Guardrail**：spec-document-reviewer subagent 循环（最多 5 轮）必须通过后才允许 push & 开 PR；§9.2 anti-hallucination。
-- **终态**：Draft PR 存在；Issue body 含 PR 链接；终端提示「self-review Draft → 转 Open → PR 合并后 Status 自动迁移到 Ready to Develop → 用 `/beaver-decompose <n> --design-doc <pr-url>`」。
+**触发场景**：Size=L 的 Feature 在被认领后处于 `Design Pending`，意味着团队约定需要先沉淀一份可评审的 Design Doc 再开工。命令的职责是把"我有一个想法"逐步打磨成一份结构化的 RFC，并以 Draft PR 的形式提交到 wiki 仓库等待评审，而不是把设计直接散落在 Issue 评论中。
+
+**预期 workflow**：
+
+1. **入参与前置校验**：用户运行命令并给出 `<issue-number>`。命令读取该 Issue 在 Project #14 中的字段，校验 `Type=Feature ∧ Size=L ∧ Status=Design Pending` 且当前用户为 assignee；任一不满足即中止并解释原因。
+2. **wiki 工作树准备**：命令检查本地是否已有 `~/Code/wiki` clone；若没有则 clone，若已有则在 `main` 上 fetch + reset 到最新远端，并新开一个 `design/<n>-<slug>` 分支。`<slug>` 由 Issue 标题派生。
+3. **设计资料采集**：命令从 Issue body、关联 PR / Issue、CODEOWNERS 与 Issue 中提到的代码路径上自动收集背景资料，作为后续问答的"已有上下文"。
+4. **结构化问答**：命令按四个维度逐一向用户发问，每次只问一个问题、等用户回答后再问下一个，全程禁止跳问：
+   - **Context & Scope**：技术现状、系统边界、客观背景事实、与现有模块的关系；
+   - **Design Goals**：可量化的目标、明确不做的非目标、成功指标；
+   - **The Design**：架构、组件、接口、数据流、技术选型理由、关键 trade-offs、测试策略、部署依赖；
+   - **Alternatives Considered**：被否决的可行方案与否决理由。
+5. **草稿生成与逐段确认**：命令把收集到的回答拼装为完整 RFC 文档（遵循 §9.1–§9.3 的格式约定，含末尾 `<!-- provenance -->` 块标注每条事实的出处），逐段展示给用户审批。用户可对任一段落要求修改，命令即重新生成该段，直到用户全部满意。
+6. **spec-document-reviewer 自检循环**：在 push 前命令调度 `spec-document-reviewer` subagent 对草稿进行最多 5 轮迭代评审；每一轮 reviewer 提出的问题由命令转给用户回答、并把回答合入草稿。直到 reviewer 通过 §9.2 anti-hallucination 检查（每条事实可追溯到 provenance），命令才允许进入第 7 步。任意一轮 reviewer 给出 BLOCK，循环继续；5 轮仍未通过则中止并要求人工介入。
+7. **PR 提交**：命令在 wiki 仓库写入 `docs/rfc/NNNN-<slug>.md`、在 `docs/rfc/index.md` 追加一行索引、commit、push、用 `gh pr create --draft` 打开 Draft PR；PR body 含「Closes #<n>」之外的内容（不能在合并时关 Feature Issue，因为 Feature 还要继续开发）。
+8. **回写原 Issue**：命令在原 Feature Issue 上评论 Design Doc PR 链接，便于其他人从 Issue 快速跳到 RFC。
+9. **下一步指引**：命令打印 PR URL 与提示——「请自审 Draft → 转 Open → 等 Reviewer 通过 → 合并；PR 合并后 Status 由系统迁移到 `Ready to Develop`（本次 RFC 范围内系统迁移可能仍需人工触发）；之后用 `/beaver-decompose <n> --design-doc <pr-url>` 拆解 SubTask」。
+
+**写字段**：本命令本身**不修改**任何 Project V2 字段。Status 保持 `Design Pending`；推进到 `Ready to Develop` 是 Design Doc PR 合并后的系统迁移职责（out-of-scope）。
+
+**Guardrail**：spec-document-reviewer 必须通过；§9.2 anti-hallucination；前置校验失败立即中止。
+
+**期望终态**：wiki 仓库上存在 Draft PR，文件位于 `docs/rfc/NNNN-<slug>.md`、`docs/rfc/index.md` 已追加；原 Feature Issue 上有指向该 PR 的评论；Issue 在 Project #14 上的 Status 仍为 `Design Pending`，等待合并后的系统迁移。
 
 #### 5. `/beaver-decompose`
 
-- **输入**：`<issue-number>` 必填；`--design-doc <url-or-path>` 必填（PR URL / blob URL / 本地路径三选一）。
-- **前置条件**：父 Issue `Type ∈ {Goal, Task} ∧ Status=Ready to Develop`（确认 Design Doc PR 已合并）；通过 §7 per-child QA 审批。
-- **写入字段**（每个 child）：`Type`（Goal→Task → `Task` + Size=L；Task→SubTask → `SubTask` + Size=S）、`Level`、`Size`、`Status=Triage`；child 不自动挂 Iteration（留给 `/beaver-tracker` 或 `/beaver-create` 流程）。
-- **副作用**：为每个 child 创建 Issue；通过 Sub-Issues API 链接到 parent（必须先于 add-to-project）；加入 Project #14；按 Audit 结果在 child 上贴 `beaver/missing-test` / `beaver/needs-split` / `beaver/missing-context`（这些是 Beaver 自身的 audit 元数据标签，不属于被淘汰的 taxonomy）；在 parent Issue 上评论 audit summary。
-- **Guardrail**：自动 audit（Coverage / Atomicity / Tests），失败仅打 Beaver agent 标签，不阻断创建。
-- **终态**：N 个 child 处于 `Status=Triage`；parent 持有 sub-issue 列表；终端提示「children 处于 Triage，加入 Iteration 后由 system-trigger 转 Ready to Claim，再用 `/beaver-claim`」。
+**触发场景**：Size=L Feature 的 Design Doc PR 合并后，认领人需要把"一份大的设计"切成若干"可以由不同人同时推进的最小可交付单元"，落到 GitHub 上即为：父 Task 下挂 N 个 SubTask Issue。命令负责把这一拆解过程结构化、可审计，并自动做基本的拆分质量审计。
+
+**预期 workflow**：
+
+1. **入参解析**：用户运行命令并给出 `<issue-number>` 与 `--design-doc <url-or-path>`（PR URL / blob URL / 本地文件路径三选一，必填）。命令读取父 Issue 的字段并校验 `Type ∈ {Goal, Task} ∧ Status=Ready to Develop`（即设计已合并）；不满足则中止。
+2. **Design Doc 摄取**：命令把 `--design-doc` 指向的 markdown 全文读入，并提取「方案 / 实施计划 / 测试策略」三段作为拆解依据。
+3. **初步拆解建议**：命令基于 Design Doc 内容生成一份 SubTask 候选清单（每项含：建议标题、对应设计章节、预计 Size、依赖关系、是否需要 test 文件）。
+4. **per-child QA 审批**：对每个候选 child，命令按 §7 流程逐项展示，用户可：保留、修改标题/描述、拆得更细、合并相邻两项、删除整项、或追加新项。直到用户确认整张列表。
+5. **自动 audit**：命令对最终列表运行三类审计——
+   - **Coverage**：Design Doc §方案 中列出的每个组件 / 接口是否至少被一个 child 覆盖；
+   - **Atomicity**：是否存在 child 描述跨多模块且无法独立 review；
+   - **Tests**：每个 child 是否在描述中显式说明了测试策略。
+   未通过的项**不阻断创建**，仅在 child Issue 上贴 `beaver/missing-test / beaver/needs-split / beaver/missing-context` 三类 Beaver agent 元数据标签（独立于被淘汰的 taxonomy）。
+6. **批量落库**（每个 child 重复以下顺序，先链接再加入 Project，避免父卡 sub-issue 不一致）：
+   a. 在父 Issue 所在 repo 创建 child Issue；
+   b. 通过 Sub-Issues API 链接到父 Issue；
+   c. 把 child 加入 Project #14；
+   d. 写 Project V2 字段：`Type`（Goal→Task 拆得 `Task` + `Size=L`；Task→SubTask 拆得 `SubTask` + `Size=S`）、`Level`、`Size`、`Status=Triage`；**不**写 `Iteration`（留给后续 `/beaver-tracker` 或 `/beaver-create` 流程显式处理）。
+   e. 若该 child 在第 5 步审计未通过，按结果贴对应 `beaver/*` 标签。
+7. **父 Issue 总结**：命令在父 Issue 上发一条评论，列出所有 child Issue 编号 + 审计结果摘要，便于 Reviewer 快速对照设计与拆解。
+8. **下一步指引**：终端提示「N 个 child 处于 `Status=Triage`；将这些 child 加入 Iteration 后由系统迁移转为 `Ready to Claim`；之后由开发者用 `/beaver-claim <child-n>` 认领」。
+
+**Guardrail**：自动 audit（仅打 Beaver agent 标签，不阻断创建）；前置校验失败即中止。
+
+**期望终态**：父 Issue 在 GitHub Sub-Issues 视图下持有 N 个 child；每个 child 在 Project #14 中具备 `Type / Level / Size / Status=Triage` 字段值；audit 失败的 child 已贴 `beaver/*` 标签；父 Issue 上有一条 audit summary 评论。
 
 #### 6. `/beaver-dev`
 
-- **输入**：`<issue-number>` 必填。
-- **前置条件**：当前用户为 assignee；Size=S → `Status=In Progress`；Size=L → `Status ∈ {Ready to Develop, In Progress}` 且至少 1 个 sub-issue。
-- **写入字段**：仅 Size=L 首次进入时把 `Status: Ready to Develop → In Progress`；Size=S 在 claim 阶段已迁移，本命令不再改 Status。
-- **副作用**：创建 git worktree（分支名 `<type>/<n>-<short_desc>`）；在 worktree 内调度 TDD subagent（Red-Green-Refactor，禁止跳过 RED）；失败时调度 systematic-debugging subagent；完成后调度两段 code-review（spec-compliance → code-quality）；最终运行全量测试套件并要求 0 failures。
-- **Guardrail**：G009（Size=L 必须有 sub-issue）、TDD Iron Law、Verification Iron Law。
-- **终态**：worktree 含通过的实现 + 测试 + commits；终端提示 `/beaver-pr <n>` 进入 PR 阶段；Issue Status 仍为 `In Progress` 直到 PR 合并。
+**触发场景**：开发者已认领某个 Issue，并准备开始实际编码。命令把"开始写代码"形式化为「在隔离 worktree 中走 TDD 闭环 → 通过两段 code-review → 全量测试通过」三件事的强制串联，避免开发跳过 RED test、跳过 review 直接 push 的常见反模式。
+
+**预期 workflow**：
+
+1. **入参与前置校验**：用户运行命令并给出 `<issue-number>`。命令读取该 Issue 字段并校验：
+   - 当前用户为 assignee；
+   - Size=S → `Status=In Progress`（claim 阶段已迁移）；
+   - Size=L → `Status ∈ {Ready to Develop, In Progress}` 且至少 1 个 sub-issue（G009）。
+   不满足即中止。
+2. **状态推进**：仅当 Size=L 且 `Status=Ready to Develop` 时，命令把 `Status` 推进到 `In Progress`，标识"实质开发已开始"。Size=S 在 claim 阶段已经 `In Progress`，本步跳过。
+3. **worktree 创建**：命令在仓库根目录的 worktree 池中创建一个新分支 `<type>/<n>-<short_desc>`（`<type>` 来自 Issue Type，`<short_desc>` 由 Issue 标题派生为 kebab-case），并 `git worktree add` 到隔离目录。所有后续编码操作发生在此 worktree 内，主工作树不受污染。
+4. **TDD 子代理调度**：在 worktree 内命令调度一个 TDD subagent，强制执行 Red-Green-Refactor 循环：
+   - **Red**：subagent 先写一个会失败的测试，必须先看到失败输出才能进入 Green；
+   - **Green**：写最少代码让该测试通过；
+   - **Refactor**：清理重复 / 命名 / 结构，每一次 refactor 后重跑测试。
+   TDD Iron Law：任何跳过 Red 直接写实现的尝试都会被 subagent 拒绝。
+5. **debugging 兜底**：测试或运行期出现失败时，命令调度 `systematic-debugging` subagent 接管——先复现、再二分定位、再写一个能复现该 bug 的测试、再修。debugging 完成后回到第 4 步继续 TDD。
+6. **两段 code-review**：开发者声明"功能完成"后，命令依次调度两个 review subagent：
+   - **spec-compliance**：对照原 Issue 的验收标准 + Design Doc（若 Size=L），逐条勾选；
+   - **code-quality**：对照仓库 lint/format/约定，标出可改进点。
+   两段 review 各产出一份反馈清单；命令把反馈展示给用户，用户可逐项接受或拒绝并说明理由。被接受的反馈进入下一轮编码循环。
+7. **Verification Iron Law**：命令在结束前强制运行项目的全量测试套件（项目根目录下的 `make test` / `pnpm test` 等），并要求 0 failures；任何 1 例失败都阻止命令进入"完成"分支，必须回到第 5 步 debugging。
+8. **下一步指引**：所有循环结束后，命令打印 worktree 路径、当前分支名、新增 commits 数量与下一步「`/beaver-pr <n>` 进入 PR 阶段」。`Status` 保持 `In Progress`，直到 PR 合并后由系统迁移转 `Done`。
+
+**Guardrail**：G009（Size=L 必须有 sub-issue）、TDD Iron Law、Verification Iron Law。
+
+**期望终态**：worktree 内含通过的实现 + 测试 + 一组 conventional commits；项目全量测试 0 failures；Issue Status 为 `In Progress`；终端给出 `/beaver-pr <n>` 提示。
 
 #### 7. `/beaver-pr`
 
-- **输入**：`[issue-number]` 可选（缺省从分支名 `<type>/<n>-<desc>` 或 commit message `#<n>` 自动推断）。
-- **前置条件**：本地 worktree 内有未提交或未推送的 commit；`gh auth status` 通过。
-- **写入字段**：本命令本身**不写** Project #14 `Status` 字段——PR body 含 `Closes #<n>`，Issue 在 PR 合并后自动 close，由系统迁移把 `Status → Done`（out-of-scope，本次仍可能需要人工触发）。
-- **副作用**：必要时创建 feature 分支；conventional commit message commit & push；创建 **Draft** PR（PR body 含 Summary + Test Plan + `Closes #<n>`）；G004 / G006 失败时给 Issue 贴 `beaver/missing-test` / `beaver/missing-context`（Beaver agent 标签，非淘汰 taxonomy）；按用户选择执行 4 个 finishing-options 之一（默认保持 Draft；或 `mark-ready`；或保留分支；或 `discard` 并删分支 + close PR + 移除 worktree）。
-- **Guardrail**：G004（commit 中存在测试文件）、G006（Issue 已具备 Type/Size 字段）；两者都仅警告，不阻断 PR 创建。
-- **终态**：Draft PR 在远端可见；Issue 上贴有 audit 结果（若有）；终端给出 PR URL 与 next-step 提示。
+**触发场景**：开发者在 worktree 内 `/beaver-dev` 走完后，需要把 commits 推到远端、开 Draft PR、走 Review。命令把"开 PR"形式化为：自动推断 Issue 编号、强制使用 conventional commit、强制以 Draft 起步、提供 4 个 finishing-options 让作者明确决定 PR 后续走向。
+
+**预期 workflow**：
+
+1. **Issue 编号推断**：用户运行命令，可显式给 `[issue-number]`，也可省略；省略时命令依次尝试：(a) 当前分支名 `<type>/<n>-<desc>` 中提取 `<n>`；(b) 最近一条 commit message 中匹配 `#<n>`；两者都失败即提示用户显式输入。
+2. **本地状态校验**：命令检查当前 worktree 是否存在未提交修改或未推送 commit；若什么都没有则提示「无变更可提交」并退出。`gh auth status` 校验通过。
+3. **commit 与 push**：
+   a. 若有未提交修改，命令把它们组织为一次或多次 conventional commit（`<type>(<scope>): <subject>`），按文件变更范围自动建议但仍由用户确认 commit message。
+   b. 若当前分支无远端 tracking，命令把分支 push 到 `origin` 并设置 upstream。
+4. **PR 起草**：命令以 Draft 状态打开 PR——
+   - 标题取最近一条非 fixup commit 的 subject；
+   - body 含 Summary（自动汇总所有 commits 的 subject + 关键 file）+ Test Plan（取自 Issue 验收标准 + 本次 worktree 内执行的测试命令清单）+ `Closes #<n>`，便于 PR 合并时由 GitHub 自动 close 关联 Issue。
+5. **Beaver agent 审计**：
+   - **G004**：检查本次 PR 涉及的 commits 中是否有 test 文件改动；无则在 Issue 上贴 `beaver/missing-test`（Beaver agent 元数据标签，独立于淘汰 taxonomy）。
+   - **G006**：检查 Issue 自身是否已具备 `Type / Size` 字段；缺失则贴 `beaver/missing-context`。
+   两类审计均仅警告、不阻断 PR 创建。
+6. **finishing-options**：命令向用户展示 4 个互斥选项，等待选择：
+   - **保持 Draft**（默认）：PR 留在 Draft，作者自审后再手动转 Open；
+   - **mark-ready**：自审 OK，命令立刻 `gh pr ready` 转 Open，触发系统按 CODEOWNERS 自动指派 Reviewer；
+   - **保留分支**：保留 worktree 与分支，方便后续追加 commits；
+   - **discard**：放弃本次工作，命令依次 `gh pr close --delete-branch` 并 `git worktree remove`，整体回到干净状态（仅在用户二次确认后执行，避免误删）。
+7. **下一步指引**：命令打印 PR URL、所选 finishing-option、贴上的 audit 标签清单、以及合并预期：「PR 合并后 Issue 通过 `Closes #<n>` 自动 close；系统迁移把 Project Status 转为 `Done`（系统迁移本次 out-of-scope，可能仍需人工触发）；Size=L Task 须等所有 sub-issue 关闭后由系统汇总到 `Done`」。
+
+**写字段**：本命令本身**不修改** Project V2 `Status` 字段，仅依赖 PR 合并触发的系统迁移。
+
+**Guardrail**：G004、G006（仅警告）；finishing-options 中的 `discard` 需二次确认。
+
+**期望终态**：远端存在 Draft（或 Open）PR；PR body 含 `Closes #<n>`；Issue 上按需贴有 `beaver/missing-test` / `beaver/missing-context`；终端给出 PR URL 与下一步说明；除 PR 自动 close 触发的系统迁移外，本命令未改任何 Project V2 字段。
 
 #### 8. `/beaver-focus`
 
-- **输入**：无。
-- **前置条件**：`gh auth status` 通过；当前用户已通过 `gh` 认证。
-- **写入字段**：无（**严格只读**）。
-- **副作用**：终端打印 markdown dashboard，分组：P/0 Blockers（>24h 加 ⚠️）/ In Progress / Bugs / Ready to Develop / Ready to Claim / Awaiting My Review / My Blockers / DDL Warnings（Iteration end ≤ 48h）/ Today's Top 3 Priorities（LLM 推荐）。
-- **Guardrail**：无（只读，不触发任何 mutation）。
-- **终态**：当前用户得到一份按优先级与 DDL 排序的工作视图；不修改任何远端状态。
+**触发场景**：开发者上班开机、午休回来、或卡在某个任务时希望快速看到「我此刻应该做什么、什么在挡我、什么 DDL 临近」。命令是个人 dashboard 的入口，**严格只读**，不修改任何远端状态——这一点是设计上的硬约束，避免"看一眼"误触发状态迁移。
+
+**预期 workflow**：
+
+1. **入参**：无。命令读取当前 `gh` 用户身份。
+2. **数据汇聚**：命令并行查询 Project #14 上多个切片，按字段过滤生成一份个人视图：
+   - 当前用户为 assignee 且 `Status=In Progress` 的所有 Issue；
+   - 当前用户的 `Type=Bug ∧ Priority=P0` 的所有 Issue（不论 Status，用于置顶警示）；
+   - 当前用户在所有 repo 上待 review 的 PR（通过 `gh search prs --review-requested=@me`）；
+   - 当前 Iteration 内 `Status=Ready to Develop` 与 `Ready to Claim` 的可承接项；
+   - `Status=Blocked` 且 assignee 为当前用户的项；
+   - 当前 Iteration 的 `endDate ≤ today + 48h` 的所有 assigned 项。
+3. **优先级排序与高亮**：
+   - P0 Blocker 在分组中按 issue 持续时间排序，开放超过 24h 的项追加 ⚠️ 警示；
+   - In Progress 按最后 commit / 评论时间倒序，便于回到最近的工作流；
+   - DDL Warning 按 `endDate` 升序。
+4. **LLM 推荐**：命令调度一个轻量 LLM 调用，把上述清单作为输入，让模型综合「DDL 紧急度 / blocker 严重度 / 当前 In Progress 进度」三维，输出 `Today's Top 3 Priorities` —— 三条具体可执行的下一步建议（不只是 issue 列表，而是「先解掉 #234 的阻塞 / 把 #145 的 RED test 补上 / Review @colleague 的 #178」这种粒度）。
+5. **终端渲染**：命令把所有信息以 markdown 形式打印为一份分组 dashboard：
+   - **P0 Blockers**（含 ⚠️ 持续时间提示）
+   - **In Progress**
+   - **Bugs**
+   - **Ready to Develop**
+   - **Ready to Claim**
+   - **Awaiting My Review**
+   - **My Blockers**（被自己挡住别人的项）
+   - **DDL Warnings**（Iteration 临近结束）
+   - **Today's Top 3 Priorities**（LLM 推荐）
+6. **零写入保证**：整个流程结束后，命令断言自身未发起任何 mutation 性质的 GraphQL / REST 调用——这一点在测试中由"调用追踪 + grep 仅命中 query/get"来验证，是 `/beaver-focus` 与其他命令的根本区别。
+
+**写字段**：无。
+
+**Guardrail**：无（只读，不触发任何 mutation）。
+
+**期望终态**：当前用户在终端获得一份按优先级 + DDL 排序的 markdown 工作视图；不修改任何远端状态、不创建任何 Issue / PR / 评论 / label。
 
 #### 9. `/beaver-setup`
 
-- **输入**：无（所有 org/project 参数被硬编码为 `primatrix` + Project #14）。
-- **前置条件**：`gh` token 含 `project` 与 `admin:org` scope；通过 §7.2 HARD-GATE 用户显式审批。
-- **写入字段**：在 Project #14 上创建/补齐 `Level`（SINGLE_SELECT: Goal/Task/SubTask）、`Status`（SINGLE_SELECT: 7 个 wiki 值，全量替换）、`Size`（SINGLE_SELECT: XS/S/M/L/XL，**新增**）、`Progress`（NUMBER）、`Iteration`（ITERATION，从当前月填到 12 月）；通过 `set_type` 创建原生 Issue Type `Goal / Task / SubTask / Bug / Feature`（**不再创建 `Milestone`**）；在 `primatrix/projects` README 写入 `beaver-config` YAML 块。
-- **副作用**：在 `primatrix/projects` 创建仓库级标签集合（包含 Beaver 自身 agent / control / tracker 标签：`Control-By-Beaver / beaver-* / tracker / tracker-<repo> / tracker-<YYYY-MM>` 等；**不再**创建 `status/* / type/* / size/* / p*-*` taxonomy 标签——这些已迁移为 Project V2 字段或原生 Issue Type）。整体幂等，重复执行只补差。
-- **Guardrail**：scope 缺失时立即提示 `gh auth refresh`；Status 选项数量不为 7 时给警告；重写后命令在源码侧不再创建 `Milestone` Issue Type（Metric 2 grep 断言）。
-- **终态**：Project #14 字段形态满足 Metric 2 的全部三项（Status 7 项、Size 5 项、Issue Type 5 个值）；`beaver-config` 可被其他命令读取；终端给出 setup summary。
+**触发场景**：(a) 一次性 bootstrap：第一次接入 Beaver 的项目需要在 Project #14 上把字段 / Issue Type / 标签 / `beaver-config` 全部建好；(b) 每次本 RFC 或后续 RFC 改动了字段定义后跑一次以补差。命令必须**幂等**——重跑只补缺失项，不会覆盖人工调整。
+
+**预期 workflow**：
+
+1. **入参**：无（所有 `org` / `project number` 硬编码为 `primatrix` + Project #14，避免被误指向其他 project）。
+2. **scope 自检**：命令检查 `gh auth status` 与 token scope，需含 `project` 与 `admin:org`；任一缺失立即提示 `gh auth refresh -h github.com -s project,admin:org` 并退出，避免后续中途失败留下半完成状态。
+3. **HARD-GATE 用户审批**：命令把"将要做的全部变更"作为一份清单展示给用户（要新建 / 补齐哪些字段、要创建哪些 Issue Type、要创建哪些标签、要写哪些 README 段），等待用户显式输入 `yes`。任何 `no` / Ctrl-C 都使命令零副作用退出。
+4. **Project V2 字段 ensure**（按字段逐个 ensure 存在 + 选项匹配，不一致则补差）：
+   - `Level`：SINGLE_SELECT，选项 `Goal / Task / SubTask`；
+   - `Status`：SINGLE_SELECT，**全量替换**为 wiki spec 的 7 个值（`Triage / Ready to Claim / Design Pending / Ready to Develop / In Progress / Blocked / Done`）——若现存选项数量或名称与之不符，命令打印 diff 并要求用户二次确认后替换；
+   - `Size`：SINGLE_SELECT，选项 `XS / S / M / L / XL`（**新增字段**）；
+   - `Progress`：NUMBER；
+   - `Iteration`：ITERATION，自当前月起填到当年 12 月。
+5. **原生 Issue Type ensure**（在组织级别）：
+   - 通过 `gh api /orgs/primatrix/issue-types`（GET）列出已存在 Type；
+   - 缺失的 `Goal / Task / SubTask / Bug / Feature` 通过 POST 补齐；
+   - **不再创建 `Milestone`**（已弃用）；若历史已存在 `Milestone`，命令打印「检测到弃用 Type，建议人工迁移已存在的实例后再删」但不主动删，避免破坏历史数据。
+6. **仓库级标签 ensure**（在 `primatrix/projects` 上）：
+   - 创建 / 补齐 Beaver 自身使用的元数据标签集合：`Control-By-Beaver / beaver-missing-test / beaver-needs-split / beaver-missing-context / tracker / tracker/<repo>` 模板等；
+   - **不再创建** `status/* / type/* / size/* / p*-*` taxonomy（这些已迁移为 Project V2 字段或原生 Issue Type）；历史定义保留不动。
+7. **`beaver-config` 写入**：在 `primatrix/projects` README 中维护一个 YAML 块，含本 RFC 约定的 `issueRepo / projectNumber / fieldNames` 等配置，供其他命令读取。已存在则按 key 合并，不已有覆盖。
+8. **执行总结**：命令打印一份 setup summary：本次新增 / 已存在 / 跳过 的字段、Type、标签数量；并附一个针对成功指标 2 的自检 grep 结果（确保源码侧无 `Milestone` Issue Type 引用）。
+
+**Guardrail**：scope 缺失时立即退出；Status 选项数量不为 7 时给出 diff 警告并要求二次确认；任何写操作前必须经过第 3 步 HARD-GATE。命令在源码侧不再调用 `Milestone` Issue Type 的创建路径（成功指标 2 的 grep 断言）。
+
+**期望终态**：Project #14 上 `Level / Status (7 项) / Size (5 项) / Progress / Iteration` 五个字段形态正确；组织级 Issue Type 含 `Goal / Task / SubTask / Bug / Feature` 五个值；`primatrix/projects` 仓库标签含 Beaver 元数据集合；`beaver-config` 在 README 中可被其他命令读取；终端给出 setup summary。
 
 ### 分阶段重构
 
@@ -349,7 +525,7 @@ Phase A 的三个 SubTask 之间可并行评审（仅 A.2 / A.3 实现上引用 
 - "Bug 不强制 Size，自动加入当前 Iteration" ← wiki PR #104 (commit 38fcec1)
 - "Type 集合精简为 5 个值（去掉 Milestone）" ← wiki PR #106 main (latest project-management.md line 66)
 - "Metric 5 (tracker 一致性) + Phase B beaver-tracker 额外职责" ← 对齐 wiki PR #106 spec
-- "命令规约表 9 条目（输入/前置/写入字段/副作用/Guardrail/终态）" ← 对齐 plugins/beaver/commands/*.md 当前实现 + 本 RFC §方案的字段化重写目标，作为 Phase B 各 SubTask 的对齐基线
+- "命令规约 9 条目改为完整 workflow 叙事（触发场景 / 步骤化用户系统交互 / 期望终态）而非契约式字段表" ← 对齐 PR #105 review feedback：描述期望 workflow，不假设当前实现
 - "/beaver-tracker 与 /beaver-setup 中保留 tracker-* / Control-By-Beaver / beaver-* 等仓库级标签" ← 这些是 Beaver 自身元数据，不属于 Status/Type/Size taxonomy，本次重构不淘汰；Metric 3 的 grep 仅断言 `status/|type/|size/` 三类前缀
 - "所有命令的 QA 与终端输出均使用中文" ← wiki PR #105 声明（design/111-beaver-commands-realignment）
 -->
