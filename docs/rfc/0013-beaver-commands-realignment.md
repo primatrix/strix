@@ -204,31 +204,31 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 #### 6. `/beaver-dev`
 
-**触发场景**：开发者已认领某个 Issue，并准备开始实际编码。命令把"开始写代码"形式化为「在隔离 worktree 中走 TDD 闭环 → 通过两段 code-review → 全量测试通过」三件事的强制串联，避免开发跳过 RED test、跳过 review 直接 push 的常见反模式。
+**触发场景**：开发者已认领某个 SubTask（Size=S）或直接创建的 Size=S Task，准备开始实际编码。命令把"开始写代码"形式化为「生成实施计划并请用户确认 → 在隔离 worktree 中走 TDD 闭环 → 通过两段 code-review → 全量测试通过」四件事的强制串联，避免开发跳过计划评审、跳过 RED test、跳过 review 直接 push 的常见反模式。本命令仅处理 Size=S 的 Issue；Size=L Task 的开发由其拆解出的各 SubTask 分别走本命令完成。
 
 **预期 workflow**：
 
 1. **入参与前置校验**：用户运行命令并给出 `<issue-number>`。命令读取该 Issue 字段并校验：
+   - `Size=S`（非 S 即中止，提示本命令仅处理 Size=S）；
    - 当前用户为 assignee；
-   - Size=S → `Status=In Progress`（claim 阶段已迁移）；
-   - Size=L → `Status ∈ {Ready to Develop, In Progress}` 且至少 1 个 sub-issue（G009）。
+   - `Status=In Progress`（claim 阶段已迁移）。
    不满足即中止。
-2. **状态推进**：仅当 Size=L 且 `Status=Ready to Develop` 时，命令把 `Status` 推进到 `In Progress`，标识"实质开发已开始"。Size=S 在 claim 阶段已经 `In Progress`，本步跳过。
-3. **worktree 创建**：命令在仓库根目录的 worktree 池中创建一个新分支 `<type>/<n>-<short_desc>`（`<type>` 来自 Issue Type，`<short_desc>` 由 Issue 标题派生为 kebab-case），并 `git worktree add` 到隔离目录。所有后续编码操作发生在此 worktree 内，主工作树不受污染。
-4. **TDD 子代理调度**：在 worktree 内命令调度一个 TDD subagent，强制执行 Red-Green-Refactor 循环：
+2. **worktree 创建**：命令在仓库根目录的 worktree 池中创建一个新分支 `<type>/<n>-<short_desc>`（`<type>` 来自 Issue Type，`<short_desc>` 由 Issue 标题派生为 kebab-case），并 `git worktree add` 到隔离目录。所有后续编码操作发生在此 worktree 内，主工作树不受污染。
+3. **实施计划生成与确认**：worktree 创建后，命令基于 Issue body（objective、验收标准、依赖项）生成一份本地实施计划，以 markdown 格式打印到终端。计划按「任务粒度」拆解，每条任务包含：涉及的精确文件路径、要编写的失败测试代码片段、最少实现思路、验证命令（含预期输出）、commit message 建议。命令等待用户逐条确认或修改，直到用户显式批准整份计划后，才进入第 4 步。
+4. **TDD 子代理调度**（`superpowers:test-driven-development`）：在 worktree 内命令调度 TDD subagent，强制执行 Red-Green-Refactor 循环：
    - **Red**：subagent 先写一个会失败的测试，必须先看到失败输出才能进入 Green；
    - **Green**：写最少代码让该测试通过；
    - **Refactor**：清理重复 / 命名 / 结构，每一次 refactor 后重跑测试。
    TDD Iron Law：任何跳过 Red 直接写实现的尝试都会被 subagent 拒绝。
-5. **debugging 兜底**：测试或运行期出现失败时，命令调度 `systematic-debugging` subagent 接管——先复现、再二分定位、再写一个能复现该 bug 的测试、再修。debugging 完成后回到第 4 步继续 TDD。
-6. **两段 code-review**：开发者声明"功能完成"后，命令依次调度两个 review subagent：
-   - **spec-compliance**：对照原 Issue 的验收标准 + Design Doc（若 Size=L），逐条勾选；
+5. **debugging 兜底**（`superpowers:systematic-debugging`）：测试或运行期出现失败时，命令调度 systematic-debugging subagent 接管——先复现、再二分定位、再写一个能复现该 bug 的测试、再修。debugging 完成后回到第 4 步继续 TDD。
+6. **两段 code-review**（`superpowers:requesting-code-review`）：开发者声明"功能完成"后，命令依次调度两个 review subagent：
+   - **spec-compliance**：对照原 Issue 的验收标准，逐条勾选；
    - **code-quality**：对照仓库 lint/format/约定，标出可改进点。
    两段 review 各产出一份反馈清单；命令把反馈展示给用户，用户可逐项接受或拒绝并说明理由。被接受的反馈进入下一轮编码循环。
 7. **Verification Iron Law**：命令在结束前强制运行项目的全量测试套件（项目根目录下的 `make test` / `pnpm test` 等），并要求 0 failures；任何 1 例失败都阻止命令进入"完成"分支，必须回到第 5 步 debugging。
 8. **下一步指引**：所有循环结束后，命令打印 worktree 路径、当前分支名、新增 commits 数量与下一步「`/beaver-pr <n>` 进入 PR 阶段」。`Status` 保持 `In Progress`，直到 PR 合并后由系统迁移转 `Done`。
 
-**Guardrail**：G009（Size=L 必须有 sub-issue）、TDD Iron Law、Verification Iron Law。
+**Guardrail**：Size 非 S 即拒绝（非本命令处理范围）、TDD Iron Law、Verification Iron Law。
 
 **期望终态**：worktree 内含通过的实现 + 测试 + 一组 conventional commits；项目全量测试 0 failures；Issue Status 为 `In Progress`；终端给出 `/beaver-pr <n>` 提示。
 
