@@ -155,7 +155,7 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 **预期 workflow**：
 
 1. **入参与前置校验**：用户运行命令并给出 `<issue-number>`。命令读取该 Issue 在 Project #14 中的字段，校验 `Type=Task ∧ Size=L ∧ Status=Design Pending` 且当前用户为 assignee；任一不满足即中止并解释原因。
-2. **wiki 工作树准备**：命令检查本地是否已有 `~/Code/wiki` clone；若没有则 clone，若已有则在 `main` 上 fetch + reset 到最新远端，并新开一个 `design/<n>-<slug>` 分支。`<slug>` 由 Issue 标题派生。
+2. **wiki 工作树准备**：命令检查本地是否已有 `/tmp/wiki` clone；若没有则 clone，若已有则在 `main` 上 fetch + reset 到最新远端，并新开一个 `design/<n>-<slug>` 分支。`<slug>` 由 Issue 标题派生。
 3. **设计资料采集**：命令读取 Issue body 作为设计意图的主要来源，并据此在当前仓库中主动搜索与阅读相关代码（涉及的模块、接口定义、现有实现等），将 Issue body 内容与代码阅读结果合并作为后续问答的"已有上下文"。
 4. **结构化问答**：命令按四个维度逐一与用户进行 QA；每个维度先由命令列出当前上下文中尚不清晰或存在歧义的内容，再逐项与用户确认，直到命令判断该维度的信息已足够完整为止，再进入下一个维度；全程禁止跨维度跳问：
    - **Context & Scope**：技术现状、系统边界、客观背景事实、与现有模块的关系；
@@ -537,4 +537,8 @@ Phase A 的三个 SubTask 之间可并行评审（仅 A.2 / A.3 实现上引用 
 - "命令规约 9 条目改为完整 workflow 叙事（触发场景 / 步骤化用户系统交互 / 期望终态）而非契约式字段表" ← 对齐 PR #105 review feedback：描述期望 workflow，不假设当前实现
 - "/beaver-tracker 与 /beaver-setup 中保留 tracker-* / Control-By-Beaver / beaver-* 等仓库级标签" ← 这些是 Beaver 自身元数据，不属于 Status/Type/Size taxonomy，本次重构不淘汰；Metric 3 的 grep 仅断言 `status/|type/|size/` 三类前缀
 - "所有命令的 QA 与终端输出均使用中文" ← wiki PR #105 声明（design/111-beaver-commands-realignment）
+- "/beaver-dev 中调度 superpowers:test-driven-development / superpowers:systematic-debugging / superpowers:requesting-code-review 三个 skill" ← QA 确认（/beaver-dev 命令规约设计阶段）
+- "spec-document-reviewer 当前尚不存在，需单独创建" ← 事实断言：截至本 RFC 撰写时 wiki 仓库中不存在该 markdown 模板片段，需作为独立交付物在实施阶段补齐
+- "/beaver-fix 触发场景：PR 收到 Review 评论后，开发者在 AI 辅助下逐条审查、确认、修复评论" ← QA 确认（/beaver-fix 新增命令设计阶段）
+- "/beaver-design 步骤 2 wiki clone 路径为 /tmp/wiki" ← 用户确认（~/Code/wiki 为个人路径，/tmp/wiki 为命令可写的通用临时路径）
 -->
