@@ -89,6 +89,8 @@ Size=S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 **语言约定**：所有命令的交互式问答（QA）与终端输出（提示、错误、下一步建议）均使用**中文**。
 
+**临时文件命名约定**：所有命令在通过临时文件向 `gh` CLI 传递 Issue/PR body、评论正文、PR 描述等内容时（典型如 `gh issue create --body-file`、`gh issue comment --body-file`、`gh pr create --body-file`），**必须**使用唯一文件名以避免单次命令调用内多次写入同名文件造成的覆盖或并发竞争。推荐做法：(a) 使用 `mktemp` 生成；(b) 或在固定前缀后追加 `$RANDOM` / `$$` / 时间戳后缀（例如 `/tmp/beaver-body-<cmd>-$$-$RANDOM.md`）。该约束适用于 `/beaver-{create,decompose,tracker,design,pr,fix}` 等所有写 body / comment 的命令；批量场景（如 `/beaver-decompose` 单次调用循环创建 N 个 child Issue）每个 child 必须使用独立临时文件名。Phase B 各命令的 `scripts/<command>.sh` 实现需遵循此约定，且 `beaver-lib.sh` 不需为此提供 helper（mktemp 即足够）。
+
 #### 1. `/beaver-create`
 
 **触发场景**：用户希望把一项尚未存在的工作落库——可能是一个新的 Task/SubTask，或一个刚被发现的 Bug——并希望走团队约定的字段化、状态化流程，而不是直接 `gh issue create` 然后手工补字段。
@@ -207,7 +209,7 @@ Size=S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    - **Tests**：每个 child 是否在描述中显式说明了测试策略。
    未通过的项**不阻断创建**，仅在 child Issue body 末尾追加一段 `<!-- audit-warnings -->` 块，明列未通过的审计类别（`missing-test` / `needs-split` / `missing-context`）与原因；不贴任何标签。
 6. **批量落库**（每个 child 重复以下顺序，先链接再加入 Project，避免父卡 sub-issue 不一致）：
-   a. 在父 Issue 所在 repo 创建 child Issue；
+   a. 在父 Issue 所在 repo 创建 child Issue；child Issue body **顶部**统一插入一段 ref doc 链接段（格式：`> Design Doc: <url>` 与一行空行），`<url>` 为第 1 步 `--design-doc` 参数原值（PR URL / blob URL / 本地文件路径均按原值写入，不做规范化）。该段在 audit warnings 之前、user-facing 描述之上，便于 reviewer 与开发者从 child 直接跳回设计依据。创建时**默认把父 Issue 的全部 assignee 集合**（通过 `gh api repos/<owner>/<repo>/issues/<parent>` 读 `assignees[].login`）作为 child 的 assignee 一并写入；父 Issue 无 assignee 时 child 也保持无 assignee（不回退到当前用户）；用户可在第 4 步 per-child QA 中对单个 child 覆盖 assignee 集合（接受任意 GitHub login，不强制为父 assignee 子集）。
    b. 通过 Sub-Issues API 链接到父 Issue；
    c. 把 child 加入 Project #14；
    d. 写 Project V2 字段：`Type=SubTask`、`Size=S`（SubTask 默认 `S`，与父 Task `Size=L` 区分）、`Status=Triage`、`Iteration`（**默认继承父 Issue 的 `Iteration` 字段值**；父 Iteration 为空时 child 留空，等待后续 `/beaver-tracker` 拉入）。
@@ -217,7 +219,7 @@ Size=S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 **Guardrail**：自动 audit（仅打 Beaver agent 标签，不阻断创建）；前置校验失败即中止。
 
-**期望终态**：父 Issue 在 GitHub Sub-Issues 视图下持有 N 个 child；每个 child 在 Project #14 中具备 `Type=SubTask / Size=S / Status=Triage / Iteration（继承自父，可为空）` 字段值（**不含 Level**）；audit 失败的 child body 末尾含 `<!-- audit-warnings -->` 块；父 Issue 上有一条 audit summary 评论；本命令未对 child Issue 贴任何标签，也未读写 Project V2 `Level` 字段。
+**期望终态**：父 Issue 在 GitHub Sub-Issues 视图下持有 N 个 child；每个 child 在 Project #14 中具备 `Type=SubTask / Size=S / Status=Triage / Iteration（继承自父，可为空）` 字段值（**不含 Level**）；每个 child 的 assignee 集合默认与父 Issue 一致（除非用户在 per-child QA 中覆盖）；每个 child Issue body 顶部含一段 `> Design Doc: <url>` 引用回第 1 步 `--design-doc`；audit 失败的 child body 末尾含 `<!-- audit-warnings -->` 块；父 Issue 上有一条 audit summary 评论；本命令未对 child Issue 贴任何标签，也未读写 Project V2 `Level` 字段。
 
 #### 6. `/beaver-dev`
 
@@ -564,4 +566,7 @@ Phase A 的三个 SubTask 之间可并行评审（仅 A.2 / A.3 实现上引用 
 - "三条系统迁移（Iteration→Design Pending、Design PR merge→Ready to Develop、SubTask 全关→parent Done）显式列入 out-of-scope；命令侧不打印「等待系统迁移」提示" ← 用户决策（M9）：维持原设定 out-of-scope 且不提示
 - "/beaver-create 显式支持 Type=SubTask 与 Type=Bug，按 Type 分支字段集合" ← 用户决策（M10）+ spec Phase 1
 - "/beaver-claim 删除：当前 spec 在 Ready to Claim 阶段需要团队成员自行认领，命令未提供对应入口故删除" ← 用户决策（M11）
+- "/beaver-decompose 在每个 child SubTask body 顶部插入 `> Design Doc: <url>` 段，<url> 为第 1 步 --design-doc 原值" ← 用户决策（2026-04-23 RFC 更新）：child Issue 应能直接跳回设计依据
+- "所有写 body/comment 的命令通过临时文件传 --body-file 时必须使用 mktemp 或 $RANDOM/$$ 后缀，避免单次调用内文件名冲突" ← 用户决策（2026-04-23 RFC 更新）：批量场景（如 /beaver-decompose 循环创建 N 个 child）尤其需要
+- "/beaver-decompose child SubTask 默认 assignee 集合 = 父 Issue 的 assignee 集合（无 assignee 时 child 也无 assignee，不回退当前用户）；用户可在 per-child QA 中覆盖" ← 用户决策（2026-04-23 RFC 更新）：拆解场景下父任务负责人通常即为 child 默认负责人
 -->
