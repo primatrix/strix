@@ -23,19 +23,29 @@ Beaver 当前位于 `plugins/beaver/` (v3.2.0)：9 个命令 (`beaver-{create,cl
 [项目管理框架](../onboarding/project-management.md) 是本次对齐的权威 spec。当前 Beaver 与 spec 在以下维度不一致：
 
 - **Status 载体**：spec 描述为 Project V2 单选字段（7 个值），Beaver 用 `status/*` 标签实现。
-- **Type 载体**：spec（wiki PR #106 已合并）使用原生 Issue Type，集合精简为 `Bug / Task / SubTask` 共 3 个值（不再包含 Goal、Feature、Milestone）；Beaver 用 `type/*` 标签 (`feat/bug/refactor/docs/chore`)，枚举集合与字段位置都不一致，且现有 `beaver-setup` 创建的 `Goal`、`Milestone` Type 在 spec 中已不再使用。
-- **Size 载体**：spec 定义 `XS / S / M / L / XL` 五档，Beaver 仅有 `size/S` / `size/L` 两档。
-- **系统触发的状态迁移**（Iteration 加入 → Design Pending；Design Doc PR 合并 → Ready to Develop；SubTask 关闭 → 父 Done）：spec 描述为系统行为，Beaver 当前完全没有实现。
+- **Type 载体**：spec（wiki PR #106 / #108 已合并）使用原生 Issue Type，集合精简为 `Bug / Task / SubTask` 共 3 个值（不再包含 Goal、Feature、Milestone；Goal 已迁回 wiki 页面 `docs/onboarding/goals.md`，不再以 Issue Type 形式存在）；Beaver 用 `type/*` 标签 (`feat/bug/refactor/docs/chore`)，枚举集合与字段位置都不一致，且现有 `beaver-setup` 创建的 `Goal`、`Milestone` Type 在 spec 中已不再使用。
+- **Size 载体**：spec 定义 `XS / S / M / L / XL` 五档，Beaver 仅有 `size/S` / `size/L` 两档。**本 RFC 命令侧只实现 spec Size 的子集 `S / L`**（XS / M / XL 暂不支持，spec 文件不在本次修改范围；后续再发独立 spec PR 决定是否把 spec 收敛到两档）。`/beaver-create` Size 推荐与所有命令前置校验仅在 `S / L` 内取值；遇到历史 Issue 残留 XS / M / XL 时，命令报错并提示用户手动改写为 `S` 或 `L`。
+- **Priority 载体**：spec L60 / L130 / L148 把 `Priority`（`P0 / P1 / P2`）作为 Bug 路由的关键字段并记入 Project V2，Beaver 当前未在 `beaver-setup` 中 ensure 该字段，也未在 `/beaver-create` 中收集。
+- **Level 字段**：本 RFC 此前一稿曾在 `beaver-setup` 中 ensure `Level` 字段（取值 `Task / SubTask / Bug`），但 spec 已不再描述 Level 字段，且 `Level` 与原生 Issue Type 取值完全重叠。**本次重构去掉 Level 字段**：所有命令规约不再读写 Level；Project #14 上现存的 Level 字段保留不动（与 `status/*` 标签的可逆性策略一致），仅停止源码引用。
+- **系统触发的状态迁移**（spec 中标注为「系统行为」的三条迁移）：(a) Task 加入 Iteration → Status 自动迁移到 `Design Pending`（spec L161）；(b) Design Doc PR 合并 → Status 自动迁移到 `Ready to Develop`（spec L195）；(c) SubTask 全部关闭 → 父 Size=L Task Status 自动汇总到 `Done`（spec L62 / L83 / L224 / L234）。Beaver 当前完全没有实现，本次重构同样不实现（见「范围」中的 out-of-scope）。
+- **Blocked 状态切换**：spec L61 / L82 把 `In Progress ↔ Blocked` 列为合法迁移、由用户触发；Beaver 当前没有命令承载该切换，**本次重构亦不引入新命令**——用户在 GitHub UI 直接切 Project #14 的 Status 字段（在「范围」中显式声明）。
 - **Roadmap 载体**：spec（wiki PR #106 已合并）将 Roadmap 工具映射定为 Project V2 原生 **Iteration** 字段，明确不再使用 Milestone（既不是 GitHub Milestone API，也不是 Issue Type）；Beaver 的 9 个命令与 scripts 已完成 Milestone → Iteration 的迁移（参见 commits `1f0b6bc / 7638710 / 7bb5d5e / 11ea69f / c5a59e8`），但 `beaver-engine` 文档与 `beaver-setup` 的 Issue Type 创建清单仍残留 `Milestone`，需一并清理。
 - **Project tracker issue**：spec 要求每个 Project 在当前 Iteration 内维护一个 tracker issue 集中追踪本周期任务；Beaver 已存在 `beaver-tracker` 命令承担该职责，本次重构需保证 (a) tracker 创建/更新走 `beaver-lib.sh` 字段写路径而非 `status/*` 标签，(b) tracker 的 sub-issue 列表与 Project V2 内「Iteration=当前周期 ∧ repo 归属」的 Task 集合保持一致。
 - **Task 起止时间**：spec 要求通过 Project 原生的 **Start date** / **Target date** 字段记录，不再依赖 Milestone 截止日。Beaver 不主动写这两个字段（保持 spec 中「由 Senior 在 Roadmap 制定阶段约定」的语义），但 `beaver-engine` 文档需声明此约束并避免误导命令去覆写。
-- **Bug 通道**：spec（wiki PR #104 已合并）已放宽 Bug 的 size 与 priority 强制，并要求 Bug 创建时自动加入其所属 repo 的最新 Iteration；Beaver 当前 G008 仍强制 `size/S`，需删除并以 G011（Iteration 强制）替代。
+- **Bug 通道**：spec（wiki PR #104 已合并）已放宽 Bug 的 size 与 priority 强制，要求 Bug 创建时自动加入其所属 repo 的最新 Iteration，并按 Priority 分流（P0 → `In Progress`、P1/P2 → `Ready to Claim`，spec L130 / L148）；Beaver 当前 G008 仍强制 `size/S`，需删除并以 G011（Iteration 强制）替代；同时 `/beaver-create` 的 Bug 路径需按 Priority 写入 spec 规定的初始 Status，并显式跳过 Size 字段写入（spec L137：Bug 不设 Size 字段）。
+- **/beaver-claim 取舍**：spec L175 描述「认领任务时自动分配 assignee 并由系统流转 Status」，把 assign 与状态迁移视为同一原子动作。本 RFC 选择**删除 `/beaver-claim`** 命令——assign 由用户在 GitHub UI 直接操作；Status 迁移属于 spec 中的「系统行为」，与上文 3 条系统迁移一同 out-of-scope。这是本 RFC 相对 spec 的一个**用户体验回退**（过渡期内用户需手动 assign + 手动切 Status），见 §3 的删除说明。
 
 ### 范围
 
 In-scope：所有 9 个 Beaver 命令 + `beaver-engine`；Project V2 #14 字段读写；命令间交接 `create → tracker → claim → design → decompose → dev → pr` 与 Bug 快速通道；`beaver-tracker` 的 per-Project tracker issue 维护（包含 sub-issue 列表与 Iteration 字段双向同步）；移除残留的 Milestone Issue Type 引用。
 
-Out-of-scope（明示延迟）：(a) 系统触发的自动状态迁移（GitHub Actions / 后台 bot 基础设施），作为后续 Goal 处理；(b) `beaver-pr` 的 2-Reviewer + CI-green 合并门禁，保持当前 Draft + warning 行为；(c) Beaver 不主动写 Project V2 的 **Start date** / **Target date** 字段——spec 将其归为 Senior 在 Roadmap 制定阶段的人工约定，本次重构不引入相关命令；`beaver-engine` 仅声明该约束以避免命令误覆写。
+Out-of-scope（明示延迟）：
+
+- (a) **三条系统触发的自动状态迁移**：(a-1) Task 加入 Iteration → 自动迁移到 `Design Pending`（spec L161）；(a-2) Design Doc PR 合并 → 自动迁移到 `Ready to Develop`（spec L195）；(a-3) SubTask 全部关闭 → 父 Size=L Task 自动汇总到 `Done`（spec L62 / L83 / L224 / L234）。三者均依赖 GitHub Actions / 后台 bot 基础设施，作为后续 Goal「Beaver 自动迁移基础设施」处理；本次重构内**命令侧不打印「等待系统迁移」相关提示语**，团队约定知悉系统迁移尚未上线、过渡期内由用户在 Project #14 手动切换 Status。
+- (b) `/beaver-claim` 命令删除后的「assign + Status 一体化迁移」（spec L175 描述为系统行为）：与 (a) 一同纳入「Beaver 自动迁移基础设施」Goal，本次过渡期内用户在 GitHub UI 手动 assign 并手动切 Status。
+- (c) **`In Progress ↔ Blocked` 切换**（spec L61 / L82 描述为用户触发）：本次不引入新命令封装，**用户直接在 GitHub UI 切换 Project #14 的 Status 字段**；`/beaver-engine` 在 §2 注明该项作为人工操作。
+- (d) `beaver-pr` 的 2-Reviewer + CI-green 合并门禁，保持当前 Draft + warning 行为。
+- (e) Beaver 不主动写 Project V2 的 **Start date** / **Target date** 字段——spec 将其归为 Senior 在 Roadmap 制定阶段的人工约定，本次重构不引入相关命令；`beaver-engine` 仅声明该约束以避免命令误覆写。
 
 ## 方案
 
@@ -58,8 +68,9 @@ Out-of-scope（明示延迟）：(a) 系统触发的自动状态迁移（GitHub 
                                               ▼
                           ┌────────────────────────────────────────────┐
                           │ GitHub Projects V2 #14 (primatrix/projects)│
-                          │ Fields: Level, Status (7), Size (5, NEW),  │
-                          │         Progress, Iteration                │
+                          │ Fields: Status (7), Size (2, NEW),         │
+                          │         Priority (3, NEW), Progress,       │
+                          │         Iteration                          │
                           │ Native Issue Types: Bug/Task/SubTask       │
                           │                                            │
                           └────────────────────────────────────────────┘
@@ -71,10 +82,10 @@ Out-of-scope（明示延迟）：(a) 系统触发的自动状态迁移（GitHub 
 
 所有「字段」均指 Project V2 #14 的自定义字段；所有 Type 值均指原生 GitHub Issue Type；不再出现 `status/*` / `type/*` / `size/*` 标签。
 
-跨命令的状态机主路径（size/L Task）：
+跨命令的状态机主路径（Size=L Task）：
 `Triage → Ready to Claim → Design Pending → Ready to Develop → In Progress → Done`。
-size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
-若描述中出现「命令写入 Status」即指本次实现的命令侧迁移；「系统迁移」指由 out-of-scope 的 GitHub Actions 完成（本次不实现，命令侧不写，可能仍需人工触发）。
+Size=S Task 与 Bug 跳过 Design Pending / Ready to Develop。
+若描述中出现「命令写入 Status」即指本次实现的命令侧迁移；spec 中标注的「系统行为」迁移（见「范围」§ Out-of-scope (a)）本次不实现，过渡期内由用户在 Project #14 手动切换 Status，命令侧不打印「等待系统迁移」相关提示语。
 
 **语言约定**：所有命令的交互式问答（QA）与终端输出（提示、错误、下一步建议）均使用**中文**。
 
@@ -84,33 +95,36 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 **预期 workflow**：
 
-1. **意图收集**：用户运行命令，并以自然语言描述要创建的 Issue 内容（一段话或若干要点均可）。命令根据描述内容推断 Issue Type（`bug` 或 `task`），向用户展示推断结果与依据，等待用户确认或纠正。用户也可在命令行直接附带 `--type bug|task` 跳过推断。确认后意图分流为两条子流程：Task 或 Bug。
+1. **意图收集**：用户运行命令，并以自然语言描述要创建的 Issue 内容（一段话或若干要点均可）。命令根据描述内容推断 Issue Type（`task` / `subtask` / `bug` 三选一），向用户展示推断结果与依据，等待用户确认或纠正。用户也可在命令行直接附带 `--type task|subtask|bug` 跳过推断。确认后意图分流为三条子流程：Task / SubTask / Bug。**SubTask 的两条创建路径**：(i) 用户直接 `/beaver-create --type subtask` 创建独立 SubTask（罕见，但允许，例如把已开工的零散工作补登）；(ii) 由 `/beaver-decompose` 从父 Task 批量派生（常见路径，见 §5）。两者落库后字段形态一致。
 2. **目标 repo 解析**：命令从 Project #14 README 中嵌入的 `beaver-config` 读出当前 `issueRepo`（即 Issue 创建的目标仓库，不存在「关联 repo」字段——`beaver-config` 中 `issueRepo` 若为 `all` 则默认 `primatrix/projects`），不要求用户输入。`beaver-config` 缺失或解析失败时命令立即中止，并提示用户先运行 `/beaver-setup`。
 3. **代码调研（上下文补充）**：在进入结构化问答前，命令在**当前工作目录所在的 git 仓库**（即 `git rev-parse --show-toplevel` 的结果，下称 `<cwd-repo>`，可能与 `issueRepo` 不同）下根据用户在第 1 步描述的内容，检索并阅读相关代码文件（文件名关键词匹配、函数签名搜索等），将调研摘要作为后续 QA 的「已有上下文」展示给用户，并在 Issue body 中以 `<!-- context (researched in <cwd-repo>) -->` 块附注关键发现，显式标注调研所在的 repo 以便 review 时区分上下文出处。此步骤自动执行，无需用户操作；若 cwd 不在任何 git 仓库内、或 `<cwd-repo>` 为非代码仓库（如 `primatrix/projects`）则跳过。
-4. **结构化问答（QA 循环）**：命令通过逐段问答收集 Issue 内容，每段一个问题、一个回答、一次回显确认，禁止用户在命令行一次性传入完整 body。两条子流程问答模板不同：
-   - **Size=L Task**：4 段——(a) 层级与父 Issue（用以推导 `Level`）、(b) 客观 objective、(c) 验收标准、(d) 已知约束 / 风险。
-   - **Size=S Task**：3 段最小问答——objective、验收标准、依赖项。
-   - **Bug**：4 段——复现步骤、期望行为、实际行为、影响范围 + 环境。
-5. **Size 推荐与确认**：QA 收集 objective 后，命令基于描述复杂度（行数、是否跨模块、是否引入新依赖）自动建议 `Size ∈ {XS, S, M, L, XL}`，并展示推理依据。用户确认或在五档内覆盖；这是用户唯一直接编辑的 Project V2 字段。
-6. **Iteration 决策**：
-   - Task 路径：命令询问用户「跳过 / 加入当前 Iteration / 选择某月 Iteration」，三选一。选择 `skip` 时 Issue 创建后 `Iteration` 字段留空，等待 `/beaver-tracker` 在后续周期把它纳入。**若用户选择加入某个 Iteration 且在第 4 步声明了父 Issue，命令额外把父 Issue 关联到该 Iteration 的 tracker issue（`[Iteration] <repo> <YYYY-MM>`）作为 sub-issue，使父卡在 tracker 视图中可见；若 tracker issue 不存在，命令打印提示「建议先运行 `/beaver-tracker <repo> <YYYY-MM>` 再创建子任务」，但不阻断本次创建。**
+4. **结构化问答（QA 循环）**：命令通过逐段问答收集 Issue 内容，每段一个问题、一个回答、一次回显确认，禁止用户在命令行一次性传入完整 body。三条子流程问答模板不同：
+   - **Size=L Task**：4 段——(a) 父 Issue（可选；用以建立 Sub-Issues API 关联）、(b) 客观 objective、(c) 验收标准、(d) 已知约束 / 风险。
+   - **Size=S Task / SubTask**：3 段最小问答——(a) 父 Issue（SubTask 必填；Size=S Task 可选）、(b) objective + 验收标准、(c) 依赖项。
+   - **Bug**：4 段——复现步骤、期望行为、实际行为、影响范围 + 环境。Bug 不收集 Size。
+5. **Size 推荐与确认**（仅 Task / SubTask 路径，**Bug 路径跳过**——遵循 spec L137「Bug 不设 Size 字段」）：QA 收集 objective 后，命令基于描述复杂度（行数、是否跨模块、是否引入新依赖）自动建议 `Size ∈ {S, L}`，并展示推理依据。用户确认或在两档内覆盖。SubTask 默认推荐 `S`。**注**：spec 定义五档 `XS / S / M / L / XL`，本 RFC 命令侧仅实现 `S / L` 子集，详见 §「与 spec 的差异」Size 载体条目。
+6. **Priority 收集与确认**（仅 Bug 路径）：Bug 创建必须收集 Priority（spec L130 / L148）。命令向用户询问 `P0 / P1 / P2`，无默认值；用户必须明确选择。Priority 决定步骤 9.d 的初始 Status 与是否 `@CODEOWNERS`。
+7. **Iteration 决策**：
+   - Task / SubTask 路径：命令询问用户「跳过 / 加入当前 Iteration / 选择某月 Iteration」，三选一。选择 `skip` 时 Issue 创建后 `Iteration` 字段留空，等待 `/beaver-tracker` 在后续周期把它纳入。**若用户选择加入某个 Iteration 且在第 4 步声明了父 Issue，命令额外把父 Issue 关联到该 Iteration 的 tracker issue（`[Iteration] <repo> <YYYY-MM>`）作为 sub-issue，使父卡在 tracker 视图中可见；若 tracker issue 不存在，命令打印提示「建议先运行 `/beaver-tracker <repo> <YYYY-MM>` 再创建子任务」，但不阻断本次创建。**
    - Bug 路径：用户不被询问；命令按 §「`latest_iteration_for_repo` 解析算法」自动解析「当前 Iteration 或下一个未来 Iteration」并写入。算法返回空 → G011 失败 → 命令中止并提示 `/beaver-tracker <repo>`。
-7. **Issue 预览 HARD-GATE**：所有写操作之前，命令把即将创建的 Issue 完整渲染（标题、body、推导出的所有字段值、父 Issue 链接、是否会 `@CODEOWNERS`）一次性展示给用户，等待用户显式输入 `yes` 才进入第 8 步。任何 `no` / Ctrl-C 都使命令零副作用退出。
-8. **落库**（按以下顺序，前一步失败即整体回滚或人工干预提示）：
-   a. 在 `issueRepo` 创建 Issue，body 即第 4 步收集的内容；P0 Bug 在 body 中 `@CODEOWNERS` mention。
+8. **Issue 预览 HARD-GATE**：所有写操作之前，命令把即将创建的 Issue 完整渲染（标题、body、推导出的所有字段值、父 Issue 链接、是否会 `@CODEOWNERS`）一次性展示给用户，等待用户显式输入 `yes` 才进入第 9 步。任何 `no` / Ctrl-C 都使命令零副作用退出。
+9. **落库**（按以下顺序，前一步失败即整体回滚或人工干预提示）：
+   a. 在 `issueRepo` 创建 Issue，body 即第 4 步收集的内容；**仅 P0 Bug** 在 body 中 `@CODEOWNERS` mention（spec L135）。
    b. 若用户在第 4 步声明了 parent，通过 Sub-Issues API 链接到 parent —— **必须先于** 把 child 加入 Project #14，否则父卡会出现 "1 sub-issue not in this project" 的不一致。
    c. 把 Issue 加入 Project #14。
-   d. 写入 Project V2 字段：`Type`（推导自 `<issue-type>`）、`Level`（推导自父子结构）、`Size`（用户确认值）、`Status`（默认 `Triage`；P0/blocker Bug 直接 `In Progress`）、`Iteration`（Bug 必填、Task 按用户选择）。每个字段的写入相互独立，不存在「写 Status 同时改 Type」的复合操作。
-   e. 若第 6 步 Task 路径触发了父 Issue 关联 tracker，把父 Issue 通过 Sub-Issues API 挂到该 tracker issue 下，并写入父 Issue 的 `Iteration` 字段为所选 `<YYYY-MM>`。
-9. **下一步建议**：命令打印 Issue URL 与下一步指引——
-   - Task 未挂 Iteration → `/beaver-tracker <repo>`；
-   - Task 已挂 Iteration → 等待系统迁移 `Triage → Ready to Claim` 后由其他成员在 GitHub UI assign 自己并手动切 Status（系统迁移本次 out-of-scope，可能仍需人工触发）；
-   - 常规 Bug（P1/P2）→ 在 GitHub UI assign 自己并手动将 Status 切为 `In Progress`；
-   - P0 Bug → 已为 `In Progress`，可直接 `/beaver-dev <number>` 或等待被 mention 的负责人响应。
+   d. 写入 Project V2 字段（按子流程分别写入；每个字段的写入相互独立，不存在「写 Status 同时改 Type」的复合操作）：
+      - **Task / SubTask**：`Type`（推导自 `<issue-type>`）、`Size`（用户确认值，`S` 或 `L`）、`Status=Triage`、`Iteration`（按用户选择，可为空）。
+      - **Bug**：`Type=Bug`、`Priority`（用户选择值）、`Status`（按 spec L130 / L148：`P0 → In Progress`；`P1 / P2 → Ready to Claim`，**均跳过 Triage**）、`Iteration`（G011 解析值，必填）。**不写 Size 字段**（spec L137）。
+   e. 若第 7 步 Task 路径触发了父 Issue 关联 tracker，把父 Issue 通过 Sub-Issues API 挂到该 tracker issue 下，并写入父 Issue 的 `Iteration` 字段为所选 `<YYYY-MM>`。
+10. **下一步建议**：命令打印 Issue URL 与下一步指引——
+    - Task / SubTask 未挂 Iteration → `/beaver-tracker <repo>` 把它拉入当前周期；
+    - Task / SubTask 已挂 Iteration → 等待团队成员在 GitHub UI assign 自己并手动将 Status 切到对应值（`/beaver-claim` 已删除，见 §3）；
+    - 常规 Bug（P1/P2）→ 已为 `Ready to Claim`，等待认领人在 GitHub UI assign 自己并手动将 Status 切为 `In Progress`；
+    - P0 Bug → 已为 `In Progress`，可直接 `/beaver-dev <number>` 或等待被 mention 的负责人响应。
 
 **Guardrail**：G002（Type 必填，第 1 步推断后用户拒绝确认即中止）、G011（Bug 路径下 Iteration 解析失败即拒绝创建）；G008（Bug 强制 size/S）已删除。
 
-**期望终态**：`issueRepo` 中存在新 Issue；该 Issue 已加入 Project #14；该 Project 项的 `Type / Level / Size / Status / Iteration` 字段值与上文 8.d 一致；若有父 Issue 且用户选择了 Iteration，父 Issue 已关联到对应 tracker；终端给出明确的 next-step 指引；本命令未触碰任何 `status/* / type/* / size/*` 标签。
+**期望终态**：`issueRepo` 中存在新 Issue；该 Issue 已加入 Project #14；该 Project 项的字段值与上文 9.d 一致（Task / SubTask 含 `Type / Size / Status=Triage / Iteration`；Bug 含 `Type=Bug / Priority / Status / Iteration`，**不含 Size**）；若有父 Issue 且用户选择了 Iteration，父 Issue 已关联到对应 tracker；终端给出明确的 next-step 指引；本命令未触碰任何 `status/* / type/* / size/*` 标签，也未读写 Project V2 `Level` 字段。
 
 #### 2. `/beaver-tracker`
 
@@ -147,10 +161,12 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 > - **状态迁移**（`Ready to Claim → Design Pending / In Progress`）：预期由**系统根据 assign 事件自动触发**（GitHub Actions webhook），属于系统行为，不应由用户命令驱动。该自动化与其他系统迁移一同纳入 out-of-scope 的后续 Goal「Beaver 自动迁移基础设施」。
 >
 > **过渡期**（自动化上线前）：用户认领时，直接在 GitHub UI assign 自己，再手动在 Project #14 将 Status 切换到对应值（Size=L → `Design Pending`；Size=S / Bug → `In Progress`）。`/beaver-engine` §2 会列明哪些迁移目前仍需手工触发。
+>
+> **与 spec 的差异（用户体验回退）**：spec L175 描述「认领任务时**自动**分配 assignee。Size=XS/S Status 流转到 `In Progress`；Size=M/L/XL 须处于 `Ready to Develop` 才允许进入开发」——把 assign 与状态迁移视为同一原子动作。本 RFC 删除 `/beaver-claim` 后，过渡期内用户需要做**两次手工操作**（GitHub UI assign + Project #14 切 Status），相对 spec 描述的「自动」体验是一次明确的回退。该回退伴随 out-of-scope 的「Beaver 自动迁移基础设施」Goal 一同消解，团队约定知悉此过渡期约束。
 
 #### 4. `/beaver-design`
 
-**触发场景**：Size=L 的 Task 在被认领后处于 `Design Pending`，意味着团队约定需要先沉淀一份可评审的 Design Doc 再开工。命令的职责是把"我有一个想法"逐步打磨成一份结构化的 RFC，并以 Draft PR 的形式提交到 wiki 仓库等待评审，而不是把设计直接散落在 Issue 评论中。
+**触发场景**：Size=L 的 Task 在被认领后处于 `Design Pending`，意味着团队约定需要先沉淀一份可评审的 Design Doc 再开工。命令的职责是把"我有一个想法"逐步打磨成一份结构化的 RFC，并以 Draft PR 的形式提交到 wiki 仓库等待评审，而不是把设计直接散落在 Issue 评论中。**注**：spec L58 把设计评审范围定为 Size=M/L/XL；本 RFC 命令侧仅实现 `S / L` 子集，因此 `/beaver-design` 只处理 Size=L。
 
 **预期 workflow**：
 
@@ -167,17 +183,17 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 6. **spec-document-reviewer 自检循环**：在 push 前命令调度 `spec-document-reviewer` subagent 对草稿进行最多 5 轮迭代评审；每一轮 reviewer 提出的问题由命令转给用户回答、并把回答合入草稿。直到 reviewer 给出 PASS，命令才允许进入第 7 步。任意一轮 reviewer 给出 BLOCK，循环继续；5 轮仍未通过则中止并要求人工介入。`spec-document-reviewer` 是一个 markdown 模板片段（类似 `subagent-driven-development/spec-reviewer-prompt.md`），**当前尚不存在，需单独创建**；其目标是审计设计文档的质量与内容，包括：每条事实是否可追溯到来源（anti-hallucination）、五个维度是否覆盖完整、逻辑是否自洽。
 7. **PR 提交**：命令在 wiki 仓库写入 `docs/rfc/NNNN-<slug>.md`、在 `docs/rfc/index.md` 追加一行索引、commit、push、用 `gh pr create --draft` 打开 Draft PR；PR body 含「Closes #`<n>`」之外的内容（不能在合并时关 Task Issue，因为 Task 还要继续开发）。
 8. **回写原 Issue**：命令在原 Task Issue 上评论 Design Doc PR 链接，便于其他人从 Issue 快速跳到 RFC。
-9. **下一步指引**：命令打印 PR URL 与提示——「请自审 Draft → 转 Open → 等 Reviewer 通过 → 合并；PR 合并后 Status 由系统迁移到 `Ready to Develop`（本次 RFC 范围内系统迁移可能仍需人工触发）；之后用 `/beaver-decompose <n> --design-doc <pr-url>` 拆解 SubTask」。
+9. **下一步指引**：命令打印 PR URL 与提示——「请自审 Draft → 转 Open → 等 Reviewer 通过 → 合并；之后用 `/beaver-decompose <n> --design-doc <pr-url>` 拆解 SubTask」。Status 由系统迁移到 `Ready to Develop`（系统迁移本次 out-of-scope，命令侧不打印「等待」提示，过渡期内由用户在 Project #14 手动切换）。
 
-**写字段**：本命令本身**不修改**任何 Project V2 字段。Status 保持 `Design Pending`；推进到 `Ready to Develop` 是 Design Doc PR 合并后的系统迁移职责（out-of-scope）。
+**写字段**：本命令本身**不修改**任何 Project V2 字段。Status 保持 `Design Pending`；推进到 `Ready to Develop` 是 Design Doc PR 合并后的系统迁移职责（out-of-scope，过渡期内由用户手动切换）。
 
 **Guardrail**：spec-document-reviewer 必须通过（当前需先创建该模板片段）；前置校验失败立即中止。
 
-**期望终态**：wiki 仓库上存在 Draft PR，文件位于 `docs/rfc/NNNN-<slug>.md`、`docs/rfc/index.md` 已追加；原 Task Issue 上有指向该 PR 的评论；Issue 在 Project #14 上的 Status 仍为 `Design Pending`，等待合并后的系统迁移。
+**期望终态**：wiki 仓库上存在 Draft PR，文件位于 `docs/rfc/NNNN-<slug>.md`、`docs/rfc/index.md` 已追加；原 Task Issue 上有指向该 PR 的评论；Issue 在 Project #14 上的 Status 仍为 `Design Pending`，等待人工或后续系统迁移将其推进到 `Ready to Develop`。
 
 #### 5. `/beaver-decompose`
 
-**触发场景**：Size=L Task 的 Design Doc PR 合并后，认领人需要把"一份大的设计"切成若干"可以由不同人同时推进的最小可交付单元"，落到 GitHub 上即为：父 Task 下挂 N 个 SubTask Issue。命令负责把这一拆解过程结构化、可审计，并自动做基本的拆分质量审计。
+**触发场景**：Size=L Task 的 Design Doc PR 合并后，认领人需要把"一份大的设计"切成若干"可以由不同人同时推进的最小可交付单元"，落到 GitHub 上即为：父 Task 下挂 N 个 SubTask Issue。命令负责把这一拆解过程结构化、可审计，并自动做基本的拆分质量审计。**注**：spec L197 把任务拆解定为 Size=M/L/XL；本 RFC 命令侧仅实现 `S / L` 子集，因此 `/beaver-decompose` 只处理 Size=L。
 
 **预期 workflow**：
 
@@ -194,18 +210,18 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    a. 在父 Issue 所在 repo 创建 child Issue；
    b. 通过 Sub-Issues API 链接到父 Issue；
    c. 把 child 加入 Project #14；
-   d. 写 Project V2 字段：`Type`（Task→SubTask 拆得 `SubTask` + `Size=S`）、`Level`、`Size`、`Status=Triage`、`Iteration`（**默认继承父 Issue 的 `Iteration` 字段值**；父 Iteration 为空时 child 留空，等待后续 `/beaver-tracker` 拉入）。
+   d. 写 Project V2 字段：`Type=SubTask`、`Size=S`（SubTask 默认 `S`，与父 Task `Size=L` 区分）、`Status=Triage`、`Iteration`（**默认继承父 Issue 的 `Iteration` 字段值**；父 Iteration 为空时 child 留空，等待后续 `/beaver-tracker` 拉入）。
    e. 若该 child 在第 5 步审计未通过，按结果在 child Issue body 末尾写入 `<!-- audit-warnings -->` 块。
 7. **父 Issue 总结**：命令在父 Issue 上发一条评论，列出所有 child Issue 编号 + 审计结果摘要，便于 Reviewer 快速对照设计与拆解。
-8. **下一步指引**：终端提示「N 个 child 处于 `Status=Triage`；child 已继承父 Issue 的 `Iteration`（若父 Iteration 为空，需先运行 `/beaver-tracker <repo>` 把 child 拉入当前周期），之后由系统迁移转为 `Ready to Claim`；开发者在 GitHub UI assign 自己并手动切 Status 认领（`/beaver-claim` 已删除，见 §3）」。
+8. **下一步指引**：终端提示「N 个 child 处于 `Status=Triage`；child 已继承父 Issue 的 `Iteration`（若父 Iteration 为空，需先运行 `/beaver-tracker <repo>` 把 child 拉入当前周期）；后续由开发者在 GitHub UI assign 自己并手动切 Status 认领（`/beaver-claim` 已删除，见 §3）」。
 
 **Guardrail**：自动 audit（仅打 Beaver agent 标签，不阻断创建）；前置校验失败即中止。
 
-**期望终态**：父 Issue 在 GitHub Sub-Issues 视图下持有 N 个 child；每个 child 在 Project #14 中具备 `Type / Level / Size / Status=Triage / Iteration（继承自父，可为空）` 字段值；audit 失败的 child body 末尾含 `<!-- audit-warnings -->` 块；父 Issue 上有一条 audit summary 评论；本命令未对 child Issue 贴任何标签。
+**期望终态**：父 Issue 在 GitHub Sub-Issues 视图下持有 N 个 child；每个 child 在 Project #14 中具备 `Type=SubTask / Size=S / Status=Triage / Iteration（继承自父，可为空）` 字段值（**不含 Level**）；audit 失败的 child body 末尾含 `<!-- audit-warnings -->` 块；父 Issue 上有一条 audit summary 评论；本命令未对 child Issue 贴任何标签，也未读写 Project V2 `Level` 字段。
 
 #### 6. `/beaver-dev`
 
-**触发场景**：开发者已认领某个 SubTask（Size=S）或直接创建的 Size=S Task，准备开始实际编码。命令把"开始写代码"形式化为「生成实施计划并请用户确认 → 在隔离 worktree 中走 TDD 闭环 → 通过两段 code-review → 全量测试通过」四件事的强制串联，避免开发跳过计划评审、跳过 RED test、跳过 review 直接 push 的常见反模式。本命令仅处理 Size=S 的 Issue；Size=L Task 的开发由其拆解出的各 SubTask 分别走本命令完成。
+**触发场景**：开发者已认领某个 SubTask（Size=S）或直接创建的 Size=S Task，准备开始实际编码。命令把"开始写代码"形式化为「生成实施计划并请用户确认 → 在隔离 worktree 中走 TDD 闭环 → 通过两段 code-review → 全量测试通过」四件事的强制串联，避免开发跳过计划评审、跳过 RED test、跳过 review 直接 push 的常见反模式。本命令仅处理 Size=S 的 Issue；Size=L Task 的开发由其拆解出的各 SubTask 分别走本命令完成。**注**：spec L168 把直接进入开发的 Size 定为 `XS / S`；本 RFC 命令侧仅实现 `S / L` 子集（不含 XS），因此 `/beaver-dev` 仅接受 Size=S。
 
 **预期 workflow**：
 
@@ -221,13 +237,13 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    - **Green**：写最少代码让该测试通过；
    - **Refactor**：清理重复 / 命名 / 结构，每一次 refactor 后重跑测试。
    TDD Iron Law：任何跳过 Red 直接写实现的尝试都会被 subagent 拒绝。
-5. **debugging 兜底**（`superpowers:systematic-debugging`）：测试或运行期出现失败时，命令调度 systematic-debugging subagent 接管——先复现、再二分定位、再写一个能复现该 bug 的测试、再修。debugging 完成后回到第 4 步继续 TDD。
+5. **debugging 兜底**（`superpowers:systematic-debugging`）：测试或运行期出现失败时，命令调度 systematic-debugging subagent 接管——先复现、再二分定位、再写一个能复现该 bug 的测试、再修。debugging 完成后回到第 4 步继续 TDD。**遇外部依赖阻塞**（spec L61 / L82 描述的 `In Progress ↔ Blocked` 切换）：用户直接在 GitHub UI 切换 Project #14 的 Status 字段为 `Blocked`，不通过本命令；阻塞解除后用户再手动切回 `In Progress` 并继续运行 `/beaver-dev`。
 6. **两段 code-review**（`superpowers:requesting-code-review`）：开发者声明"功能完成"后，命令依次调度两个 review subagent：
    - **spec-compliance**：对照原 Issue 的验收标准，逐条勾选；
    - **code-quality**：对照仓库 lint/format/约定，标出可改进点。
    两段 review 各产出一份反馈清单；命令把反馈展示给用户，用户可逐项接受或拒绝并说明理由。被接受的反馈进入下一轮编码循环。
 7. **Verification Iron Law**：命令在结束前强制运行项目的全量测试套件（项目根目录下的 `make test` / `pnpm test` 等），并要求 0 failures；任何 1 例失败都阻止命令进入"完成"分支，必须回到第 5 步 debugging。
-8. **下一步指引**：所有循环结束后，命令打印 worktree 路径、当前分支名、新增 commits 数量与下一步「`/beaver-pr <n>` 进入 PR 阶段」。`Status` 保持 `In Progress`，直到 PR 合并后由系统迁移转 `Done`。
+8. **下一步指引**：所有循环结束后，命令打印 worktree 路径、当前分支名、新增 commits 数量与下一步「`/beaver-pr <n>` 进入 PR 阶段」。`Status` 保持 `In Progress`，PR 合并后 `Done` 由系统迁移完成（系统迁移本次 out-of-scope，命令侧不打印「等待」提示）。
 
 **Guardrail**：Size 非 S 即拒绝（非本命令处理范围）、TDD Iron Law、Verification Iron Law。
 
@@ -256,7 +272,7 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    - **mark-ready**：自审 OK，命令立刻 `gh pr ready` 转 Open，触发系统按 CODEOWNERS 自动指派 Reviewer；
    - **保留分支**：保留 worktree 与分支，方便后续追加 commits；
    - **discard**：放弃本次工作，命令依次 `gh pr close --delete-branch` 并 `git worktree remove`，整体回到干净状态（仅在用户二次确认后执行，避免误删）。
-7. **下一步指引**：命令打印 PR URL、所选 finishing-option、PR body 中追加的 audit warning（如有）、以及合并预期：「PR 合并后 Issue 通过 `Closes #<n>` 自动 close；系统迁移把 Project Status 转为 `Done`（系统迁移本次 out-of-scope，可能仍需人工触发）；Size=L Task 须等所有 sub-issue 关闭后由系统汇总到 `Done`」。
+7. **下一步指引**：命令打印 PR URL、所选 finishing-option、PR body 中追加的 audit warning（如有）。命令侧不打印「等待系统迁移」提示——PR 合并后 `Status=Done` 由系统迁移完成（本 RFC out-of-scope）。
 
 **写字段**：本命令对 Project V2 `Status` 字段**不修改**，仅依赖 PR 合并触发的系统迁移；G006 触发时可能写入 `Type / Size` 字段（自动补齐）。
 
@@ -308,11 +324,11 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 2. **scope 自检**：命令检查 `gh auth status` 与 token scope，需含 `project` 与 `admin:org`；任一缺失立即提示 `gh auth refresh -h github.com -s project,admin:org` 并退出，避免后续中途失败留下半完成状态。
 3. **HARD-GATE 用户审批**：命令把"将要做的全部变更"作为一份清单展示给用户（要新建 / 补齐哪些字段、要创建哪些 Issue Type、要写哪些 README 段），等待用户显式输入 `yes`。任何 `no` / Ctrl-C 都使命令零副作用退出。
 4. **Project V2 字段 ensure**（按字段逐个 ensure 存在 + 选项匹配，不一致则补差）：
-   - `Level`：SINGLE_SELECT，选项 `Task / SubTask / Bug`；
    - `Status`：SINGLE_SELECT，**全量替换**为 wiki spec 的 7 个值（`Triage / Ready to Claim / Design Pending / Ready to Develop / In Progress / Blocked / Done`）——若现存选项数量或名称与之不符，命令打印 diff 并要求用户二次确认后替换；
-   - `Size`：SINGLE_SELECT，选项 `XS / S / M / L / XL`（**新增字段**）；
-   - `Progress`：NUMBER；
+   - `Size`：SINGLE_SELECT，命令侧仅使用 `S / L` 两值（spec 仍保留 `XS / S / M / L / XL` 五值，本命令在 setup 时按 spec 全量 ensure 五值，但其他 beaver 命令只消费 `S / L`）；
+   - `Priority`：SINGLE_SELECT，选项 `P0 / P1 / P2`；
    - `Iteration`：ITERATION，自当前月起填到当年 12 月。
+   - `Level` 字段保持现状不主动删除（历史数据兼容），但本 RFC 范围内的命令均不再读写 `Level`。
 5. **原生 Issue Type ensure**（在组织级别）：
    - 通过 `gh api /orgs/primatrix/issue-types`（GET）列出已存在 Type；
    - 缺失的 `Bug / Task / SubTask` 通过 POST 补齐；
@@ -322,7 +338,7 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 **Guardrail**：scope 缺失时立即退出；Status 选项数量不为 7 时给出 diff 警告并要求二次确认；任何写操作前必须经过第 3 步 HARD-GATE。命令在源码侧不再调用 `Milestone` Issue Type 的创建路径（成功指标 2 的 grep 断言）。
 
-**期望终态**：Project #14 上 `Level / Status (7 项) / Size (5 项) / Progress / Iteration` 五个字段形态正确；组织级 Issue Type 含 `Bug / Task / SubTask` 三个值；`beaver-config` 在 README 中可被其他命令读取；终端给出 setup summary。
+**期望终态**：Project #14 上 `Status (7 项) / Size (spec 五值, 命令消费 S/L) / Priority (P0/P1/P2) / Iteration` 字段形态正确（`Level` 字段若历史存在则保持原状，命令不再读写）；组织级 Issue Type 含 `Bug / Task / SubTask` 三个值；`beaver-config` 在 README 中可被其他命令读取；终端给出 setup summary。
 
 #### 10. `/beaver-fix`
 
@@ -364,7 +380,7 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 |---|---|---|---|
 | A1 | `scripts/beaver-lib.sh` 初始库 + `--self-test` 子命令 | — | 新文件，含下列 public API；`bash scripts/beaver-lib.sh self-test` 通过 |
 | A2 | `beaver-engine` 重写（§1 删除标签行；§2 状态机改为字段语义；§3 guardrail 重写；§4 Label Ops 替换为 Field Ops） | A1 | 重写后的 SKILL.md |
-| A3 | `beaver-setup` 迁移：通过 `gh api /orgs/primatrix/issue-types`（POST）确保 `Bug / Task / SubTask` 原生 Issue Type 定义存在；通过 `beaver-lib.sh::set_type` 完成所有后续实例赋值；创建 Project V2 单选 `Size` 字段（`XS / S / M / L / XL`） | A1 | `beaver-setup.md` + `beaver-setup.sh` 更新 |
+| A3 | `beaver-setup` 迁移：通过 `gh api /orgs/primatrix/issue-types`（POST）确保 `Bug / Task / SubTask` 原生 Issue Type 定义存在；通过 `beaver-lib.sh::set_type` 完成所有后续实例赋值；ensure Project V2 单选 `Size` 字段（spec 五值 `XS / S / M / L / XL`，命令侧仅消费 `S / L`）；新增 Project V2 单选 `Priority`（`P0 / P1 / P2`）；`Level` 字段保持现状不主动删除 | A1 | `beaver-setup.md` + `beaver-setup.sh` 更新 |
 
 A1 / A2 / A3 可在独立 PR 中提交，但 Phase B 任一 SubTask 启动前必须 **全部三者合并**。这符合 Issue #111 验收标准 2「对每个 Diff 点创建 Sub Task」。
 
@@ -465,15 +481,15 @@ A3 重写 `beaver-setup` 中的 Issue Type **赋值**逻辑（如初始化时给
 ## 影响范围
 
 - **代码**：`plugins/beaver/` 下 9 个命令 + 1 个 engine SKILL + 9 个 scripts，新增 1 个共享 lib（`scripts/beaver-lib.sh`）。
-- **GitHub Projects V2 #14**：新增 Project 单选字段 `Size`（`XS/S/M/L/XL`）。
+- **GitHub Projects V2 #14**：新增 Project 单选字段 `Size`（spec 五值 `XS/S/M/L/XL`，命令侧仅消费 `S/L`）与 `Priority`（`P0/P1/P2`）。`Level` 字段保持现状不主动删除（命令不再读写）。
 - **GitHub 组织级 Issue Types**：保留 `Bug / Task / SubTask` 三个值；`Goal`、`Feature`、`Milestone` 标记为弃用（不再被任何命令引用，但历史已创建的实例不主动删除）。
 - **`primatrix/projects` 仓库标签**：`status/*` / `type/*` / `size/*` 标签定义本次保留不删除（仅停止源代码引用）。
 - **使用方**：所有用 Beaver 命令做项目管理流转的开发者（迁移期内既有 Issue 的字段需用 `beaver-setup` 重跑或手工补齐 Status/Size 字段）。
 
 ### 成功指标
 
-1. **End-to-end smoke（Draft-PR 终态）**：一个新建 size/M Issue 走完 `create → tracker → claim → design → decompose → dev → pr` 后落在 `Status=In Progress` + 一个 Draft PR + Project V2 字段值与 spec 表对齐，过程中无任何手动标签 / 字段编辑、无 Beaver script 之外的 `gh api` 调用。Pass = 录制的 session 日志。
-2. **字段形态**：`gh project field-list primatrix 14 --format json | jq '.fields[] | select(.name=="Status") | .options[].name'` 精确返回 7 个 wiki 值；同样查询 `Size` 返回 `XS / S / M / L / XL`；`gh api /orgs/primatrix/issue-types` 返回包含 3 个 wiki Type 值（`Bug / Task / SubTask`），且 `git grep -nE "issue-type.*Milestone|--issue-type ['\"]?Milestone" plugins/beaver/` 在源码侧零命中。
+1. **End-to-end smoke（Draft-PR 终态）**：一个新建 `Size=L` Issue 走完 `create → tracker → design → decompose → dev → pr` 后落在 `Status=In Progress` + 一个 Draft PR + Project V2 字段值与 spec 表对齐，过程中无任何手动标签 / 字段编辑、无 Beaver script 之外的 `gh api` 调用。Pass = 录制的 session 日志。
+2. **字段形态**：`gh project field-list primatrix 14 --format json | jq '.fields[] | select(.name=="Status") | .options[].name'` 精确返回 7 个 wiki 值；同样查询 `Size` 返回 `XS / S / M / L / XL`（spec 全集；命令侧仅消费 `S / L`），查询 `Priority` 返回 `P0 / P1 / P2`；`gh api /orgs/primatrix/issue-types` 返回包含 3 个 wiki Type 值（`Bug / Task / SubTask`），且 `git grep -nE "issue-type.*Milestone|--issue-type ['\"]?Milestone" plugins/beaver/` 在源码侧零命中；`git grep -nE "set_level|get_level|\\.Level\\b|fieldName: ['\"]?Level" plugins/beaver/` 同样零命中（`Level` 字段在源码侧无引用）。
 3. **源码侧标签清理**：`git grep -nE "(gh label (add|create|delete|remove))|gh api[^|]*labels.*(status/|type/|size/)" plugins/beaver/` 在命令正文 / scripts / engine 上返回零命中。仓库侧标签定义保留不动。
 4. **Bug fast-path smoke**：新建 `Bug` Issue 且 `Priority = P0`，单次 `/beaver-create` 完成后即落在 `Status = In Progress` 且按 G011 算法解析的 Iteration 已分配。
 5. **Project tracker 一致性**：在已存在若干 Iteration=当前周期 Task 的 repo 上跑 `/beaver-tracker <repo>`，运行后 (a) `primatrix/projects` 中存在标 `tracker/<YYYY-MM>` + `tracker/<repo>` 的 issue；(b) 该 issue 的 sub-issue 集合等于「Project V2 #14 内 Iteration=当前周期 ∧ repo 归属=`<repo>` ∧ Type ∈ {Task, Bug}」的 Task 集合（差集为空）；(c) 该 tracker issue 自身的 Iteration 字段已设为当前周期。
@@ -485,8 +501,8 @@ A3 重写 `beaver-setup` 中的 Issue Type **赋值**逻辑（如初始化时给
 | Phase A.1 | `scripts/beaver-lib.sh` 初始库 + `--self-test` | — | 新文件 + 沙盒 round-trip 通过 |
 | Phase A.2 | `beaver-engine` 重写 | A.1 | 字段化 §1–§4，guardrail G008 删除 / G011 新增 |
 | Phase A.3 | `beaver-setup` 迁移 | A.1 | `Bug / Task / SubTask` Issue Type + Project V2 `Size` 字段 |
-| Phase B (×8) | 每命令一个 SubTask（`beaver-{create,claim,design,decompose,dev,pr,tracker,focus}`） | Phase A 全部合并 | 命令 + script 字段化 + 沙盒 smoke |
-| 收尾 | 父 Issue #111 关闭 | Phase B 全部合并 | 5 项成功指标全部通过 |
+| Phase B (×8) | 每命令一个 SubTask（`beaver-{create,tracker,design,decompose,dev,pr,focus,fix}`） | Phase A 全部合并 | 命令 + script 字段化 + 沙盒 smoke |
+| 收尾 | 父 Issue #111 关闭 | Phase B 全部合并 | 全部成功指标通过 |
 
 Phase A 的三个 SubTask 之间可并行评审（仅 A.2 / A.3 实现上引用 A.1），但合并顺序仍为 A.1 → 然后 A.2 / A.3。Phase B 八个 SubTask 完全并行。
 
@@ -539,4 +555,13 @@ Phase A 的三个 SubTask 之间可并行评审（仅 A.2 / A.3 实现上引用 
 - "spec-document-reviewer 当前尚不存在，需单独创建" ← 事实断言：截至本 RFC 撰写时 wiki 仓库中不存在该 markdown 模板片段，需作为独立交付物在实施阶段补齐
 - "/beaver-fix 触发场景：PR 收到 Review 评论后，开发者在 AI 辅助下逐条审查、确认、修复评论" ← QA 确认（/beaver-fix 新增命令设计阶段）
 - "/beaver-design 步骤 2 wiki clone 路径为 /tmp/wiki" ← 用户确认（~/Code/wiki 为个人路径，/tmp/wiki 为命令可写的通用临时路径）
+- "命令侧 Size 收敛到 S/L 两值（spec 仍保留 5 值）" ← 用户决策（M1）：本 RFC 内显式声明命令侧只用 L/S，spec 暂不改
+- "Bug Priority=P1/P2 创建后初始 Status=Ready to Claim；Priority=P0 直接 In Progress" ← 用户决策（M2）+ spec L131-132
+- "Bug 不写 Size 字段" ← 用户决策（M3）+ spec L139
+- "Project V2 新增 Priority 单选字段（P0/P1/P2）；命令侧需读写以驱动 Bug 路由与 /beaver-focus 排序" ← 用户决策（M4）
+- "Level 字段保留不主动删除，命令源码侧停止读写引用（mirror status/* 标签策略）" ← 用户决策（M6）
+- "Blocked 状态由用户手动操作（/beaver-dev 中显式说明），系统不自动迁移" ← 用户决策（M8）+ spec L84
+- "三条系统迁移（Iteration→Design Pending、Design PR merge→Ready to Develop、SubTask 全关→parent Done）显式列入 out-of-scope；命令侧不打印「等待系统迁移」提示" ← 用户决策（M9）：维持原设定 out-of-scope 且不提示
+- "/beaver-create 显式支持 Type=SubTask 与 Type=Bug，按 Type 分支字段集合" ← 用户决策（M10）+ spec Phase 1
+- "/beaver-claim 删除：当前 spec 在 Ready to Claim 阶段需要团队成员自行认领，命令未提供对应入口故删除" ← 用户决策（M11）
 -->
