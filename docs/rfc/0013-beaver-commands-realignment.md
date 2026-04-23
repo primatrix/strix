@@ -156,12 +156,12 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 1. **入参与前置校验**：用户运行命令并给出 `<issue-number>`。命令读取该 Issue 在 Project #14 中的字段，校验 `Type=Task ∧ Size=L ∧ Status=Design Pending` 且当前用户为 assignee；任一不满足即中止并解释原因。
 2. **wiki 工作树准备**：命令检查本地是否已有 `~/Code/wiki` clone；若没有则 clone，若已有则在 `main` 上 fetch + reset 到最新远端，并新开一个 `design/<n>-<slug>` 分支。`<slug>` 由 Issue 标题派生。
-3. **设计资料采集**：命令从 Issue body、关联 PR / Issue、CODEOWNERS 与 Issue 中提到的代码路径上自动收集背景资料，作为后续问答的"已有上下文"。
-4. **结构化问答**：命令按四个维度逐一向用户发问，每次只问一个问题、等用户回答后再问下一个，全程禁止跳问：
+3. **设计资料采集**：命令读取 Issue body 作为设计意图的主要来源，并据此在当前仓库中主动搜索与阅读相关代码（涉及的模块、接口定义、现有实现等），将 Issue body 内容与代码阅读结果合并作为后续问答的"已有上下文"。
+4. **结构化问答**：命令按四个维度逐一与用户进行 QA；每个维度先由命令列出当前上下文中尚不清晰或存在歧义的内容，再逐项与用户确认，直到命令判断该维度的信息已足够完整为止，再进入下一个维度；全程禁止跨维度跳问：
    - **Context & Scope**：技术现状、系统边界、客观背景事实、与现有模块的关系；
    - **Design Goals**：可量化的目标、明确不做的非目标、成功指标；
    - **The Design**：架构、组件、接口、数据流、技术选型理由、关键 trade-offs、测试策略、部署依赖；
-   - **Alternatives Considered**：被否决的可行方案与否决理由。
+   - **Alternatives Considered**：命令从已有上下文中识别出当前设计核心决策点的主要替代方案，逐一呈现给用户并询问为什么不采用该方案；用户的回答即为"被否决的可行方案与否决理由"，直到命令认为所有重要替代方案均已覆盖为止。
 5. **草稿生成与逐段确认**：命令把收集到的回答拼装为完整 RFC 文档（遵循 §9.1–§9.3 的格式约定，含末尾 `<!-- provenance -->` 块标注每条事实的出处），逐段展示给用户审批。用户可对任一段落要求修改，命令即重新生成该段，直到用户全部满意。
 6. **spec-document-reviewer 自检循环**：在 push 前命令调度 `spec-document-reviewer` subagent 对草稿进行最多 5 轮迭代评审；每一轮 reviewer 提出的问题由命令转给用户回答、并把回答合入草稿。直到 reviewer 通过 §9.2 anti-hallucination 检查（每条事实可追溯到 provenance），命令才允许进入第 7 步。任意一轮 reviewer 给出 BLOCK，循环继续；5 轮仍未通过则中止并要求人工介入。
 7. **PR 提交**：命令在 wiki 仓库写入 `docs/rfc/NNNN-<slug>.md`、在 `docs/rfc/index.md` 追加一行索引、commit、push、用 `gh pr create --draft` 打开 Draft PR；PR body 含「Closes #`<n>`」之外的内容（不能在合并时关 Task Issue，因为 Task 还要继续开发）。
