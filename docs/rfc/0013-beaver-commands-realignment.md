@@ -86,7 +86,7 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 1. **意图收集**：用户运行命令，并以自然语言描述要创建的 Issue 内容（一段话或若干要点均可）。命令根据描述内容推断 Issue Type（`bug` 或 `task`），向用户展示推断结果与依据，等待用户确认或纠正。用户也可在命令行直接附带 `--type bug|task` 跳过推断。确认后意图分流为两条子流程：Task 或 Bug。
 2. **目标 repo 解析**：命令从 Project #14 README 中嵌入的 `beaver-config` 读出当前 `issueRepo`（即 Issue 创建的目标仓库，不存在「关联 repo」字段——`beaver-config` 中 `issueRepo` 若为 `all` 则默认 `primatrix/projects`），不要求用户输入。`beaver-config` 缺失或解析失败时命令立即中止，并提示用户先运行 `/beaver-setup`。
-3. **代码调研（上下文补充）**：在进入结构化问答前，命令在 `issueRepo` 下根据用户在第 1 步描述的内容，检索并阅读相关代码文件（文件名关键词匹配、函数签名搜索等），将调研摘要作为后续 QA 的「已有上下文」展示给用户，并在 Issue body 中以 `<!-- context -->` 块附注关键发现。此步骤自动执行，无需用户操作，但若 `issueRepo` 为非代码仓库（如 `primatrix/projects`）则跳过。
+3. **代码调研（上下文补充）**：在进入结构化问答前，命令在**当前工作目录所在的 git 仓库**（即 `git rev-parse --show-toplevel` 的结果，下称 `<cwd-repo>`，可能与 `issueRepo` 不同）下根据用户在第 1 步描述的内容，检索并阅读相关代码文件（文件名关键词匹配、函数签名搜索等），将调研摘要作为后续 QA 的「已有上下文」展示给用户，并在 Issue body 中以 `<!-- context (researched in <cwd-repo>) -->` 块附注关键发现，显式标注调研所在的 repo 以便 review 时区分上下文出处。此步骤自动执行，无需用户操作；若 cwd 不在任何 git 仓库内、或 `<cwd-repo>` 为非代码仓库（如 `primatrix/projects`）则跳过。
 4. **结构化问答（QA 循环）**：命令通过逐段问答收集 Issue 内容，每段一个问题、一个回答、一次回显确认，禁止用户在命令行一次性传入完整 body。两条子流程问答模板不同：
    - **Size=L Task**：4 段——(a) 层级与父 Issue（用以推导 `Level`）、(b) 客观 objective、(c) 验收标准、(d) 已知约束 / 风险。
    - **Size=S Task**：3 段最小问答——objective、验收标准、依赖项。
