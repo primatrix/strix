@@ -157,13 +157,14 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 1. **入参与前置校验**：用户运行命令并给出 `<issue-number>`。命令读取该 Issue 在 Project #14 中的字段，校验 `Type=Task ∧ Size=L ∧ Status=Design Pending` 且当前用户为 assignee；任一不满足即中止并解释原因。
 2. **wiki 工作树准备**：命令检查本地是否已有 `/tmp/wiki` clone；若没有则 clone，若已有则在 `main` 上 fetch + reset 到最新远端，并新开一个 `design/<n>-<slug>` 分支。`<slug>` 由 Issue 标题派生。
 3. **设计资料采集**：命令读取 Issue body 作为设计意图的主要来源，并据此在当前仓库中主动搜索与阅读相关代码（涉及的模块、接口定义、现有实现等），将 Issue body 内容与代码阅读结果合并作为后续问答的"已有上下文"。
-4. **结构化问答**：命令按四个维度逐一与用户进行 QA；每个维度先由命令列出当前上下文中尚不清晰或存在歧义的内容，再逐项与用户确认，直到命令判断该维度的信息已足够完整为止，再进入下一个维度；全程禁止跨维度跳问：
+4. **结构化问答**：命令按五个维度逐一与用户进行 QA；每个维度先由命令列出当前上下文中尚不清晰或存在歧义的内容，再逐项与用户确认，直到命令判断该维度的信息已足够完整为止，再进入下一个维度；全程禁止跨维度跳问：
    - **Context & Scope**：技术现状、系统边界、客观背景事实、与现有模块的关系；
    - **Design Goals**：可量化的目标、明确不做的非目标、成功指标；
    - **The Design**：架构、组件、接口、数据流、技术选型理由、关键 trade-offs、测试策略、部署依赖；
+   - **Implementation Plan**：命令基于 The Design 自动生成「分阶段 SubTask 候选 + 依赖顺序 + 每个 SubTask 的预期交付物」，逐项与用户确认；用户可增、删、改、合并、拆细。本维度的产物会写入 RFC 的 `## 实施计划` 段，并在 `/beaver-decompose` §2 摄取 design doc 时作为拆解依据，因此必须在 push 前显式定稿。
    - **Alternatives Considered**：命令从已有上下文中识别出当前设计核心决策点的主要替代方案，逐一呈现给用户并询问为什么不采用该方案；用户的回答即为"被否决的可行方案与否决理由"，直到命令认为所有重要替代方案均已覆盖为止。
-5. **草稿生成与逐段确认**：命令把收集到的回答拼装为完整 RFC 文档（遵循本 wiki 的 RFC 格式约定，含末尾 `<!-- provenance -->` 块标注每条事实的出处），逐段展示给用户审批。用户可对任一段落要求修改，命令即重新生成该段，直到用户全部满意。
-6. **spec-document-reviewer 自检循环**：在 push 前命令调度 `spec-document-reviewer` subagent 对草稿进行最多 5 轮迭代评审；每一轮 reviewer 提出的问题由命令转给用户回答、并把回答合入草稿。直到 reviewer 给出 PASS，命令才允许进入第 7 步。任意一轮 reviewer 给出 BLOCK，循环继续；5 轮仍未通过则中止并要求人工介入。`spec-document-reviewer` 是一个 markdown 模板片段（类似 `subagent-driven-development/spec-reviewer-prompt.md`），**当前尚不存在，需单独创建**；其目标是审计设计文档的质量与内容，包括：每条事实是否可追溯到来源（anti-hallucination）、四个维度是否覆盖完整、逻辑是否自洽。
+5. **草稿生成与逐段确认**：命令把收集到的回答拼装为完整 RFC 文档（遵循本 wiki 的 RFC 格式约定，模板含 `## 实施计划` 段承载第 4 步 Implementation Plan 维度的产物，并以末尾 `<!-- provenance -->` 块标注每条事实的出处），逐段展示给用户审批。用户可对任一段落要求修改，命令即重新生成该段，直到用户全部满意。
+6. **spec-document-reviewer 自检循环**：在 push 前命令调度 `spec-document-reviewer` subagent 对草稿进行最多 5 轮迭代评审；每一轮 reviewer 提出的问题由命令转给用户回答、并把回答合入草稿。直到 reviewer 给出 PASS，命令才允许进入第 7 步。任意一轮 reviewer 给出 BLOCK，循环继续；5 轮仍未通过则中止并要求人工介入。`spec-document-reviewer` 是一个 markdown 模板片段（类似 `subagent-driven-development/spec-reviewer-prompt.md`），**当前尚不存在，需单独创建**；其目标是审计设计文档的质量与内容，包括：每条事实是否可追溯到来源（anti-hallucination）、五个维度是否覆盖完整、逻辑是否自洽。
 7. **PR 提交**：命令在 wiki 仓库写入 `docs/rfc/NNNN-<slug>.md`、在 `docs/rfc/index.md` 追加一行索引、commit、push、用 `gh pr create --draft` 打开 Draft PR；PR body 含「Closes #`<n>`」之外的内容（不能在合并时关 Task Issue，因为 Task 还要继续开发）。
 8. **回写原 Issue**：命令在原 Task Issue 上评论 Design Doc PR 链接，便于其他人从 Issue 快速跳到 RFC。
 9. **下一步指引**：命令打印 PR URL 与提示——「请自审 Draft → 转 Open → 等 Reviewer 通过 → 合并；PR 合并后 Status 由系统迁移到 `Ready to Develop`（本次 RFC 范围内系统迁移可能仍需人工触发）；之后用 `/beaver-decompose <n> --design-doc <pr-url>` 拆解 SubTask」。
@@ -247,21 +248,21 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    - 标题取最近一条非 fixup commit 的 subject；
    - body 含 Summary（自动汇总所有 commits 的 subject + 关键 file）+ Test Plan（取自 Issue 验收标准 + 本次 worktree 内执行的测试命令清单）+ `Closes #<n>`，便于 PR 合并时由 GitHub 自动 close 关联 Issue。
 5. **Beaver agent 审计**：
-   - **G004**：检查本次 PR 涉及的 commits 中是否有 test 文件改动；无则在 Issue 上贴 `beaver/missing-test`（Beaver agent 元数据标签，独立于淘汰 taxonomy）。
-   - **G006**：检查 Issue 自身是否已具备 `Type / Size` 字段；缺失则贴 `beaver/missing-context`。
-   两类审计均仅警告、不阻断 PR 创建。
+   - **G004**：检查本次 PR 涉及的 commits 中是否有 test 文件改动；无则在 PR body 末尾追加一行 warning（如 `> ⚠️ Beaver audit: 本次 PR 未包含 test 文件改动`），不在 Issue 上贴任何标签。
+   - **G006**：检查 Issue 自身是否已具备 `Type / Size` 字段；缺失则命令尝试自动补齐——`Type` 走 `beaver-lib.sh::set_type`（推断自分支前缀 `<type>/...`），`Size` 走 `beaver-lib.sh::set_size`，默认补 `S`（与 `/beaver-dev` 的 Size=S 前置校验对齐，能进到本命令的 Issue 几乎不会触发该补齐）。补齐失败才在 PR body 末尾追加 warning（如 `> ⚠️ Beaver audit: Issue 缺失 Type/Size 字段且自动补齐失败`），同样不在 Issue 上贴任何标签。
+   两类审计均仅警告或自动补齐、不阻断 PR 创建。
 6. **finishing-options**：命令向用户展示 4 个互斥选项，等待选择：
    - **保持 Draft**（默认）：PR 留在 Draft，作者自审后再手动转 Open；
    - **mark-ready**：自审 OK，命令立刻 `gh pr ready` 转 Open，触发系统按 CODEOWNERS 自动指派 Reviewer；
    - **保留分支**：保留 worktree 与分支，方便后续追加 commits；
    - **discard**：放弃本次工作，命令依次 `gh pr close --delete-branch` 并 `git worktree remove`，整体回到干净状态（仅在用户二次确认后执行，避免误删）。
-7. **下一步指引**：命令打印 PR URL、所选 finishing-option、贴上的 audit 标签清单、以及合并预期：「PR 合并后 Issue 通过 `Closes #<n>` 自动 close；系统迁移把 Project Status 转为 `Done`（系统迁移本次 out-of-scope，可能仍需人工触发）；Size=L Task 须等所有 sub-issue 关闭后由系统汇总到 `Done`」。
+7. **下一步指引**：命令打印 PR URL、所选 finishing-option、PR body 中追加的 audit warning（如有）、以及合并预期：「PR 合并后 Issue 通过 `Closes #<n>` 自动 close；系统迁移把 Project Status 转为 `Done`（系统迁移本次 out-of-scope，可能仍需人工触发）；Size=L Task 须等所有 sub-issue 关闭后由系统汇总到 `Done`」。
 
-**写字段**：本命令本身**不修改** Project V2 `Status` 字段，仅依赖 PR 合并触发的系统迁移。
+**写字段**：本命令对 Project V2 `Status` 字段**不修改**，仅依赖 PR 合并触发的系统迁移；G006 触发时可能写入 `Type / Size` 字段（自动补齐）。
 
-**Guardrail**：G004、G006（仅警告）；finishing-options 中的 `discard` 需二次确认。
+**Guardrail**：G004（PR body warning）、G006（自动补齐 Type/Size，失败则 PR body warning）；两者均不阻断 PR；finishing-options 中的 `discard` 需二次确认。
 
-**期望终态**：远端存在 Draft（或 Open）PR；PR body 含 `Closes #<n>`；终端给出 PR URL 与下一步说明；本命令未对 Issue 贴任何标签；除 PR 自动 close 触发的系统迁移外，本命令未改任何 Project V2 字段。
+**期望终态**：远端存在 Draft（或 Open）PR；PR body 含 `Closes #<n>`；若 G004 / G006 触发，PR body 末尾含对应 warning 行；终端给出 PR URL 与下一步说明；本命令未对 Issue 贴任何标签；除 G006 触发的 Type/Size 自动补齐与 PR 自动 close 触发的系统迁移外，本命令未改任何 Project V2 字段。
 
 #### 8. `/beaver-focus`
 
@@ -271,25 +272,22 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 1. **入参**：无。命令读取当前 `gh` 用户身份。
 2. **数据汇聚**：命令并行查询 Project #14 上多个切片，按字段过滤生成一份个人视图：
-   - 当前用户为 assignee 且 `Status=In Progress` 的所有 Issue；
+   - **My Open Issues**：当前用户为 assignee 且 GitHub Issue `state=open` 的所有 Issue（不限 Status，囊括 Triage / Ready to Claim / Design Pending / Ready to Develop / In Progress / Blocked），并附带各 Issue 的 Status 字段值用于二级分组渲染；
    - 当前用户的 `Type=Bug ∧ Priority=P0` 的所有 Issue（不论 Status，用于置顶警示）；
    - 当前用户在所有 repo 上待 review 的 PR（通过 `gh search prs --review-requested=@me`）；
    - 当前 Iteration 内 `Status=Ready to Develop` 与 `Ready to Claim` **且 assignee 为空**的可承接项；
-   - `Status=Blocked` 且 assignee 为当前用户的项；
    - 当前 Iteration 的 `endDate ≤ today + 48h` 的所有 assigned 项。
 3. **优先级排序与高亮**：
    - P0 Blocker 在分组中按 issue 持续时间排序，开放超过 24h 的项追加 ⚠️ 警示；
-   - In Progress 按最后 commit / 评论时间倒序，便于回到最近的工作流；
+   - My Open Issues 按 Status 二级分组（顺序：In Progress / Blocked / Design Pending / Ready to Develop / Ready to Claim / Triage），组内按最后 commit / 评论时间倒序，便于回到最近的工作流；
    - DDL Warning 按 `endDate` 升序。
 4. **LLM 推荐**：命令调度一个轻量 LLM 调用，把上述清单作为输入，让模型综合「DDL 紧急度 / blocker 严重度 / 当前 In Progress 进度」三维，输出 `Today's Top 3 Priorities` —— 三条具体可执行的下一步建议（不只是 issue 列表，而是「先解掉 #234 的阻塞 / 把 #145 的 RED test 补上 / Review @colleague 的 #178」这种粒度）。
 5. **终端渲染**：命令把所有信息以 markdown 形式打印为一份分组 dashboard：
    - **P0 Blockers**（含 ⚠️ 持续时间提示）
-   - **In Progress**
+   - **My Open Issues**（按 Status 二级分组：In Progress / Blocked / Design Pending / Ready to Develop / Ready to Claim / Triage）
    - **Bugs**
-   - **Ready to Develop**
-   - **Ready to Claim**
+   - **Ready to Claim**（未分配，可承接）
    - **Awaiting My Review**
-   - **My Blockers**（被自己挡住别人的项）
    - **DDL Warnings**（Iteration 临近结束）
    - **Today's Top 3 Priorities**（LLM 推荐）
 6. **零写入保证**：整个流程结束后，命令断言自身未发起任何 mutation 性质的 GraphQL / REST 调用——这一点在测试中由"调用追踪 + grep 仅命中 query/get"来验证，是 `/beaver-focus` 与其他命令的根本区别。
