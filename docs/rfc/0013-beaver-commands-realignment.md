@@ -162,15 +162,15 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    - **Design Goals**：可量化的目标、明确不做的非目标、成功指标；
    - **The Design**：架构、组件、接口、数据流、技术选型理由、关键 trade-offs、测试策略、部署依赖；
    - **Alternatives Considered**：命令从已有上下文中识别出当前设计核心决策点的主要替代方案，逐一呈现给用户并询问为什么不采用该方案；用户的回答即为"被否决的可行方案与否决理由"，直到命令认为所有重要替代方案均已覆盖为止。
-5. **草稿生成与逐段确认**：命令把收集到的回答拼装为完整 RFC 文档（遵循 §9.1–§9.3 的格式约定，含末尾 `<!-- provenance -->` 块标注每条事实的出处），逐段展示给用户审批。用户可对任一段落要求修改，命令即重新生成该段，直到用户全部满意。
-6. **spec-document-reviewer 自检循环**：在 push 前命令调度 `spec-document-reviewer` subagent 对草稿进行最多 5 轮迭代评审；每一轮 reviewer 提出的问题由命令转给用户回答、并把回答合入草稿。直到 reviewer 通过 §9.2 anti-hallucination 检查（每条事实可追溯到 provenance），命令才允许进入第 7 步。任意一轮 reviewer 给出 BLOCK，循环继续；5 轮仍未通过则中止并要求人工介入。
+5. **草稿生成与逐段确认**：命令把收集到的回答拼装为完整 RFC 文档（遵循本 wiki 的 RFC 格式约定，含末尾 `<!-- provenance -->` 块标注每条事实的出处），逐段展示给用户审批。用户可对任一段落要求修改，命令即重新生成该段，直到用户全部满意。
+6. **spec-document-reviewer 自检循环**：在 push 前命令调度 `spec-document-reviewer` subagent 对草稿进行最多 5 轮迭代评审；每一轮 reviewer 提出的问题由命令转给用户回答、并把回答合入草稿。直到 reviewer 给出 PASS，命令才允许进入第 7 步。任意一轮 reviewer 给出 BLOCK，循环继续；5 轮仍未通过则中止并要求人工介入。`spec-document-reviewer` 是一个 markdown 模板片段（类似 `subagent-driven-development/spec-reviewer-prompt.md`），**当前尚不存在，需单独创建**；其目标是审计设计文档的质量与内容，包括：每条事实是否可追溯到来源（anti-hallucination）、四个维度是否覆盖完整、逻辑是否自洽。
 7. **PR 提交**：命令在 wiki 仓库写入 `docs/rfc/NNNN-<slug>.md`、在 `docs/rfc/index.md` 追加一行索引、commit、push、用 `gh pr create --draft` 打开 Draft PR；PR body 含「Closes #`<n>`」之外的内容（不能在合并时关 Task Issue，因为 Task 还要继续开发）。
 8. **回写原 Issue**：命令在原 Task Issue 上评论 Design Doc PR 链接，便于其他人从 Issue 快速跳到 RFC。
 9. **下一步指引**：命令打印 PR URL 与提示——「请自审 Draft → 转 Open → 等 Reviewer 通过 → 合并；PR 合并后 Status 由系统迁移到 `Ready to Develop`（本次 RFC 范围内系统迁移可能仍需人工触发）；之后用 `/beaver-decompose <n> --design-doc <pr-url>` 拆解 SubTask」。
 
 **写字段**：本命令本身**不修改**任何 Project V2 字段。Status 保持 `Design Pending`；推进到 `Ready to Develop` 是 Design Doc PR 合并后的系统迁移职责（out-of-scope）。
 
-**Guardrail**：spec-document-reviewer 必须通过；§9.2 anti-hallucination；前置校验失败立即中止。
+**Guardrail**：spec-document-reviewer 必须通过（当前需先创建该模板片段）；前置校验失败立即中止。
 
 **期望终态**：wiki 仓库上存在 Draft PR，文件位于 `docs/rfc/NNNN-<slug>.md`、`docs/rfc/index.md` 已追加；原 Task Issue 上有指向该 PR 的评论；Issue 在 Project #14 上的 Status 仍为 `Design Pending`，等待合并后的系统迁移。
 
