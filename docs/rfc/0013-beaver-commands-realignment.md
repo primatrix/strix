@@ -188,19 +188,19 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    - **Coverage**：Design Doc §方案 中列出的每个组件 / 接口是否至少被一个 child 覆盖；
    - **Atomicity**：是否存在 child 描述跨多模块且无法独立 review；
    - **Tests**：每个 child 是否在描述中显式说明了测试策略。
-   未通过的项**不阻断创建**，仅在 child Issue 上贴 `beaver/missing-test / beaver/needs-split / beaver/missing-context` 三类 Beaver agent 元数据标签（独立于被淘汰的 taxonomy）。
+   未通过的项**不阻断创建**，仅在 child Issue body 末尾追加一段 `<!-- audit-warnings -->` 块，明列未通过的审计类别（`missing-test` / `needs-split` / `missing-context`）与原因；不贴任何标签。
 6. **批量落库**（每个 child 重复以下顺序，先链接再加入 Project，避免父卡 sub-issue 不一致）：
    a. 在父 Issue 所在 repo 创建 child Issue；
    b. 通过 Sub-Issues API 链接到父 Issue；
    c. 把 child 加入 Project #14；
-   d. 写 Project V2 字段：`Type`（Task→SubTask 拆得 `SubTask` + `Size=S`）、`Level`、`Size`、`Status=Triage`；**不**写 `Iteration`（留给后续 `/beaver-tracker` 或 `/beaver-create` 流程显式处理）。
-   e. 若该 child 在第 5 步审计未通过，按结果贴对应 `beaver/*` 标签。
+   d. 写 Project V2 字段：`Type`（Task→SubTask 拆得 `SubTask` + `Size=S`）、`Level`、`Size`、`Status=Triage`、`Iteration`（**默认继承父 Issue 的 `Iteration` 字段值**；父 Iteration 为空时 child 留空，等待后续 `/beaver-tracker` 拉入）。
+   e. 若该 child 在第 5 步审计未通过，按结果在 child Issue body 末尾写入 `<!-- audit-warnings -->` 块。
 7. **父 Issue 总结**：命令在父 Issue 上发一条评论，列出所有 child Issue 编号 + 审计结果摘要，便于 Reviewer 快速对照设计与拆解。
-8. **下一步指引**：终端提示「N 个 child 处于 `Status=Triage`；将这些 child 加入 Iteration 后由系统迁移转为 `Ready to Claim`；之后由开发者在 GitHub UI assign 自己并手动切 Status 认领（`/beaver-claim` 已删除，见 §3）」。
+8. **下一步指引**：终端提示「N 个 child 处于 `Status=Triage`；child 已继承父 Issue 的 `Iteration`（若父 Iteration 为空，需先运行 `/beaver-tracker <repo>` 把 child 拉入当前周期），之后由系统迁移转为 `Ready to Claim`；开发者在 GitHub UI assign 自己并手动切 Status 认领（`/beaver-claim` 已删除，见 §3）」。
 
 **Guardrail**：自动 audit（仅打 Beaver agent 标签，不阻断创建）；前置校验失败即中止。
 
-**期望终态**：父 Issue 在 GitHub Sub-Issues 视图下持有 N 个 child；每个 child 在 Project #14 中具备 `Type / Level / Size / Status=Triage` 字段值；audit 失败的 child 已贴 `beaver/*` 标签；父 Issue 上有一条 audit summary 评论。
+**期望终态**：父 Issue 在 GitHub Sub-Issues 视图下持有 N 个 child；每个 child 在 Project #14 中具备 `Type / Level / Size / Status=Triage / Iteration（继承自父，可为空）` 字段值；audit 失败的 child body 末尾含 `<!-- audit-warnings -->` 块；父 Issue 上有一条 audit summary 评论；本命令未对 child Issue 贴任何标签。
 
 #### 6. `/beaver-dev`
 
@@ -261,7 +261,7 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 **Guardrail**：G004、G006（仅警告）；finishing-options 中的 `discard` 需二次确认。
 
-**期望终态**：远端存在 Draft（或 Open）PR；PR body 含 `Closes #<n>`；Issue 上按需贴有 `beaver/missing-test` / `beaver/missing-context`；终端给出 PR URL 与下一步说明；除 PR 自动 close 触发的系统迁移外，本命令未改任何 Project V2 字段。
+**期望终态**：远端存在 Draft（或 Open）PR；PR body 含 `Closes #<n>`；终端给出 PR URL 与下一步说明；本命令未对 Issue 贴任何标签；除 PR 自动 close 触发的系统迁移外，本命令未改任何 Project V2 字段。
 
 #### 8. `/beaver-focus`
 
@@ -274,7 +274,7 @@ size/S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    - 当前用户为 assignee 且 `Status=In Progress` 的所有 Issue；
    - 当前用户的 `Type=Bug ∧ Priority=P0` 的所有 Issue（不论 Status，用于置顶警示）；
    - 当前用户在所有 repo 上待 review 的 PR（通过 `gh search prs --review-requested=@me`）；
-   - 当前 Iteration 内 `Status=Ready to Develop` 与 `Ready to Claim` 的可承接项；
+   - 当前 Iteration 内 `Status=Ready to Develop` 与 `Ready to Claim` **且 assignee 为空**的可承接项；
    - `Status=Blocked` 且 assignee 为当前用户的项；
    - 当前 Iteration 的 `endDate ≤ today + 48h` 的所有 assigned 项。
 3. **优先级排序与高亮**：
