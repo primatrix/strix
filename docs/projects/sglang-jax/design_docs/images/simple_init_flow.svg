@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1240" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+    <marker id="arrowGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .title    { font-size: 22px; font-weight: 800; fill: #0f172a; }
+      .subtitle { font-size: 13px; fill: #475569; }
+      .modTitle { font-size: 16px; font-weight: 700; fill: #0f172a; }
+      .modSub   { font-size: 13px; fill: #1e293b; }
+      .modPath  { font-size: 11.5px; fill: #475569; font-family: 'SF Mono', Menlo, Consolas, monospace; }
+      .code     { font-size: 13px; fill: #0f172a; font-family: 'SF Mono', Menlo, Consolas, monospace; }
+      .codeKey  { font-size: 13px; fill: #b45309; font-family: 'SF Mono', Menlo, Consolas, monospace; font-weight: 700; }
+      .edge     { font-size: 12px; fill: #1e293b; font-weight: 600; }
+      .note     { font-size: 11.5px; fill: #64748b; font-style: italic; }
+      .tag      { font-size: 10.5px; font-weight: 700; fill: #ffffff; }
+      .iface    { font-size: 13px; fill: #0f172a; font-family: 'SF Mono', Menlo, Consolas, monospace; font-weight: 600; }
+    </style>
+  </defs>
+
+  <!-- title -->
+  <text x="40" y="40" class="title">HybridLinearAttnBackend Initialization (kimi-linear)</text>
+  <text x="40" y="62" class="subtitle">_get_attention_backend → attn_backend_wrapper → HybridLinearAttnBackend  ·  含 KDAAttnBackend 接入约束与接口契约</text>
+
+  <!-- ============== STEP 1 ============== -->
+  <g>
+    <rect x="40" y="100" width="1200" height="120" rx="10" fill="#ede9fe" stroke="#6d28d9" stroke-width="2"/>
+    <rect x="40" y="100" width="1200" height="28" rx="10" fill="#6d28d9"/>
+    <text x="56" y="120" class="tag">STEP 1 · ModelRunner</text>
+    <text x="56" y="152" class="modTitle">ModelRunner._get_attention_backend()</text>
+    <text x="56" y="172" class="modPath">python/sglang/srt/model_executor/model_runner.py:2096</text>
+    <text x="56" y="194" class="modSub">使用现有的 <tspan class="codeKey">attn_backend</tspan> 作为 <tspan class="codeKey">full_attn_backend</tspan> 传入下一步</text>
+  </g>
+
+  <!-- arrow 1 → 2 -->
+  <path d="M 640 220 L 640 252" stroke="#334155" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+  <text x="652" y="244" class="edge">attn_backend_wrapper(self, full_attn_backend)</text>
+
+  <!-- ============== STEP 2 ============== -->
+  <g>
+    <rect x="40" y="260" width="780" height="280" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+    <rect x="40" y="260" width="780" height="28" rx="10" fill="#15803d"/>
+    <text x="56" y="280" class="tag">STEP 2 · WRAPPER</text>
+    <text x="56" y="312" class="modTitle">ModelRunner.attn_backend_wrapper(full_attn_backend)</text>
+    <text x="56" y="332" class="modPath">layers/attention/attention_registry.py:192  ·  kimi-linear 分支 line 235</text>
+
+    <!-- code block -->
+    <rect x="56" y="350" width="748" height="172" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+    <text x="72" y="392" class="code">if runner.kimi_linear_config is not None:</text>
+    <text x="72" y="412" class="codeKey">    linear_attn_backend = KDAAttnBackend(model_runner)</text>
+    <text x="72" y="436" class="code">full_attn_layers = cfg.full_attention_layer_ids</text>
+    <text x="72" y="460" class="code">return <tspan class="codeKey">HybridLinearAttnBackend(</tspan></text>
+    <text x="72" y="480" class="code">    full_attn_backend,</text>
+    <text x="72" y="500" class="code">    linear_attn_backend,</text>
+    <text x="72" y="520" class="code">    full_attn_layers,</text>
+    <text x="72" y="540" class="code" font-style="italic">) </text>
+  </g>
+
+  <!-- ============== KDAAttnBackend side box ============== -->
+  <g>
+    <rect x="850" y="260" width="390" height="280" rx="10" fill="#cffafe" stroke="#0e7490" stroke-width="2"/>
+    <rect x="850" y="260" width="390" height="28" rx="10" fill="#0e7490"/>
+    <text x="866" y="280" class="tag">KDA · 接入设计</text>
+    <text x="866" y="312" class="modTitle">KDAAttnBackend(LinearRecurrentAttentionBackend)</text>
+    <text x="866" y="332" class="modPath">layers/attention/linear/kda_backend.py</text>
+
+    <rect x="866" y="350" width="358" height="172" rx="6" fill="#ecfeff" stroke="#67e8f9"/>
+    <text x="880" y="372" class="code">def __init__(self, model_runner):</text>
+    <text x="880" y="392" class="code">    super().__init__(model_runner)</text>
+    <text x="880" y="416" class="code"># key:</text>
+    <text x="880" y="436" class="codeKey">self.req_to_token_pool: \</text>
+    <text x="880" y="456" class="codeKey">  HybridReqToTokenPool = \</text>
+    <text x="880" y="476" class="codeKey">    model_runner.req_to_token_pool</text>
+    <text x="880" y="500" class="note"># 供 forward_metadata 准备使用</text>
+    <text x="880" y="516" class="note"># (取 linear recurrent state 索引 / state cache)</text>
+  </g>
+
+  <!-- arrow from STEP 2 codeKey to KDAAttnBackend box -->
+  <path d="M 656 412 C 760 412, 800 412, 850 412" stroke="#0e7490" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- arrow 2 → 3 -->
+  <path d="M 430 540 L 430 580" stroke="#15803d" stroke-width="2.5" fill="none" marker-end="url(#arrowGreen)"/>
+  <text x="442" y="572" class="edge">return ↓</text>
+
+  <!-- ============== STEP 3 ============== -->
+  <g>
+    <rect x="40" y="588" width="1200" height="160" rx="10" fill="#bbf7d0" stroke="#166534" stroke-width="2.5"/>
+    <rect x="40" y="588" width="1200" height="30" rx="10" fill="#166534"/>
+    <text x="56" y="609" class="tag">STEP 3 · ★ HybridLinearAttnBackend 构造完成</text>
+    <text x="56" y="643" class="modTitle">HybridLinearAttnBackend(full_attn_backend, linear_attn_backend, full_attn_layers)</text>
+    <text x="56" y="663" class="modPath">layers/attention/hybrid_linear_attn_backend.py:725</text>
+    <text x="56" y="688" class="modSub">仅做三处保存:<tspan class="code">self.full_attn_backend</tspan> / <tspan class="code">self.linear_attn_backend</tspan> / <tspan class="code">self.full_attn_layers</tspan> (set[int])</text>
+    <text x="56" y="708" class="modSub">不申请显存,不持池。后续在 forward 时按 layer_id 二次分发到 full / linear。</text>
+    <text x="56" y="734" class="codeKey">⇒ model_runner.attn_backend = HybridLinearAttnBackend(...)</text>
+  </g>
+
+  <!-- arrow into interface contract -->
+  <path d="M 640 748 L 640 790" stroke="#334155" stroke-width="2" stroke-dasharray="5 4" fill="none" marker-end="url(#arrow)"/>
+  <text x="652" y="780" class="edge">同时要求实现以下接口契约 ↓</text>
+
+  <!-- ============== Interface contract ============== -->
+  <g>
+    <rect x="40" y="800" width="1200" height="290" rx="10" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+    <rect x="40" y="800" width="1200" height="28" rx="10" fill="#b45309"/>
+    <text x="56" y="820" class="tag">INTERFACE CONTRACT · HybridLinearAttnBackend 与 KDAAttnBackend 都需实现</text>
+
+    <!-- left: get_forward_metadata -->
+    <rect x="56" y="848" width="580" height="226" rx="8" fill="#fffbeb" stroke="#fbbf24"/>
+    <text x="72" y="872" class="modTitle">① get_forward_metadata(self, model_worker_batch)</text>
+    <text x="72" y="894" class="iface">def get_forward_metadata(self, model_worker_batch):</text>
+    <text x="72" y="912" class="iface">    ...</text>
+    <text x="72" y="942" class="modSub">由 HybridLinearAttnBackend 入口接收 model_worker_batch,</text>
+    <text x="72" y="960" class="modSub">向 <tspan class="code">full_attn_backend</tspan> 与 <tspan class="code">linear_attn_backend</tspan> 各自取一份</text>
+    <text x="72" y="978" class="modSub">forward_metadata,合并 / 保留作后续 forward 使用。</text>
+    <text x="72" y="1006" class="note">KDAAttnBackend 内通过</text>
+    <text x="72" y="1024" class="codeKey">self.req_to_token_pool.get_linear_recurrent_indices(...)</text>
+    <text x="72" y="1042" class="note">读取 linear recurrent state 索引,组 ForwardMetadata。</text>
+    <text x="72" y="1062" class="note">full 子后端仍构造 page table / wrapper / seqlen 等。</text>
+
+    <!-- right: get_max_running_requests -->
+    <rect x="650" y="848" width="574" height="226" rx="8" fill="#fffbeb" stroke="#fbbf24"/>
+    <text x="666" y="872" class="modTitle">② get_max_running_requests(max_context_len, page_size)</text>
+    <text x="666" y="894" class="iface">def get_max_running_requests(</text>
+    <text x="666" y="912" class="iface">    max_context_len: int, page_size: int) -&gt; int:</text>
+    <text x="666" y="930" class="iface">    ...</text>
+    <text x="666" y="960" class="modSub">由 HybridLinearAttnBackend 取 <tspan class="code">full</tspan> / <tspan class="code">linear</tspan> 两路</text>
+    <text x="666" y="978" class="modSub">的 capacity 上限,取 min 作为整模型上限。</text>
+    <text x="666" y="1006" class="note">KDAAttnBackend 的实现取决于 linear recurrent state pool 容量:</text>
+    <text x="666" y="1024" class="codeKey">self.req_to_token_pool.size  (HybridReqToTokenPool)</text>
+    <text x="666" y="1042" class="note">full 子后端按 KV pool / page_size 估算可承载并发数。</text>
+  </g>
+
+  <!-- footer note -->
+  <text x="40" y="1130" class="note">注:_get_attention_backend / attn_backend_wrapper 的具体调用关系见源码;此图按你给的"ModelRunner 视角"语义将 attn_backend_wrapper 表达为 ModelRunner 的方法调用。</text>
+  <text x="40" y="1150" class="note">注:KDAAttnBackend 继承 LinearRecurrentAttentionBackend,__init__ 仅需 model_runner;关键持有 self.req_to_token_pool: HybridReqToTokenPool。</text>
+  <text x="40" y="1170" class="note">注:接口契约 ① ② 当前尚未在仓库中实现,本图按你的设计目标记录;HybridLinearAttnBackend 的实现应当向 full_attn_backend / linear_attn_backend 两个子后端分别取/聚合。</text>
+</svg>

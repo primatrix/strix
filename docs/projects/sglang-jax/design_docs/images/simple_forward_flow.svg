@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 1640" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrowLin" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0891b2"/>
+    </marker>
+    <marker id="arrowFull" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#be185d"/>
+    </marker>
+    <style>
+      .title    { font-size: 22px; font-weight: 800; fill: #0f172a; }
+      .subtitle { font-size: 13px; fill: #475569; }
+      .modTitle { font-size: 15px; font-weight: 700; fill: #0f172a; }
+      .modSub   { font-size: 13px; fill: #1e293b; }
+      .modPath  { font-size: 11.5px; fill: #475569; font-family: 'SF Mono', Menlo, Consolas, monospace; }
+      .code     { font-size: 13px; fill: #0f172a; font-family: 'SF Mono', Menlo, Consolas, monospace; }
+      .codeKey  { font-size: 13px; fill: #b45309; font-family: 'SF Mono', Menlo, Consolas, monospace; font-weight: 700; }
+      .codeLin  { font-size: 13px; fill: #0e7490; font-family: 'SF Mono', Menlo, Consolas, monospace; font-weight: 700; }
+      .codeFull { font-size: 13px; fill: #9d174d; font-family: 'SF Mono', Menlo, Consolas, monospace; font-weight: 700; }
+      .edge     { font-size: 12px; fill: #1e293b; font-weight: 600; }
+      .note     { font-size: 11.5px; fill: #64748b; font-style: italic; }
+      .tag      { font-size: 10.5px; font-weight: 700; fill: #ffffff; }
+    </style>
+  </defs>
+
+  <!-- title -->
+  <text x="40" y="40" class="title">HybridLinearAttnBackend Forward Flow (kimi-linear, simplified)</text>
+  <text x="40" y="62" class="subtitle">tp_worker.forward_batch_generation → get_forward_metadata → 模型层逐层调用 → HybridLinearAttnBackend 按 layer_id 分发</text>
+
+  <!-- ============== STEP 1: tp_worker ============== -->
+  <g>
+    <rect x="40" y="100" width="1240" height="92" rx="10" fill="#ede9fe" stroke="#6d28d9" stroke-width="2"/>
+    <rect x="40" y="100" width="1240" height="28" rx="10" fill="#6d28d9"/>
+    <text x="56" y="120" class="tag">STEP 1 · TP Worker</text>
+    <text x="56" y="152" class="modTitle">tp_worker.forward_batch_generation(model_worker_batch)</text>
+    <text x="56" y="172" class="modPath">srt/managers/tp_worker.py</text>
+    <text x="56" y="186" class="modSub">每个 forward step 入口。先准备 forward_metadata,再驱动模型 __call__。</text>
+  </g>
+
+  <path d="M 660 192 L 660 222" stroke="#334155" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ============== STEP 2: get_forward_metadata ============== -->
+  <g>
+    <rect x="40" y="230" width="780" height="120" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+    <rect x="40" y="230" width="780" height="28" rx="10" fill="#15803d"/>
+    <text x="56" y="250" class="tag">STEP 2 · 取 metadata</text>
+    <text x="56" y="282" class="modTitle">forward_metadata = attn_backend.get_forward_metadata(model_worker_batch)</text>
+    <text x="56" y="306" class="modSub">Hybrid 端实现:聚合两路子后端的 metadata,</text>
+    <text x="56" y="324" class="modSub">返回 <tspan class="codeKey">tuple/list = [linear_meta, full_meta]</tspan></text>
+    <text x="56" y="342" class="note">linear_meta 由 KDA 子后端生成(linear recurrent state 索引 等);full_meta 由 full 子后端生成(page_table 等)</text>
+  </g>
+
+  <!-- ============== STEP 3: assign forward_metadata ============== -->
+  <g>
+    <rect x="40" y="370" width="1240" height="180" rx="10" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+    <rect x="40" y="370" width="1240" height="28" rx="10" fill="#b45309"/>
+    <text x="56" y="390" class="tag">STEP 3 · ★ 关键赋值(Hybrid 需在内部分发)</text>
+    <text x="56" y="422" class="modTitle">attn_backend.forward_metadata = forward_metadata</text>
+
+    <rect x="56" y="438" width="1208" height="98" rx="6" fill="#fffbeb" stroke="#fbbf24"/>
+    <text x="72" y="460" class="code"># HybridLinearAttnBackend 内部:</text>
+    <text x="72" y="482" class="code">@forward_metadata.setter</text>
+    <text x="72" y="502" class="code">def forward_metadata(self, forward_metadata):</text>
+    <text x="72" y="522" class="codeKey">    self.linear_attn_backend.forward_metadata, self.full_attn_backend.forward_metadata = forward_metadata[0], forward_metadata[1]</text>
+  </g>
+
+  <path d="M 660 550 L 660 580" stroke="#334155" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ============== STEP 4: KimiLinearForCausalLM ============== -->
+  <g>
+    <rect x="40" y="588" width="1240" height="74" rx="10" fill="#ede9fe" stroke="#6d28d9" stroke-width="2"/>
+    <rect x="40" y="588" width="1240" height="28" rx="10" fill="#6d28d9"/>
+    <text x="56" y="608" class="tag">STEP 4 · 模型入口</text>
+    <text x="56" y="640" class="modTitle">KimiLinearForCausalLM.__call__(input_ids, positions, forward_batch, ...)</text>
+    <text x="56" y="656" class="modPath">models/kimi_linear.py:614  →  embed → self.model(...) → LogitsProcessor</text>
+  </g>
+
+  <path d="M 660 662 L 660 690" stroke="#334155" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ============== STEP 5: KimiLinearModel ============== -->
+  <g>
+    <rect x="40" y="698" width="1240" height="74" rx="10" fill="#ede9fe" stroke="#6d28d9" stroke-width="2"/>
+    <rect x="40" y="698" width="1240" height="28" rx="10" fill="#6d28d9"/>
+    <text x="56" y="718" class="tag">STEP 5 · 模型主体</text>
+    <text x="56" y="750" class="modTitle">KimiLinearModel.__call__(...)</text>
+    <text x="56" y="766" class="modPath">models/kimi_linear.py:528  →  for layer in self.layers[start:end]: layer(positions, hidden_states, forward_batch, residual, ...)</text>
+  </g>
+
+  <path d="M 660 772 L 660 800" stroke="#334155" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ============== STEP 6: KimiDecoderLayer ============== -->
+  <g>
+    <rect x="40" y="808" width="780" height="118" rx="10" fill="#ede9fe" stroke="#6d28d9" stroke-width="2"/>
+    <rect x="40" y="808" width="780" height="28" rx="10" fill="#6d28d9"/>
+    <text x="56" y="828" class="tag">STEP 6 · 单层(逐层)</text>
+    <text x="56" y="860" class="modTitle">KimiDecoderLayer.__call__(...)</text>
+    <text x="56" y="876" class="modPath">models/kimi_linear.py:476</text>
+    <text x="56" y="898" class="modSub">input_layernorm → <tspan class="codeKey">self.self_attn(...)</tspan> → post_norm → MLP/MoE</text>
+    <text x="56" y="916" class="note">self.self_attn 在 __init__ 阶段已绑定为 KDA 或 MLA(由 is_kda_layer 决定)</text>
+  </g>
+
+  <!-- side box: dispatch decided in __init__ -->
+  <g>
+    <rect x="850" y="808" width="430" height="118" rx="10" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
+    <rect x="850" y="808" width="430" height="28" rx="10" fill="#b45309"/>
+    <text x="866" y="828" class="tag">DISPATCH · __init__ 阶段确定</text>
+    <text x="866" y="858" class="code">if config.is_kda_layer(layer_idx):</text>
+    <text x="866" y="876" class="codeLin">    self.self_attn = KimiDeltaAttention(...)</text>
+    <text x="866" y="894" class="code">else:</text>
+    <text x="866" y="912" class="codeFull">    self.self_attn = KimiMLAAttention(...)</text>
+  </g>
+
+  <path d="M 820 866 L 850 866" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- arrow split to STEP 7 -->
+  <path d="M 430 926 L 280 970" stroke="#0891b2" stroke-width="2.5" fill="none" marker-end="url(#arrowLin)"/>
+  <text x="180" y="960" class="edge" fill="#0e7490">KDA layer ↙</text>
+  <path d="M 430 926 L 1020 970" stroke="#be185d" stroke-width="2.5" fill="none" marker-end="url(#arrowFull)"/>
+  <text x="1040" y="960" class="edge" fill="#9d174d">↘ MLA layer</text>
+
+  <!-- ============== STEP 7: KDA / MLA __call__ ============== -->
+  <g>
+    <rect x="40" y="978" width="610" height="100" rx="10" fill="#cffafe" stroke="#0e7490" stroke-width="2"/>
+    <rect x="40" y="978" width="610" height="28" rx="10" fill="#0e7490"/>
+    <text x="56" y="998" class="tag">STEP 7a · LINEAR 路径</text>
+    <text x="56" y="1030" class="modTitle">KimiDeltaAttention.__call__(forward_batch, ...)</text>
+    <text x="56" y="1046" class="modPath">models/kimi_linear.py:369</text>
+    <text x="56" y="1066" class="modSub">forward_qkvbfg → <tspan class="codeLin">self.attn(...)</tspan>(RadixLinearAttention)</text>
+  </g>
+
+  <g>
+    <rect x="670" y="978" width="610" height="100" rx="10" fill="#fce7f3" stroke="#9d174d" stroke-width="2"/>
+    <rect x="670" y="978" width="610" height="28" rx="10" fill="#9d174d"/>
+    <text x="686" y="998" class="tag">STEP 7b · FULL 路径</text>
+    <text x="686" y="1030" class="modTitle">KimiMLAAttention.__call__(positions, hidden_states, forward_batch, ...)</text>
+    <text x="686" y="1046" class="modPath">= DeepseekV2AttentionMLA (deepseek_v2.py)</text>
+    <text x="686" y="1066" class="modSub">MLA 投影 / RoPE → <tspan class="codeFull">self.attn(...)</tspan>(RadixAttention)</text>
+  </g>
+
+  <path d="M 345 1078 L 345 1110" stroke="#0891b2" stroke-width="2.5" fill="none" marker-end="url(#arrowLin)"/>
+  <text x="354" y="1100" class="edge" fill="#0e7490">forward_batch.attn_backend.forward(layer=, ...)</text>
+  <path d="M 975 1078 L 975 1110" stroke="#be185d" stroke-width="2.5" fill="none" marker-end="url(#arrowFull)"/>
+  <text x="704" y="1100" class="edge" fill="#9d174d">forward_batch.attn_backend.forward(layer=, ...)</text>
+
+  <!-- ============== STEP 8: HybridLinearAttnBackend dispatch ============== -->
+  <g>
+    <rect x="40" y="1118" width="1240" height="180" rx="10" fill="#bbf7d0" stroke="#166534" stroke-width="2.5"/>
+    <rect x="40" y="1118" width="1240" height="30" rx="10" fill="#166534"/>
+    <text x="56" y="1139" class="tag">STEP 8 · ★ HybridLinearAttnBackend 按 layer_id 分发</text>
+    <text x="56" y="1172" class="modTitle">HybridLinearAttnBackend.forward(layer, forward_batch, ...)</text>
+    <text x="56" y="1188" class="modPath">layers/attention/hybrid_linear_attn_backend.py:886</text>
+
+    <rect x="56" y="1204" width="1208" height="84" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+    <text x="72" y="1226" class="code">layer_id = layer.layer_id</text>
+    <text x="72" y="1248" class="code">if layer_id in <tspan class="codeKey">self.full_attn_layers</tspan>:</text>
+    <text x="72" y="1268" class="codeFull">    return self.full_attn_backend.forward_extend / forward_decode(...)   # ← MLA</text>
+    <text x="72" y="1286" class="codeLin">return self.linear_attn_backend.forward_extend / forward_decode(...)     # ← KDA</text>
+  </g>
+
+  <!-- ============== Footer / contract reminders ============== -->
+  <g>
+    <rect x="40" y="1320" width="1240" height="290" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="56" y="1346" class="modTitle">交互方式速查</text>
+    <text x="56" y="1370" class="modSub">① <tspan class="code">tp_worker.forward_batch_generation()</tspan> 是每个 forward step 的入口,负责 metadata 准备 + 模型 __call__</text>
+    <text x="56" y="1390" class="modSub">② <tspan class="code">attn_backend.get_forward_metadata(model_worker_batch)</tspan> 返回聚合 metadata([linear_meta, full_meta]);</text>
+    <text x="76" y="1408" class="modSub">   Hybrid 端在 setter 内一次拆给两个子后端的 <tspan class="code">.forward_metadata</tspan></text>
+    <text x="56" y="1432" class="modSub">③ 模型 __call__ 链:CausalLM → Model → DecoderLayer → KDA / MLA;dispatch 在 DecoderLayer.__init__ 中已绑定</text>
+    <text x="56" y="1452" class="modSub">④ KDA / MLA 内部都通过 <tspan class="code">forward_batch.attn_backend.forward(layer=self, ...)</tspan> 入 HybridLinearAttnBackend</text>
+    <text x="56" y="1472" class="modSub">⑤ HybridLinearAttnBackend 按 <tspan class="code">layer.layer_id ∈ self.full_attn_layers</tspan> 二次分发到对应子后端</text>
+    <text x="56" y="1500" class="modTitle">注意</text>
+    <text x="56" y="1522" class="modSub">• 当前仓库尚未实现 <tspan class="code">get_forward_metadata</tspan> / <tspan class="code">forward_metadata</tspan> setter,本图按设计目标记录</text>
+    <text x="56" y="1542" class="modSub">• 现状是 <tspan class="code">init_forward_metadata(forward_batch)</tspan> 在 forward 前由 ModelRunner 调用并自动 fan-out 到两个子后端</text>
+    <text x="56" y="1562" class="modSub">• 新设计将 metadata 计算从 backend 内部 (forward_batch 驱动) 转为 tp_worker 显式生产并经 Hybrid setter 拆分注入</text>
+    <text x="56" y="1582" class="modSub">• 子后端在拿到 forward_metadata 后,forward_extend / forward_decode 内部直接读 self.forward_metadata,不再从 forward_batch 重算</text>
+  </g>
+</svg>
