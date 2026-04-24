@@ -59,7 +59,7 @@ Task 在生命周期中流转于一组明确的状态，由 GitHub Project 的 *
 - `Ready to Claim`：Task 已被纳入 Roadmap Iteration，等待团队成员认领。
 - `Design Pending`（仅 Size = M/L/XL）：Task 已被某成员认领，需先撰写并合并 Design Doc。Size = XS/S 跳过此状态。
 - `Ready to Develop`（仅 Size = M/L/XL）：Design Doc PR 合并后到达，等待认领人推进开发与 SubTask 拆解。
-- `In Progress`：Task 进入实质开发。Size = XS/S 在认领后直接进入；Size = M/L/XL 在 `Ready to Develop` 之后进入，期间认领人按 Design Doc 拆出 SubTask 并推进各 SubTask。Priority = P0 的 Bug 创建时直接进入此状态；其他 Bug 创建时自动纳入当前 Iteration 并进入 `Ready to Claim`。
+- `In Progress`：Task 进入实质开发。Size = XS/S 在认领后直接进入；Size = M/L/XL 在 `Ready to Develop` 之后，由认领人通过设置任务起始时间（Project 原生的 **Start date** 字段）进入，期间认领人按 Design Doc 拆出 SubTask 并推进各 SubTask。Priority = P0 的 Bug 创建时直接进入此状态；其他 Bug 创建时自动纳入当前 Iteration 并进入 `Ready to Claim`。
 - `Blocked`：开发被外部依赖阻塞，暂停推进。阻塞解除后回到 `In Progress`。
 - `Done`：完成。Size = XS/S 在自身 PR 合并后到达；Size = M/L/XL 在所有 SubTask Issue 关闭后由系统自动汇总到达。
 
@@ -67,8 +67,8 @@ Task 在生命周期中流转于一组明确的状态，由 GitHub Project 的 *
 
 **触发方：**
 
-- 用户触发：创建 Task、纳入 Iteration、认领、标记/解除阻塞、提交并合并 PR。
-- 系统触发：纳入 Iteration 后置为待认领、Design Doc PR 合并后进入开发、SubTask 全部关闭后将父 Size = M/L/XL Task 标为 Done。
+- 用户触发：创建 Task、纳入 Iteration、认领、设置任务起始时间（Start date）、标记/解除阻塞、提交并合并 PR。
+- 系统触发：纳入 Iteration 后置为待认领、Design Doc PR 合并后进入 `Ready to Develop`、SubTask 全部关闭后将父 Size = M/L/XL Task 标为 Done。
 
 **合法迁移：**
 
@@ -79,7 +79,7 @@ stateDiagram-v2
     ReadyToClaim --> DesignPending : Size=M/L/XL 被认领
     ReadyToClaim --> InProgress : Size=XS/S 被认领
     DesignPending --> ReadyToDevelop : Design Doc PR 合并
-    ReadyToDevelop --> InProgress : 认领人开始开发
+    ReadyToDevelop --> InProgress : 设置任务起始时间
     InProgress --> Blocked : 标记阻塞
     Blocked --> InProgress : 阻塞解除
     InProgress --> Done : Size=XS/S PR 合并 / Size=M/L/XL 所有 SubTask 关闭
@@ -168,14 +168,14 @@ Task 通过用户与系统的交互式对话创建。用户提供意图，系统
 **用户行为：**
 
 - 团队成员从 Roadmap 中认领 Task 或 SubTask
-- Size = XS/S 直接进入开发；Size = M/L/XL 由认领人进入设计评审（Phase 4）与任务拆解（Phase 5），完成后回到本阶段进入子任务开发
+- Size = XS/S 直接进入开发；Size = M/L/XL 由认领人进入设计评审（Phase 4）与任务拆解（Phase 5），完成后回到本阶段，由认领人通过设置任务起始时间（**Start date**）将 Status 从 `Ready to Develop` 流转到 `In Progress`，进入子任务开发
 - 开发者编码、编写测试
 - 开发过程中如遇阻塞，将 Status 置为 `Blocked`
 - 开发完毕，发起 PR
 
 **系统行为：**
 
-- 认领任务时自动分配 assignee。Size = XS/S Status 流转到 `In Progress`；Size = M/L/XL 须处于 `Ready to Develop` 才允许进入开发
+- 认领任务时自动分配 assignee。Size = XS/S Status 流转到 `In Progress`；Size = M/L/XL 须处于 `Ready to Develop` 才允许进入开发，由认领人设置 **Start date** 后系统将 Status 流转到 `In Progress`
 - 提供个人工作看板：当前任务、待 Review PR、阻塞项、DDL 预警与优先级建议
 - Bug 优先级处理：Priority = `P0` 的 Bug 始终置顶显示，Type = `Bug` 的 Issue 独立分组展示，Priority = `P0` Bug 创建后 24 小时未关闭即预警
 - 支持 Status = `Blocked` 流转，阻塞解除后恢复到 `In Progress`
