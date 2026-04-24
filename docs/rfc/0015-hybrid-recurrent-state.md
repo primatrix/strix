@@ -71,8 +71,8 @@ classDiagram
         +clear()
     }
     class RecurrentStatePool {
-        +recurrent_buffer
-        +conv_buffer
+        +recurrent_buffers
+        +conv_buffers
         +free_slots
         +alloc(need_size)
         +free(idx)
@@ -119,17 +119,17 @@ flowchart LR
 | 索引维度 | per-token（`max_total_num_tokens`） | per-request（`max_num_reqs`） |
 | 更新方式 | 位置覆盖写入，新 token 直接覆盖旧位置 | 累积式（`state += k^T v`），值逐步增长 |
 | 请求结束时 | 无需清零（下次覆盖） | 无需清零（下次 alloc 时清零，clear on alloc） |
-| buffer 结构 | 每层一个数组，存在 Python list 中 | 双 buffer：`recurrent_buffer` + `conv_buffer` |
+| buffer 结构 | 每层一个数组，存在 Python list 中 | 双 list：`recurrent_buffers`（list-of-array）+ `conv_buffers`（list-of-list-of-array，PyTorch 风格预留多 conv 段）|
 | dtype | 跟随模型配置（通常 bf16） | recurrent: 默认 f32（bf16 累积误差放大 221 万倍）；conv: 默认 bf16；均可通过环境变量覆盖（和 sglang PyTorch `Mamba2StateDType` 一致） |
 
 **不继承 KVCache：** `KVCache` 的抽象方法（`get_kv_buffer` 等）对 recurrent state 无意义。独立类（和 sglang PyTorch `MambaPool` 一致）。
 
-**双 Buffer layout（和 sglang PyTorch `MambaPool` 的 `temporal_state` + `conv_state` 一致）：**
+**双 List layout（每层独立 array，对齐 sgl-jax KV pool 风格 + sglang PyTorch `KimiLinearStateShape`）：**
 
 | Buffer | Shape（全局） | per-device Shape（TP=4） | dtype | 用途 |
 |--------|--------------|-------------------------|-------|------|
-| `recurrent_buffer` | `[L, N+1, H, D, D]` | `[L, N+1, H/tp, D, D]` | 默认 f32 | KDA 累积 state（`state += k^T v`） |
-| `conv_buffer` | `[L, N+1, K-1, proj_v + 2·proj_k]` | `[L, N+1, K-1, (proj_v + 2·proj_k)/tp]` | 默认 bf16 | 因果卷积滑窗（`short_conv_kernel_size=4` → K-1=3） |
+| `recurrent_buffers` | `list[jax.Array]`，长度 `L`；每元素 shape `[N+1, H, D, D]` | 每元素 per-device `[N+1, H/tp, D, D]` | 默认 f32 | KDA 累积 state（`state += k^T v`），最后两维分别是 K 维和 V 维 |
+| `conv_buffers` | `list[list[jax.Array]]`，外层长度 `L`；每元素 shape 表示为 `[[N+1, K-1, proj_v + 2·proj_k]]`（外层方括号 = 内层 list，当前 1 段；未来扩段写为 `[[..., proj_q], [..., proj_k], [..., proj_v]]`） | 每元素 per-device `[[N+1, K-1, (proj_v + 2·proj_k)/tp]]` | 默认 bf16 | 因果卷积滑窗（`short_conv_kernel_size=4` → K-1=3）；内层 list 长度预留可扩展（容纳未来多 conv 段实现；对齐 PyTorch `KimiLinearStateShape.conv: List[tuple]`）|
 
 其中：
 
@@ -144,15 +144,17 @@ flowchart LR
 | `K` | conv kernel size | 4 | `linear_attn_config.short_conv_kernel_size` |
 
 > **注意参数来源：** `head_dim` 和 `num_heads` 必须从 `linear_attn_config` 取，**不是**顶层 `hf_config.head_dim`（=72，MLA 的 head_dim）或 `hf_config.num_attention_heads`（=32，碰巧相同但语义不同）。
+>
+> **list 索引语义：** `recurrent_buffers` / `conv_buffers` 外层 list 的索引（长度 `L`）是 KDA 子集索引（`0..L-1`），由调用方传入；**不是**模型全局 layer_id。映射在 model 组装时建立——KDA 层在 `config.linear_attn_config.kda_layers` 列表中的位置即为该层访问 pool 时使用的下标。
 
-**conv_buffer `proj_size`：** `proj_v = num_heads × head_dim = 4096`，`proj_k = num_heads × head_dim = 4096`，`proj_size = proj_v + 2·proj_k = 12288`。shape 和维度顺序对齐 sglang PyTorch `KimiLinearStateShape`。
+**conv `proj_size`：** `proj_v = num_heads × head_dim = 4096`，`proj_k = num_heads × head_dim = 4096`，`proj_size = proj_v + 2·proj_k = 12288`。shape 和维度顺序对齐 sglang PyTorch `KimiLinearStateShape`。
 
 **Slot 管理：** Slot 0 为 dummy，有效 slot 从 index 1 开始（和 sglang PyTorch `MambaPool.free_slots = arange(1, size+1)` 一致）。
 
 **Sharding：**
 
-- `recurrent_buffer`: `P(None, None, "tensor", None, None)`，按 H 轴 TP 切分
-- `conv_buffer`: `P(None, None, None, "tensor")`，按合并投影维度 TP 切分（对应 sglang PyTorch 的 `divide(proj_size, tp_world_size)`）
+- `recurrent_buffers` 每元素：`P(None, "tensor", None, None)`，按 H 轴 TP 切分
+- `conv_buffers` 每元素（内层 list 中的每个 array）：`P(None, None, "tensor")`，按合并投影维度 TP 切分（对应 sglang PyTorch 的 `divide(proj_size, tp_world_size)`）
 - 构造时 assert `num_heads % tp_size == 0` 和 `proj_size % tp_size == 0`
 
 **构造参数：**
@@ -162,23 +164,23 @@ flowchart LR
 - `num_heads` — `hf_config.linear_attn_config.num_heads`（全局值；由 sharding 自动按 TP 切分到各设备）
 - `head_dim` — `hf_config.linear_attn_config.head_dim`
 - `conv_kernel_size` — `hf_config.linear_attn_config.short_conv_kernel_size`
-- `temporal_dtype` — recurrent buffer 的 dtype，优先级：环境变量 `SGLANG_JAX_RECURRENT_STATE_DTYPE` > 默认 f32
-- `conv_dtype` — conv buffer 的 dtype，优先级：环境变量 `SGLANG_JAX_CONV_STATE_DTYPE` > 默认 bf16
+- `temporal_dtype` — recurrent buffers 的 dtype，优先级：环境变量 `SGLANG_JAX_RECURRENT_STATE_DTYPE` > 默认 f32
+- `conv_dtype` — conv buffers 的 dtype，优先级：环境变量 `SGLANG_JAX_CONV_STATE_DTYPE` > 默认 bf16
 
 **数据成员：**
 
-- `recurrent_buffer` — 默认 f32 全零，shape 见上表（dtype 由 `temporal_dtype` 参数决定）
-- `conv_buffer` — 默认 bf16 全零，shape 见上表（dtype 由 `conv_dtype` 参数决定）
+- `recurrent_buffers: list[jax.Array]` — 长度 `L`，每元素 shape `[N+1, H, D, D]`，默认 f32 全零（dtype 由 `temporal_dtype` 决定）
+- `conv_buffers: list[list[jax.Array]]` — 外层长度 `L`，每元素 shape 表示为 `[[N+1, K-1, proj_v + 2·proj_k]]`（内层 list 当前长度 1，默认 bf16 全零）；内层 list 长度预留可扩展（容纳未来多 conv 段实现；对齐 PyTorch `KimiLinearStateShape.conv: List[tuple]`）
 - `free_slots` — 独立 slot 分配器，初始化为 `[1, 2, ..., max_num_reqs]`（和 sglang PyTorch `MambaPool` 一致）
 
 **接口方法：**
 
-- `alloc(need_size)` — 从 `free_slots` 分配指定数量 slot，内部清零（clear on alloc，和 sglang PyTorch `MambaPool.alloc` 一致），返回分配的 indices
+- `alloc(need_size)` — 从 `free_slots` 分配 slot；逐层 list element mutation 清零对应 slot（clear on alloc）；容量不足返回 None 不修改状态；返回 indices
 - `free(idx)` — 归还 slot 到 `free_slots`
-- `replace_buffer(new_recurrent, new_conv)` — JIT donate 后更新两个 buffer 引用
-- `clear()` — 重置 `free_slots` 并清零两个 buffer，在 `flush_cache` 中调用
+- `replace_buffer(buffers)` — `buffers: tuple[list[jax.Array], list[list[jax.Array]]]`，[0]=`recurrent_buffers` list（长 `L`），[1]=`conv_buffers` list-of-list（外长 `L`、内长 1）；assert 长度 = `num_layers`；list-slice 替换两个成员；sharding fix 对每个 list 元素 `device_put`（见 §3.3）
+- `clear()` — 重置 `free_slots` 并逐层清零 `recurrent_buffers` / `conv_buffers`（list element mutation，每层独立赋值），在 `flush_cache` 中调用
 
-**pytree 注册：** children 含 `recurrent_buffer` 和 `conv_buffer`，确保 donation 生效。
+**pytree 注册：** children 含 `recurrent_buffers` 和 `conv_buffers`（list 是默认 pytree 容器），实际 leaves 数 = `2L`（外层 list 各 L 个，内层 conv list 当前每个长度 1）。
 
 **文件位置：** `python/sgl_jax/srt/mem_cache/recurrent_state_pool.py`
 
@@ -200,13 +202,11 @@ flowchart LR
 - `get_recurrent_indices(req_pool_indices)` — 通过 mapping 张量查找对应 recurrent slot indices
 - `clear()` — override：`super().clear()` + `recurrent_state_pool.clear()`，重置两侧
 
-**`recurrent_pool_indices` 传递：**
+**`recurrent_pool_indices` 暴露方式：**
 
-- `prepare_for_extend`：`recurrent_pool_indices = mapping[req_pool_indices]`（CPU 侧查表）
-- 经 `ScheduleBatch → ModelWorkerBatch → ForwardBatch` 传入 JIT
-- KDA 层用 `forward_batch.recurrent_pool_indices` 索引 slot，`pool_layer_idx` 索引层维度
-- MLA 层所需的 attention metadata（`cu_q_lens`、`page_indices` 等）均为 `ForwardBatch` 已有字段，本 RFC 不涉及
-- 标准模型该字段为 `None`
+- `HybridReqToTokenPool.get_recurrent_indices(req_pool_indices)` 提供 mapping 查表，返回该批次每个请求的 `recurrent_pool_idx`
+- 具体由配套 RFC [primatrix/wiki#115](https://github.com/primatrix/wiki/pull/115)（HybridLinearAttnBackend）新增的 backend metadata `HybridLinearAttentionBackendMetadata.linear_attn_metadata` 携带，对齐 sglang PyTorch `MambaAttnBackendBase._forward_metadata` 模式
+- 本 RFC 不改动 `ScheduleBatch` / `ModelWorkerBatch` / `ForwardBatch`
 
 **文件位置：** `python/sgl_jax/srt/mem_cache/memory_pool.py`（同 `ReqToTokenPool`）
 
@@ -220,7 +220,7 @@ flowchart LR
 jitted_run_model (JIT donate memory_pools)
     → 模型 forward 返回 pool_updates dict
     → _forward 调用 memory_pools.replace_all(pool_updates)
-    → replace_all 内部匹配 key，调用 recurrent_state_pool.replace_buffer(new_recurrent, new_conv)
+    → replace_all 内部匹配 key，调用 recurrent_state_pool.replace_buffer((new_recurrent_buffers, new_conv_buffers))
 ```
 
 **Alloc 调用链**（请求分配时）：
@@ -363,24 +363,24 @@ kv_pool = memory_pools.token_to_kv_pool
 state_pool = memory_pools.recurrent_state_pool
 return output, {
     "token_to_kv_pool": layers_kv_fused,
-    "recurrent_state_pool": (state_pool.recurrent_buffer, state_pool.conv_buffer),
+    "recurrent_state_pool": (state_pool.recurrent_buffers, state_pool.conv_buffers),
 }, callback, topk_ids
 ```
 
-**KDA 层读写 pool（JIT 内部，对齐 KV cache 的 `set_kv_buffer` / `get_fused_kv_buffer` 模式）：**
+**消费方读写 pool（JIT 内部，对齐 KV cache `set_kv_buffer` 模式；实际由 KDA backend 调用，详见 [primatrix/wiki#115](https://github.com/primatrix/wiki/pull/115)）：**
 
 ```python
-# KDA layer forward（JIT 内部）
+# 消费方（KDA backend）forward 内部
 state_pool = memory_pools.recurrent_state_pool
-req_indices = forward_batch.recurrent_pool_indices  # [B]
+req_indices = ...  # [B] int32，由 backend metadata 提供（详见 primatrix/wiki#115）
 
-# 读 state：pool_layer_idx 为 KDA 层在 pool 中的静态索引
-cur_state = state_pool.recurrent_buffer[self.pool_layer_idx, req_indices]  # [B,H,D,D]
-cur_conv = state_pool.conv_buffer[self.pool_layer_idx, req_indices]        # [B,K-1,proj]
+# 读：list 索引 layer_idx 是 KDA 子集索引（0..L-1）+ slot 索引
+cur_state = state_pool.recurrent_buffers[layer_idx][req_indices]    # [B, H, D, D]
+cur_conv  = state_pool.conv_buffers[layer_idx][0][req_indices]       # [B, K-1, proj_v + 2·proj_k]
 
-# 写回：functional scatter
-recurrent_buffer = state_pool.recurrent_buffer.at[self.pool_layer_idx, req_indices].set(new_state)
-conv_buffer = state_pool.conv_buffer.at[self.pool_layer_idx, req_indices].set(new_conv)
+# 写回必须 list element mutation（否则多层场景前 N-1 层 update 丢失）
+state_pool.recurrent_buffers[layer_idx] = state_pool.recurrent_buffers[layer_idx].at[req_indices].set(new_state)
+state_pool.conv_buffers[layer_idx][0]   = state_pool.conv_buffers[layer_idx][0].at[req_indices].set(new_conv)
 ```
 
 ### 内存估算
@@ -439,18 +439,18 @@ max_num_reqs 推算（per-device，对齐 sglang PyTorch `MambaPool`）：
 
 **RecurrentStatePool 单元测试**（默认参数：`num_layers=2, max_num_reqs=4, num_heads=2, head_dim=4, conv_kernel_size=4`）：
 
-- 初始化正确性：recurrent_buffer shape `[2, 5, 2, 4, 4]` f32 全零 + conv_buffer shape `[2, 5, 3, 24]`（`proj_v + 2·proj_k = 2×4 + 2×2×4 = 24`）bf16 全零，slot 0 为 dummy
+- 初始化正确性：`recurrent_buffers: list[jax.Array]` 长度 2、每元素 shape `[5, 2, 4, 4]` f32 全零 + `conv_buffers: list[list[jax.Array]]` 长度 2、每元素 shape 表示为 `[[5, 3, 24]]`（`proj_v + 2·proj_k = 2×4 + 2×2×4 = 24`）bf16 全零，slot 0 为 dummy
 - free_slots 初始值 `[1, 2, 3, 4]`（不含 0）
 - 构造边界值：最小参数 `(1,1,1,1,2)` → 正确 shape、奇数 `num_heads`、非对齐 `head_dim`
 - alloc：单个 slot / 批量 / 超出 free_slots 返回 None — 验证两个 buffer 均被清零（clear on alloc）
 - free 归还 slot → 可被再次 alloc
 - alloc clear on alloc：写入非零 → free → 重新 alloc → 该 slot 为零
 - dummy slot（slot 0）隔离
-- `replace_buffer(new_recurrent, new_conv)` → alloc 顺序正确性
+- `replace_buffer((new_recurrent_list, new_conv_list_of_list))` → alloc 顺序正确性
 - `clear()` 全量清零两个 buffer + free_slots 重置为 `[1..N]`
-- pytree roundtrip（flatten → unflatten，children 含 recurrent_buffer + conv_buffer）
+- pytree roundtrip（flatten → unflatten，children 含 `recurrent_buffers` + `conv_buffers`，leaves 共 `2L` 个）
 - functional scatter 层/头隔离（两个 buffer 独立验证）
-- dtype 隔离：recurrent_buffer 始终 f32，conv_buffer 始终 bf16
+- dtype 隔离：`recurrent_buffers` 每元素始终 f32，`conv_buffers` 每元素始终 bf16
 
 **HybridReqToTokenPool 单元测试**：
 
@@ -465,7 +465,7 @@ max_num_reqs 推算（per-device，对齐 sglang PyTorch `MambaPool`）：
 
 **MemoryPools 单元测试 + 生命周期**：
 
-- `replace_all`：单 pool / 双 pool / key 不匹配抛 ValueError / 空 dict 抛 ValueError / 参数类型多态（`list[jax.Array]` vs `tuple[jax.Array, jax.Array]`）
+- `replace_all`：单 pool / 双 pool / key 不匹配抛 ValueError / 空 dict 抛 ValueError / 参数类型多态（KV pool `list[jax.Array]` vs RecurrentStatePool `tuple[list[jax.Array], list[list[jax.Array]]]`）
 - pytree roundtrip（单/双 pool）
 - JIT donate → replace_all 端到端
 - 零状态不变式：scatter 非零 → donate → replace → HybridReqToTokenPool alloc 新 slot → 该 slot 为零
@@ -505,9 +505,8 @@ max_num_reqs 推算（per-device，对齐 sglang PyTorch `MambaPool`）：
 | `mem_cache/recurrent_state_pool.py` | 新增 |
 | `mem_cache/memory_pool.py` | 新增 `HybridReqToTokenPool`；`ReqToTokenPool.alloc` 签名变更；KV pool `replace_kv_buffer` → `replace_buffer` 重命名；`MLATokenToKVPool` pytree 补全 |
 | `model_executor/model_runner.py` | `init_memory_pool` 新增混合模型分支；`_forward` 改用 `memory_pools.replace_all()` |
-| `managers/schedule_batch.py` | `alloc_req_slots` 签名变更；新增 `recurrent_pool_indices` 字段 |
+| `managers/schedule_batch.py` | `alloc_req_slots` 签名变更 |
 | `managers/scheduler.py` | `flush_cache` 新增混合模型重置分支 |
-| `model_executor/forward_batch_info.py` | `ForwardBatch` 新增 `recurrent_pool_indices` 字段 |
 | 所有模型文件 | `__call__` 第二参数 → `memory_pools`，返回值 → dict（每模型约 2 行） |
 
 `replace_buffer` 是 `MemoryPools.replace_all` 要求所有 pool 实现的统一方法名。各 pool 参数类型不同，`replace_all` 按 key 分发，各 pool 自行解释。
@@ -524,8 +523,8 @@ max_num_reqs 推算（per-device，对齐 sglang PyTorch `MambaPool`）：
 
 | 风险 | 影响 | 缓解措施 |
 |------|------|----------|
-| **f32 内存开销** | recurrent_buffer 默认 f32，内存占用高于 bf16（2 倍） | `state_to_kv_ratio` 参数允许调节 state/KV 预算比例；dtype 可通过环境变量覆盖；内存估算公式确保总量不超 HBM |
-| **conv state 额外内存** | conv_buffer 新增内存占用 | bf16 dtype + conv 窗口仅 `kernel-1=3`，实际开销不到 recurrent state 的 0.35%，可忽略 |
+| **f32 内存开销** | `recurrent_buffers` 默认 f32，内存占用高于 bf16（2 倍） | `state_to_kv_ratio` 参数允许调节 state/KV 预算比例；dtype 可通过环境变量覆盖；内存估算公式确保总量不超 HBM |
+| **conv state 额外内存** | `conv_buffers` 新增内存占用 | bf16 dtype + conv 窗口仅 `kernel-1=3`，实际开销不到 recurrent state 的 0.35%，可忽略 |
 | **RadixCache 禁用** | 混合架构模型无法使用前缀共享，相同前缀的请求需重复计算 | 标记为后续任务（需解决前缀复用时 recurrent state 重算问题） |
 | **Chunked prefill 时序** | slot 复用要求 clear on alloc 在正确时机执行 | `RecurrentStatePool.alloc()` 内部清零，`HybridReqToTokenPool` 控制复用 vs 新分配逻辑，时序天然保证 |
 | **TP sharding 兼容** | JIT donate 后 RecurrentStatePool 的 sharding 可能丢失 | tp_size==1 时 `replace_buffer` 内部 `device_put`（同 KV pool 已有修复）；两个 buffer 使用不同 sharding spec（recurrent 按 H 轴，conv 按合并投影维度）；TP=1/4 实验验证 |
@@ -538,7 +537,7 @@ max_num_reqs 推算（per-device，对齐 sglang PyTorch `MambaPool`）：
 - "dummy slot 0" ← RecurrentStatePool 独立 free_slots（从 1 开始），slot 0 安全用作 dummy，同 PyTorch MambaPool
 - "HybridReqToTokenPool" ← v3 RFC §3.2 + sglang PyTorch HybridReqToTokenPool，独立 slot 管理替代 clear_request_state
 - "bf16 累积误差放大 221 万倍" ← v3 RFC §3.1 + §3.3 约束（TPU v6e 实验）
-- "conv_buffer bf16" ← 因果卷积为滑窗覆盖式更新，无累积误差；conv_kernel_size=4 来自 config.json linear_attn_config.short_conv_kernel_size
+- "conv_buffers bf16" ← 因果卷积为滑窗覆盖式更新，无累积误差；conv_kernel_size=4 来自 config.json linear_attn_config.short_conv_kernel_size
 - "slot 复用对齐 sglang PyTorch" ← v3 RFC §3.6 + sglang PyTorch ReqToTokenPool.alloc(reqs) 实现
 - "state_to_kv_ratio 默认 0.9" ← v3 RFC §3.5 + sglang PyTorch mamba_full_memory_ratio
 - "sharding fix 迁移" ← v3 RFC §3.3 约束 + sgl-project/sglang-jax#233
