@@ -201,8 +201,8 @@ Size=S Task 与 Bug 跳过 Design Pending / Ready to Develop。
 
 1. **入参解析**：用户运行命令并给出 `<issue-number>` 与 `--design-doc <url-or-path>`（PR URL / blob URL / 本地文件路径三选一，必填）。命令读取父 Issue 的字段并校验 `Type=Task ∧ Status=Ready to Develop`（即设计已合并）；不满足则中止。
 2. **Design Doc 摄取**：命令把 `--design-doc` 指向的 markdown 全文读入，并提取「方案 / 实施计划 / 测试策略」三段作为拆解依据。
-3. **初步拆解建议**：命令基于 Design Doc 内容生成一份 SubTask 候选清单（每项含：建议标题、对应设计章节、预计 Size、依赖关系、是否需要 test 文件）。
-4. **per-child QA 审批**：对每个候选 child，命令按 §7 流程逐项展示，用户可：保留、修改标题/描述、拆得更细、合并相邻两项、删除整项、或追加新项。直到用户确认整张列表。
+3. **初步拆解建议**：命令基于 Design Doc 内容生成一份 SubTask 候选清单（每项含：建议标题、对应设计章节、预计 Size、依赖关系、是否需要 test 文件）。其中「依赖关系」以 child 之间的相对引用表达（例如 `child#2 blocked by child#1`），命令在第 4 步 QA 中与用户对齐后，于第 6 步落库时通过 GitHub Issue Dependencies API 写入实际 Issue 编号。
+4. **per-child QA 审批**：对每个候选 child，命令按 §7 流程逐项展示，用户可：保留、修改标题/描述、拆得更细、合并相邻两项、删除整项、或追加新项。直到用户确认整张列表。**依赖关系澄清**：对每个 child，命令显式询问「该 child 是否被列表中其它 child 阻塞？」，用户可指定 0 个或多个 blocker（仅限本次拆解出的 child 之间的相对引用，不接受外部 Issue 编号——若需跨拆解外的依赖，提示用户在落库后于 GitHub UI 手动添加）。命令在用户确认后维护一张 `<child-ref> → [blocker-refs...]` 的内存映射，于第 6.f 步统一落库。命令需在用户确认前对该映射做环检测（DFS），发现环即报错并要求用户调整，不得落库。
 5. **自动 audit**：命令对最终列表运行三类审计——
    - **Coverage**：Design Doc §方案 中列出的每个组件 / 接口是否至少被一个 child 覆盖；
    - **Atomicity**：是否存在 child 描述跨多模块且无法独立 review；
@@ -214,12 +214,13 @@ Size=S Task 与 Bug 跳过 Design Pending / Ready to Develop。
    c. 把 child 加入 Project #14；
    d. 写 Project V2 字段：`Type=SubTask`、`Size=S`（SubTask 默认 `S`，与父 Task `Size=L` 区分）、`Status=Triage`、`Iteration`（**默认继承父 Issue 的 `Iteration` 字段值**；父 Iteration 为空时 child 留空，等待后续 `/beaver-tracker` 拉入）。
    e. 若该 child 在第 5 步审计未通过，按结果在 child Issue body 末尾写入 `<!-- audit-warnings -->` 块。
-7. **父 Issue 总结**：命令在父 Issue 上发一条评论，列出所有 child Issue 编号 + 审计结果摘要，便于 Reviewer 快速对照设计与拆解。
+   f. **依赖关系落库**：所有 child Issue 创建完毕（即第 4 步映射中所有 `<child-ref>` 已具备真实 Issue 编号）后，命令按映射逐条调用 GitHub Issue Dependencies API 写入「`child` blocked by `blocker`」关系（`gh api graphql` 调用 `addIssueDependency` mutation，或对应 REST 端点 `POST /repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by`，二者择一实现，由 Phase B 的 `beaver-decompose` SubTask 在实施时按 `gh` CLI 当时的可用性决定）。**注**：GitHub Issue Dependencies 与 Sub-issues 是两个相互独立的关系类型，本步骤不影响第 6.b 步的 sub-issue 链接。每条依赖写入失败不阻断后续，但需在第 7 步父 Issue 总结评论中显式列出失败项，提示用户手动补登。
+7. **父 Issue 总结**：命令在父 Issue 上发一条评论，列出所有 child Issue 编号 + 审计结果摘要 + 依赖关系图（以「`#A` blocked by `#B, #C`」的纯文本列表呈现；若第 6.f 步存在写入失败项，单列「依赖写入失败，需手动补登」段），便于 Reviewer 快速对照设计与拆解。
 8. **下一步指引**：终端提示「N 个 child 处于 `Status=Triage`；child 已继承父 Issue 的 `Iteration`（若父 Iteration 为空，需先运行 `/beaver-tracker <repo>` 把 child 拉入当前周期）；后续由开发者在 GitHub UI assign 自己并手动切 Status 认领（`/beaver-claim` 已删除，见 §3）」。
 
-**Guardrail**：自动 audit（仅打 Beaver agent 标签，不阻断创建）；前置校验失败即中止。
+**Guardrail**：自动 audit（仅打 Beaver agent 标签，不阻断创建）；前置校验失败即中止；依赖关系环检测失败（第 4 步）即中止。
 
-**期望终态**：父 Issue 在 GitHub Sub-Issues 视图下持有 N 个 child；每个 child 在 Project #14 中具备 `Type=SubTask / Size=S / Status=Triage / Iteration（继承自父，可为空）` 字段值（**不含 Level**）；每个 child 的 assignee 集合默认与父 Issue 一致（除非用户在 per-child QA 中覆盖）；每个 child Issue body 顶部含一段 `> Design Doc: <url>` 引用回第 1 步 `--design-doc`；audit 失败的 child body 末尾含 `<!-- audit-warnings -->` 块；父 Issue 上有一条 audit summary 评论；本命令未对 child Issue 贴任何标签，也未读写 Project V2 `Level` 字段。
+**期望终态**：父 Issue 在 GitHub Sub-Issues 视图下持有 N 个 child；每个 child 在 Project #14 中具备 `Type=SubTask / Size=S / Status=Triage / Iteration（继承自父，可为空）` 字段值（**不含 Level**）；每个 child 的 assignee 集合默认与父 Issue 一致（除非用户在 per-child QA 中覆盖）；每个 child Issue body 顶部含一段 `> Design Doc: <url>` 引用回第 1 步 `--design-doc`；audit 失败的 child body 末尾含 `<!-- audit-warnings -->` 块；用户在第 4 步指定的 child 间依赖关系已通过 GitHub Issue Dependencies API 写入（在 GitHub UI Relationships 区域可见 `Blocked by` 条目），写入失败项已在父 Issue 评论中列出待人工补登；父 Issue 上有一条 audit summary 评论；本命令未对 child Issue 贴任何标签，也未读写 Project V2 `Level` 字段。
 
 #### 6. `/beaver-dev`
 
@@ -569,4 +570,5 @@ Phase A 的三个 SubTask 之间可并行评审（仅 A.2 / A.3 实现上引用 
 - "/beaver-decompose 在每个 child SubTask body 顶部插入 `> Design Doc: <url>` 段，<url> 为第 1 步 --design-doc 原值" ← 用户决策（2026-04-23 RFC 更新）：child Issue 应能直接跳回设计依据
 - "所有写 body/comment 的命令通过临时文件传 --body-file 时必须使用 mktemp 或 $RANDOM/$$ 后缀，避免单次调用内文件名冲突" ← 用户决策（2026-04-23 RFC 更新）：批量场景（如 /beaver-decompose 循环创建 N 个 child）尤其需要
 - "/beaver-decompose child SubTask 默认 assignee 集合 = 父 Issue 的 assignee 集合（无 assignee 时 child 也无 assignee，不回退当前用户）；用户可在 per-child QA 中覆盖" ← 用户决策（2026-04-23 RFC 更新）：拆解场景下父任务负责人通常即为 child 默认负责人
+- "/beaver-decompose child 之间的依赖关系通过 GitHub Issue Dependencies API（Mark as blocked by）写入，独立于 sub-issue 关系；QA 时只接受本次拆解内的相对引用并做环检测，落库时按映射调用 addIssueDependency" ← 用户决策（2026-04-24 RFC 更新）：把 design doc 中识别出的 child 间执行顺序固化为 GitHub 原生依赖关系，便于 /beaver-focus 等下游消费
 -->
