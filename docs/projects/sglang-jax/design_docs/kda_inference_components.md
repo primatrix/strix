@@ -184,8 +184,8 @@ L2-norm 在 layer 内、conv1d 之后、SSM kernel 之前完成（`KimiDeltaAtte
 |---|---|---|
 | Backend 基类 | 新建 `LinearRecurrentAttnBackend`，对齐 sglang `MambaAttnBackendBase` | KDA / 未来 GDN / Mamba2 共用；详见 §4.3.1 |
 | State pool | 不自建，消费 RFC-0015 `RecurrentStatePool` | 详见 §4.5 |
-| conv1d 算子 | 在 `KimiDeltaAttention` layer | 权重在 layer；backend 只暴露 `get/set_conv_state` 转发 conv buffer |
-| Conv state 读写路径 | layer → `backend.get/set_conv_state` → RFC-0015 pool | layer 不直接接触 pool |
+| conv1d 算子 | 在 `KimiDeltaAttention` layer | 权重在 layer |
+| Conv state 读写路径 | backend 通过 `recurrent_state_pool.get/set_linear_recurrent_layer_cache` 直接读写 | 不经过 backend 转发接口 |
 | Sharding | 由 RFC-0015 `RecurrentStatePool.__init__` 声明 | 本 RFC 不重复 |
 | Pallas swap | 默认走 pallas；pallas import 失败时自动 fallback jax-naive | layer / pool / model 不感知 |
 | K = V 假设 | `head_dim == v_head_dim == 128`（sglang `kimi_linear.py:182-187` 强制 $d_k = d_v$）| 本 RFC 沿用；K≠V 时需改 `o_norm` / `g_b_proj` |
@@ -299,6 +299,7 @@ class RadixLinearAttention(nnx.Module):
         mixed_qkv: jax.Array,
         a: jax.Array,           # forget gate
         b: jax.Array,           # beta
+        recurrent_state_pool,   # 
     ) -> jax.Array:
         return forward_batch.attn_backend.forward(
             layer=self,
@@ -306,6 +307,7 @@ class RadixLinearAttention(nnx.Module):
             mixed_qkv=mixed_qkv,
             a=a,
             b=b,
+            recurrent_state_pool=recurrent_state_pool, # 
         )
 ```
 
@@ -315,18 +317,43 @@ class RadixLinearAttention(nnx.Module):
 
 KDA / 未来 GDN / Mamba2 共用基类，对齐 sglang `MambaAttnBackendBase`。基类不持权重也不持 pool 引用——pool 由 layer 在调用 forward 时显式传入。
 
-**Metadata**：每个 forward batch 的动态 array 容器，用于穿越 JIT 边界（参考 `FlashAttentionMetadata`）。`get_forward_metadata()` 在 JIT 外从 `ModelWorkerBatch` 计算，存入 `self.forward_metadata`，在 `__call__` 内被 kernel 消费。
+**Metadata**：每个 forward batch 的动态 array 容器，用于穿越 JIT 边界（参考 `FlashAttentionMetadata`）。在 JIT 外计算，存入 backend 实例的 `self.forward_metadata`，作为 pytree child 穿越 JIT 边界，在 forward 时被 kernel 消费。
+
+**Metadata 生命周期**：
+
+```text
+TpModelWorker.forward_batch_generation()                              ← JIT 外
+  │
+  ├─ forward_metadata = attn_backend.get_forward_metadata(model_worker_batch)
+  │     → HybridLinearAttnBackend.get_forward_metadata():              (PR #961，不在本 RFC 范围)
+  │       ├─ full_attn_backend.get_forward_metadata(...)
+  │       │     → FlashAttentionMetadata（cu_q_lens, page_indices, ...）
+  │       │     → full_attn_backend.forward_metadata = result
+  │       │
+  │       └─ linear_attn_backend.get_forward_metadata(...)
+  │             → LinearRecurrentAttnBackendMetadata（cu_q_lens, recurrent_indices）
+  │             → linear_attn_backend.forward_metadata = result        ← 子 backend 各自存自己的
+  │             注：recurrent_indices 由 HybridLinearAttnBackend 算好后传入
+  │                 (recurrent_state_pool.get_recurrent_indices(req_pool_indices))
+  │
+  ├─ attn_backend.forward_metadata = forward_metadata                  ← 顶层也存一份
+  │     forward_batch.attn_backend 是同一个对象引用
+  │
+  └─ jitted_run_model(forward_batch, memory_pool, logits_metadata)     ← JIT 入口
+       forward_batch.attn_backend（pytree child）携带 forward_metadata 穿越 JIT 边界
+```
+
+> **注意**：`HybridLinearAttnBackend` 的 `get_forward_metadata` 实现不在本 RFC 范围（PR #961）。本 RFC 只负责 `LinearRecurrentAttnBackend.get_forward_metadata` 的 linear 部分。`recurrent_indices` 由外部（`HybridLinearAttnBackend`）算好后传入，`LinearRecurrentAttnBackend` 自身不持 pool 引用。
 
 | 类 | 字段 | pytree 注册 |
 |---|---|---|
-| `LinearRecurrentAttnBackendMetadata` | `cu_q_lens: jax.Array`（`[N+1]` int32, chunk_kda varlen）、`cache_indices: jax.Array`（`[B]` int32, conv/ssm state slot） | `@register_pytree_node_class`；children = `(cu_q_lens, cache_indices)`，aux_data = `{}` |
+| `LinearRecurrentAttnBackendMetadata` | `cu_q_lens: jax.Array`（`[N+1]` int32, chunk_kda varlen）、`recurrent_indices: jax.Array`（`[B]` int32, pool slot 索引，来自 `recurrent_state_pool.get_recurrent_indices`） | `@register_pytree_node_class`；children = `(cu_q_lens, recurrent_indices)`，aux_data = `{}` |
 | `LinearRecurrentAttnBackend` | `mesh`（仅 JIT 外用）, `forward_metadata` | `@register_pytree_node_class`；children = `(forward_metadata,)`，aux_data = 仅存 int/float 常量（`mesh` 不序列化，参考 `FlashAttention` 的做法） |
 
 关键方法：
 
-- `get_forward_metadata(batch: ModelWorkerBatch)` — 从 batch 计算 `cu_q_lens` + `cache_indices`
-- `get_conv_state` / `set_conv_state` — conv buffer 的 thin pass-through 到 `RecurrentStatePool`
-- `__call__` — 读 `self.forward_metadata.cache_indices` 索引 pool slot，按 `forward_mode` 分支到 `_dispatch_chunk`（传 `cu_seqlens`）或 `_dispatch_recurrent`
+- `get_forward_metadata(model_worker_batch, recurrent_indices)` — 从 batch 计算 `cu_q_lens`，`recurrent_indices` 由外部传入；返回 `LinearRecurrentAttnBackendMetadata`
+- `forward` — 按 `forward_mode` 分支到 `_dispatch_chunk`（传 `cu_seqlens`）或 `_dispatch_recurrent`；`recurrent_state_pool` 由 `RadixLinearAttention` 显式传入，通过 `get/set_linear_recurrent_layer_cache(layer.layer_id)` 读写单层 state
 - `_dispatch_chunk` / `_dispatch_recurrent` — abstract，子类填
 
 #### 4.3.2 `KDAAttnBackend` + `KDAAttnBackendMetadata`
@@ -366,13 +393,37 @@ KDA / 未来 GDN / Mamba2 共用基类，对齐 sglang `MambaAttnBackendBase`。
 
 #### 索引
 
-- Layer 维度：pool 是全 layer 的（`[L, N+1, ...]`）。backend 在 `__call__` 内通过 `layer.layer_id` 调 `recurrent_state_pool.linear_recurrent_layer_cache(layer_id)` 切出单层 view 再操作（对齐 sglang `req_to_token_pool.mamba2_layer_cache(layer.layer_id)`）
-- Request 维度：`forward_batch.recurrent_pool_indices`（来自 `HybridReqToTokenPool.alloc(reqs)`）
-- Pool 引用：`forward_batch.memory_pools.recurrent_state_pool`（`MemoryPools` pytree 容器）
+- Layer 维度：pool 是全 layer 的（`[L, N+1, ...]`）。backend 在 forward 内通过 `layer.layer_id` 调 `recurrent_state_pool.get_linear_recurrent_layer_cache(layer_id)` 切出单层 view 再操作（对齐 sglang `req_to_token_pool.mamba2_layer_cache(layer.layer_id)`）
+- Request 维度：`self.forward_metadata.recurrent_indices`（`[B] int32`，JIT 外由 `recurrent_state_pool.get_recurrent_indices(req_pool_indices)` 计算，通过 metadata pytree 穿越 JIT 边界）
+
+#### `recurrent_state_pool` 传递路径（路线 B：独立 JIT 参数逐层透传）
+
+`memory_pool` 作为 `jitted_run_model` 的独立 donated 参数，沿调用链显式透传。两种 attention 的 dispatch 入口各自从 `memory_pool` 中取出需要的 pool：
+
+```text
+jitted_run_model(forward_batch, memory_pool, ...)
+                                ↑ donated JIT 参数（含 token_to_kv_pool + recurrent_state_pool）
+  → model.forward(..., memory_pool)
+    │
+    ├─ RadixAttention(..., token_to_kv_pool=memory_pool.token_to_kv_pool)
+    │   → backend.forward(..., token_to_kv_pool)
+    │
+    └─ KimiDecoderLayer — memory_pool.recurrent_state_pool 取出
+        → KimiDeltaAttention.__call__(..., recurrent_state_pool)
+            → RadixLinearAttention.__call__(..., recurrent_state_pool)
+                → forward_batch.attn_backend.forward(..., recurrent_state_pool)
+                  → KDAAttnBackend.forward_extend/decode(..., recurrent_state_pool)
+                      ├─ layer_cache = recurrent_state_pool.get_linear_recurrent_layer_cache(layer.layer_id)
+                      │     → conv_states, ssm_states（单层 view）
+                      ├─ self.forward_metadata.recurrent_indices  → pool slot 索引
+                      └─ kernel dispatch → 返回 updated states
+```
+
+model 层透传 `memory_pool`，上层模型组装代码（`KimiDecoderLayer`，后续 issue）从中取出 `recurrent_state_pool` 传给 `KimiDeltaAttention`。
 
 #### 写回机制
 
-JAX 的 array 不可变，所以 layer 用 functional indexing `at[idx, slot].set(...)` 算出新 buffer，再沿 forward 一路返回到 model 顶层；model 把所有 layer 的新 buffer 收集成 `pool_updates` dict 返回。`MemoryPools.replace_all` 在 JIT donate 边界上把这些新 buffer 接管，原地替换 pool。
+Backend 在 kernel dispatch 后直接调用 `recurrent_state_pool.set_linear_recurrent_layer_cache(layer_id, req_indices, new_recurrent, new_conv)` 原地写回，不需要沿 forward 链返回新 buffer。与 KV cache 的 Pallas in-place update kernel 模式一致。
 
 > **依赖时序**：上述接口必须由 RFC-0015 先 land；本 RFC 依赖该 PR。
 
@@ -396,11 +447,11 @@ JAX 的 array 不可变，所以 layer 用 functional indexing `at[idx, slot].se
 **`__call__` 入参 / 返回**：
 
 ```python
-def __call__(self, hidden_states, positions, forward_batch)
+def __call__(self, hidden_states, positions, forward_batch, recurrent_state_pool)
     -> jax.Array
 ```
 
-对齐 sglang GPU `KimiDeltaAttention.forward(hidden_states, positions, forward_batch, zero_allocator)`。sgl-jax 不需要 `zero_allocator`（JAX 不做 in-place bump alloc）。`backend` 不作为入参（从 `forward_batch.attn_backend` 取得）。
+对齐 sglang GPU `KimiDeltaAttention.forward(hidden_states, positions, forward_batch, zero_allocator)`。sgl-jax 不需要 `zero_allocator`（JAX 不做 in-place bump alloc），取而代之的是 `recurrent_state_pool`（由上层模型组装代码从 `memory_pool` 中取出后传入，详见 §4.5）。`backend` 不作为入参（从 `forward_batch.attn_backend` 取得）。
 
 **8 步前向**（对齐 sglang GPU `KimiDeltaAttention.forward`，L368-408）：
 
@@ -411,12 +462,13 @@ mixed_qkv, beta, forget_gate, g_proj_states = self.forward_qkvbfg(hidden_states)
 # 2. prefill: unflatten forget_gate → [T, H, K]，beta sigmoid → fp32
 #    decode: 跳过（kernel 内部处理）
 
-# 3. dispatch（§4.3.0）— 入参对齐 sglang RadixLinearAttention.forward
+# 3. dispatch（§4.3.0）
 core_attn_out = self.attn(
     forward_batch,
     mixed_qkv=mixed_qkv,
     a=forget_gate,
     b=beta,
+    recurrent_state_pool=recurrent_state_pool,
 )
 
 # 4. output gate + FusedRMSNormGated + o_proj
@@ -456,17 +508,16 @@ kda_layers = [
 ]
 ```
 
-### 5.2 ForwardBatch 接口
+### 5.2 ForwardBatch 接口与 `memory_pool` 传递
 
-KDA layer 接收标准 `ForwardBatch` 实例 + RFC-0015 `MemoryPools` 实例。Backend 通过 `forward_batch.forward_mode` 派发到 chunk / recurrent 路径（§4.4）。
+KDA layer 接收标准 `ForwardBatch` 实例 + `recurrent_state_pool`（由上层模型组装代码从 `memory_pool` 取出后传入）。Backend 通过 `forward_batch.forward_mode` 派发到 chunk / recurrent 路径（§4.4）。
 
-**Cache slot 索引（来自 RFC-0015）**：
+**Cache slot 索引**：
 
-| 维度 | 字段 | 怎么来的 |
+| 维度 | 来源 | 怎么到 backend 手里 |
 |---|---|---|
-| Layer | `layer.layer_id` → backend 调 `recurrent_state_pool.linear_recurrent_layer_cache(layer_id)` 切出单层 | `RadixLinearAttention.__init__` 的 `layer_id` 参数 |
-| Request | `forward_batch.recurrent_pool_indices`（`[B] int32`） | `HybridReqToTokenPool.alloc(reqs)` 写到 req 上，scheduler 在 prepare 阶段查表，最终经 `ScheduleBatch` / `ModelWorkerBatch` 传到 `ForwardBatch` |
-| Pool 引用 | `memory_pools.recurrent_state_pool` | `MemoryPools` 是个 pytree，由 `_forward` 通过 `donate_argnames=["memory_pools"]` 传入 JIT |
+| Layer | `recurrent_state_pool.get_linear_recurrent_layer_cache(layer_id)` → 单层 view | 上层模型组装代码从 `memory_pool` 取出 `recurrent_state_pool`，经 `KimiDeltaAttention` → `RadixLinearAttention` 传给 backend |
+| Request | `self.forward_metadata.recurrent_indices`（`[B] int32`） | JIT 外由 `recurrent_state_pool.get_recurrent_indices(req_pool_indices)` 计算，存入 `HybridLinearAttentionBackendMetadata`，作为 backend pytree child 穿越 JIT 边界 |
 
 **KDA 与 KV cache 是两条索引路径**：MLA 等普通 attention 走 `out_cache_loc` + `req_to_token_pool.req_to_token`（按 token 索引）；KDA 走上面这套（按 request 索引）。hybrid 模型同时用两套，由 `HybridReqToTokenPool` 协调（详见 RFC-0015）。
 
@@ -474,7 +525,7 @@ KDA layer 接收标准 `ForwardBatch` 实例 + RFC-0015 `MemoryPools` 实例。B
 
 - `MHATokenToKVPool` / `SWAKVPool` — 与 KDA 无关 layer 仍然使用
 - `FlashAttentionBackend` / `NativeAttention` / `LinearAttentionBackend` / MLA backend
-- 所有现有 model（Qwen / Llama / Bailing 等）—— 模型 `__call__` 接口的 `memory_pools` 迁移由 RFC-0015 统一处理，本 RFC 不重复
+- 所有现有 model（Qwen / Llama / Bailing 等）—— 不受影响；`memory_pool` 签名变更由 RFC-0015 统一处理
 - `ServerArgs` CLI / 配置文件
 
 ---
