@@ -912,23 +912,33 @@ def critical_path(instructions):
 寄存器层次（从快到慢）：
 
 1. VPR (Vector Processor Register) — 向量寄存器文件
-   - 容量：每个 TensorCore 有固定数量的 vector 寄存器
+   - 数量：每个 TensorCore **64 个** VPR（物理编号 %v0 ~ %v63，来自 final_bundles.txt 实测）
    - 物理大小：每个寄存器 **4096 bytes**（固定，与数据类型无关）
+   - 总容量：64 × 4 KiB = **256 KiB / TensorCore**
    - 实际加载类型（来自 `post-eliminate-llo-extensions.txt` 中的 `llo.vector_load`）：
      - `vector<8×128×i32>` = 8 × 128 × 4 = 4096 bytes
      - `vector<8×128×f32>` = 8 × 128 × 4 = 4096 bytes
      - `vector<8×128×2×bf16>` = 8 × 128 × 2 × 2 = 4096 bytes（bf16 通过维度 2 补齐到与 f32/i32 等宽）
    - 用途：向量 ALU 和 MXU 的操作数/结果
 
-2. VMEM (Vector Memory) — 向量暂存器
+2. SPR (Scalar Processor Register) — 标量寄存器文件
+   - 数量：每个 TensorCore **31 个** SPR（物理编号 %s0 ~ %s30，来自 final_bundles.txt 实测）
+   - 物理大小：每个寄存器 **4 bytes**（32 位标量值）
+   - 用途：循环计数、地址计算、标量算术
+
+3. Predicate Register — 谓词寄存器
+   - 数量：每个 TensorCore **14 个**（物理编号 %p0 ~ %p13，来自 final_bundles.txt 实测）
+   - 用途：条件执行（predicated instruction），比较结果写入
+
+4. VMEM (Vector Memory) — 向量暂存器
    - 物理上是在芯片上的 SRAM（~几十 MB 量级）
    - 用途：tile 的本地存储，算法中反复使用的数据块
 
-3. SMEM (Scalar Memory) — 标量寄存器文件
+5. SMEM (Scalar Memory) — 标量内存
    - 容量远小于 VMEM
-   - 用途：循环计数、地址、标志位
+   - 用途：常量存储、同步标志、程序参数
 
-4. HBM (High Bandwidth Memory) — 片外显存
+6. HBM (High Bandwidth Memory) — 片外显存
    - 96 GiB / chip
    - 所有 VMEM/HBM 间传输通过 DMA
 ```
