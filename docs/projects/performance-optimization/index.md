@@ -15,3 +15,4 @@ ALModel 17B XL 在 TPU v7x 上的训练性能分析与优化。
 | [性能理论分析框架](./analysis-framework) | 两级上界分析框架（Roofline Bound → System Bound），覆盖算子 roofline、显存模型、通信模型、overlap 模型 |
 | [理论分析结果](./analysis-results) | 128 TPU v7x 上所有可行并行/重计算配置的 MFU 预测，最优配置 DP=4/FSDP=32 理论 MFU 31.5% |
 | [性能优化工作拆解](./work-breakdown) | 优化工作全局视图：理论分析、Profiling sweep、Kernel profiling、优化项优先级排序 |
+| [IR Dumps 性能分析指南](./ir-dumps-analysis) | Mosaic/HLO/LLO IR 文件说明，VLIW 指令周期分析，数据依赖分析，寄存器压力分析，硬件利用率与 Fusion 分析 |
