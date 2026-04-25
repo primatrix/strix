@@ -84,6 +84,7 @@ export default withMermaid(
                 collapsed: false,
                 items: [
                   { text: 'HybridLinearAttnBackend 支持', link: '/projects/sglang-jax/design_docs/support_hybrid_linear_attn_backend' },
+                  { text: 'KDA sgl-jax 推理组件', link: '/projects/sglang-jax/design_docs/kda_inference_components' },
                 ],
               },
               {
