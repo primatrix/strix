@@ -78,7 +78,14 @@ export default withMermaid(
             text: 'sglang-jax',
             items: [
               { text: '概览', link: '/projects/sglang-jax/' },
-              { text: '文档设计', link: '/projects/sglang-jax/2026-03-26-project-documentation-design' },
+              {
+                text: '文档设计',
+                link: '/projects/sglang-jax/2026-03-26-project-documentation-design',
+                collapsed: false,
+                items: [
+                  { text: 'HybridLinearAttnBackend 支持', link: '/projects/sglang-jax/design_docs/support_hybrid_linear_attn_backend' },
+                ],
+              },
               {
                 text: '参考资料',
                 collapsed: false,
