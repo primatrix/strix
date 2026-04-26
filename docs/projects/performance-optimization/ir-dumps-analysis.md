@@ -2,6 +2,42 @@
 
 本文档说明 `ir_dumps/` 目录下各文件的内容，以及如何利用这些中间表示（IR）文件进行 TPU kernel 性能分析。
 
+## 0. 如何生成 IR Dumps
+
+IR dumps 通过两组环境变量控制，分别对应 HLO 层和 LLO/Mosaic 层。
+
+### 0.1 HLO Dump（`XLA_FLAGS`）
+
+```bash
+export XLA_FLAGS="--xla_dump_hlo_as_text --xla_dump_to=/tmp/kda_ir_dumps/hlo"
+```
+
+### 0.2 LLO + Mosaic Dump（`LIBTPU_INIT_ARGS`）
+
+```bash
+export LIBTPU_INIT_ARGS="\
+  --xla_jf_dump_to=/tmp/kda_ir_dumps/llo \
+  --xla_jf_dump_hlo_text=true \
+  --xla_jf_dump_llo_text=true \
+  --xla_jf_emit_annotations=true \
+  --xla_mosaic_dump_to=/tmp/kda_ir_dumps/mosaic \
+  --xla_mosaic_enable_llo_source_annotations=true \
+  --xla_enable_custom_call_region_trace=true \
+  --xla_xprof_register_llo_debug_info=true"
+```
+
+### 0.3 k8s Job 中的基础 Flag
+
+在 `k8s-job.yaml` 中，以下两个 flag 已作为基础配置预设在 `LIBTPU_INIT_ARGS` 中（即使不需要完整 dump 也建议保留，用于 trace/profiling）：
+
+```yaml
+env:
+  - name: LIBTPU_INIT_ARGS
+    value: "--xla_enable_custom_call_region_trace=true --xla_xprof_register_llo_debug_info=true"
+```
+
+需要完整 dump 时，在此基础上追加 §0.2 中的其余 flag。
+
 ## 1. IR Dumps 目录与文件概览
 
 ### 1.1 目录结构
