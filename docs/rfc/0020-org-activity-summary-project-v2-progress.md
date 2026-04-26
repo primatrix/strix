@@ -79,7 +79,7 @@ generate-report.ts handler 分支:
 
 - 使用 `BEAVER_PROJECT_NODE_ID` 环境变量（已在 `src/env.ts` 中定义）定位 Project #14
 - 调用 GraphQL 查询 Project #14 所有 items，读取 `Status` 和 `Target Date` 自定义字段（GraphQL 查询需支持 cursor-based 分页，通过 `pageInfo.hasNextPage` 获取下一页）
-- 按仓库分组：Project V2 item 直接关联的 Issue 通常是 project repo 中的 tracker issue，需通过 tracker issue 的关联 PR 所在仓库或 body 中的跨仓库引用来确定实际 repo 归属；若无关联 PR，则 fallback 到 tracker issue 自身所在仓库
+- 按仓库分组：Project V2 item 直接关联的 Issue 通常是 project repo 中的 tracker issue，实际的仓库地址包含在 tracker issue body 中，格式为 `仓库: primatrix/<repo>`
 - 筛选逻辑采用"变化驱动"策略，仅展示有实质进展的事项，避免信息过载（全面视图由周报覆盖）：
   - 今日/本周关闭事项：Status = Done 且在时间窗口内
   - 新提交 PR：关联 Issue 在 Project #14 上且有新 PR
