@@ -982,7 +982,225 @@ def critical_path(instructions):
    - 所有 VMEM/HBM 间传输通过 DMA
 ```
 
-### 4.2 三种方法分析寄存器压力
+### 4.2 各硬件操作的 VREG 占用量
+
+本节基于 `final_bundles.txt` 中的实际指令分析，列出每种硬件操作在执行时占用的 VREG 数量。
+
+#### 寄存器命名规则（post-RA）
+
+在寄存器分配后的 IR 中，寄存器命名格式为：
+
+| 前缀 | 格式 | 含义 |
+|------|------|------|
+| `%v` | `%v<virt>_v<phys>` | **VREG**（向量寄存器），`v<phys>` 是物理寄存器号（0–63） |
+| `%vm` | `%vm<virt>_vm<phys>` | **VMASK**（向量掩码寄存器），`vm<phys>` 是物理号（0–13） |
+| `%s` | `%s<virt>_s<phys>` | **SREG**（标量寄存器），`s<phys>` 是物理号（0–30） |
+| `%p` | `%p<virt>_p<phys>` | **PREG**（谓词寄存器），`p<phys>` 是物理号（0–13） |
+| `%<N>` | `%6150` | **Token**（副作用令牌）——不占用任何物理寄存器 |
+
+**关键区分**：输出为 token（如 `%6150 = vmatprep ...`）的指令**不消耗输出 VREG**。token 仅表示指令的副作用状态（MXU 内部状态、XLU pipeline 状态等），不映射到任何物理寄存器。
+
+#### 4.2.1 MXU 操作
+
+MXU 操作采用**异步 pipeline** 模式：数据通过 `vmatprep`/`vmatpush1` 送入 MXU 内部缓冲区，由 `vmatmul` 触发计算，最终通过 `vpop.f32.mrb` 将结果读回 VREG。中间的 MXU 内部状态（权重寄存器、累加器、MRB）不占用 VREG。
+
+| 指令 | 输入 VREG | 输出 | 总 VREG 占用 | 说明 |
+|------|----------|------|-------------|------|
+| `vmatprep.*.mxu0/1` | 1 | token | **1** | 将权重 tile 从 VREG 加载到 MXU 内部权重寄存器 |
+| `vmatpush1.*.mxu0/1` | 1 | token | **1** | 将激活数据从 VREG 推入 MXU 乘法 pipeline |
+| `vmatmul.*.mxu0/1` | 1 | token | **1** | 输入为打包后的激活 VREG，触发矩阵乘法，结果写入 MRB |
+| `vpop.f32.mrb[N].mxu0/1` | 0 (token) | 1 VREG | **1** | 从 MRB 槽位读取 f32 累加结果到 VREG |
+
+```text
+// 典型 MXU pipeline 序列（单 MXU）
+%6150 = vmatprep.subr.bf16.mxu0 %v4848_v36    ← 1 VREG in, token out
+%6151 = vmatpush1.bf16.msra.mxu0 %v4847_v39   ← 1 VREG in, token out
+%6183 = vmatmul.mubr.bf16.gmra.mrb[0].mxu0 %v40631_v57  ← 1 VREG in, token out
+  ... (8 cycle pipeline latency) ...
+%v6237_v6 = vpop.f32.mrb[0].mxu0              ← token in, 1 VREG out
+```
+
+**MXU 双单元并行**：MXU0 和 MXU1 可同时发射，共享同一个激活 VREG：
+
+```text
+// 同一 bundle 中 MXU0 + MXU1 并行
+{ %6183 = vmatmul.mubr.bf16.gmra.mrb[0].mxu0 %v40631_v57
+  ;; %6289 = vmatmul.mubr.bf16.gmra.mrb[0].mxu1 %v40631_v57 }
+// 两条 vmatmul 共享输入 %v40631_v57 → 实际只占 1 个 VREG
+```
+
+#### 4.2.2 向量 ALU 操作
+
+所有 VALU 指令输出 1 个 VREG，输入为 1–2 个 VREG（或 1 个 VREG + 1 个立即数）。
+
+| 指令 | 输入 VREG | 输出 VREG | 总 VREG 占用 | 说明 |
+|------|----------|----------|-------------|------|
+| `vadd.f32/s32` | 1–2 | 1 | **2–3** | 两个源操作数 + 一个目标；立即数操作数不占 VREG |
+| `vsub.s32` | 1–2 | 1 | **2–3** | 同上 |
+| `vmul.f32/u32` | 1–2 | 1 | **2–3** | 同上 |
+| `vmax.f32` | 1–2 | 1 | **2–3** | 同上 |
+| `vand/vor/vxor.u32` | 1–2 | 1 | **2–3** | 立即数常用于 mask 常量 |
+| `vshll/vshrl.u32` | 1–2 | 1 | **2–3** | 第二操作数常为立即数移位量 |
+| `vcmp.*.totalorder` | 1–2 | 1 **VMASK** | **1–2 VREG** + 1 VMASK | 输出不是 VREG，而是 VMASK |
+| `vsel` | 1–2 + 1 VMASK | 1 | **2–3** + 1 VMASK | `vsel %vm, %on_true, %on_false` |
+
+```text
+// 2 VREG 输入 → 1 VREG 输出（3 VREG 总占用）
+%v579_v61 = vadd.s32 %v519_v51, %v515_v53
+
+// 1 立即数 + 1 VREG 输入 → 1 VREG 输出（2 VREG 总占用）
+%v339_v13 = vmul.u32 2925155241, %v338_v12
+
+// vcmp: 2 VREG 输入 → 1 VMASK 输出（2 VREG + 1 VMASK）
+%vm455_vm0 = vcmp.eq.s32.totalorder %v247_v48, %v38520_v46
+
+// vsel: 2 VREG + 1 VMASK 输入 → 1 VREG 输出
+%v5927_v41 = vsel %vm5907_vm9, %v5926_v59, %v5925_v0
+```
+
+#### 4.2.3 XLU 操作（跨 Lane 单元）
+
+XLU 操作采用**异步两步模式**：发射指令将数据送入 XLU pipeline（输出 token），随后通过 `vpop` 提取结果到 VREG。
+
+| 指令 | 输入 VREG | 输出 | 总 VREG 占用 | 说明 |
+|------|----------|------|-------------|------|
+| `vbcast.lane.b32.xlu0/1` | 1 | token | **1** | 将 VREG 中某个 lane 的值广播到所有 lane |
+| `vrot.lane.b32.xlu0` | 1 | token | **1** | 跨 lane 旋转（旋转量来自 SREG） |
+| `vxpose.xlu0/1.b32.start` | 1 | token | **1** | 转置序列开始——将 VREG 送入 XLU 转置缓冲区 |
+| `vxpose.xlu0/1.b32.cont` | 1 | token | **1** | 转置序列后续步——继续送入数据 |
+| `vxpose.xlu0/1.b32.end` | 0 | token | **0** | 转置序列结束——触发输出 |
+| `vpop.permute.xlu0/1` | 0 (token) | 1 VREG | **1** | 提取 XLU 广播/置换结果 |
+| `vpop.trf.xlu0/1` | 0 (token) | 1 VREG | **1** | 提取 XLU 转置结果 |
+
+**转置操作的 VREG 占用模式**（来自 `copy.10-final_bundles.txt`）：
+
+```text
+// 转置序列：start + 15× cont = 16 步，每步送入 1 VREG
+%324 = vxpose.xlu1.b32.start [1/16] %v231_v0, 128   ← 1 VREG in
+%325 = vxpose.xlu1.b32.cont  [2/16] %v234_v2, 128   ← 1 VREG in
+%326 = vxpose.xlu1.b32.cont  [3/16] %v238_v4, 128   ← 1 VREG in
+... (共 16 步) ...
+// 结果通过 vpop.trf 提取
+%v340_v0 = vpop.trf.xlu1    ← 1 VREG out
+%v341_v2 = vpop.trf.xlu1    ← 1 VREG out
+... (共 16 个输出) ...
+```
+
+16×16 转置需要 16 个输入 VREG + 16 个输出 VREG，但在 pipeline 中分摊到 32 个 bundle 中执行，每个 bundle 只占 1 个 VREG。
+
+#### 4.2.4 EUP 操作（超越函数）
+
+EUP 采用与 XLU 相同的异步模式：发射 → token → pop。**EUP 容量 = 1**，同一时刻只能有一条 EUP 指令在 pipeline 中。
+
+| 指令 | 输入 VREG | 输出 | 总 VREG 占用 | 说明 |
+|------|----------|------|-------------|------|
+| `vrcp.f32` | 1 | token | **1** | 向量倒数（10 cycle 延迟） |
+| `vpow2.f32` | 1 | token | **1** | 向量 2ˣ（10 cycle 延迟） |
+| `vpop.eup` | 0 (token) | 1 VREG | **1** | 提取 EUP 结果 |
+
+```text
+// EUP pipeline：发射 → 10 cycle 后提取
+%35605 = vpow2.f32 %v33439_v18       ← 1 VREG in, token out
+  ... (至少 10 bundle 间隔) ...
+%v35606_v29 = vpop.eup %35605        ← token in, 1 VREG out
+```
+
+**隐含的 VREG 压力**：EUP 的 10 cycle 延迟意味着输入 VREG 在发射后即可释放，但在等待期间编译器需要调度其他指令，这些指令会占用额外的 VREG。如果连续发射多条 EUP（如 softmax 中连续 3 个 `vpow2`），则 3 个输出 VREG 在 pop 前都处于"预订"状态。
+
+#### 4.2.5 向量内存操作
+
+| 指令 | 输入 VREG | 输出 VREG | 总 VREG 占用 | 说明 |
+|------|----------|----------|-------------|------|
+| `vld` | 0 | 1 | **1** | 地址来自 SREG / allocation 偏移 |
+| `vst` | 1 | 0 | **1** | `vst_source` 为要写入的 VREG |
+| `vst.msk` | 1 + 1 VMASK | 0 | **1** + 1 VMASK | 带掩码的条件写入 |
+
+```text
+// vld: 地址由 SREG 计算，不消耗 VREG
+%v38460_v6 = vld [vmem:[%s38457_s16] sm:$0xff]
+
+// vst: 消耗 1 个 VREG（数据源）
+%18 = vst [vmem:[#allocation2] sm:$0xff] /*vst_source=*/%v804_v41
+
+// vst.msk: 1 VREG + 1 VMASK
+%689 = vst.msk [vmem:[#allocation44] sm:$0x3] %vm38655_vm0, %v38153_v55
+```
+
+**注意 spill/fill**：`VLOAD:FILL` 和 `VSTORE:SPILL` 使用与 `vld`/`vst` 相同的 VREG 占用模式，但它们是寄存器分配器插入的额外指令，会增加 VLOAD/VSTORE 端口的竞争。
+
+#### 4.2.6 数据布局变换操作
+
+| 指令 | 输入 VREG | 输出 VREG | 总 VREG 占用 | 说明 |
+|------|----------|----------|-------------|------|
+| `vpack.c.b16/bf16` | 2 | 1 | **3** | 两个 f32 VREG 压缩为一个 bf16 VREG |
+| `vunpack.c.l.b16/bf16` | 1 | 1 | **2** | bf16 VREG 解包为 f32 VREG |
+| `vunpack.c.0.s8` | 1 | 1 | **2** | int4/int8 解包 |
+| `vcombine.high` | 1–2 | 1 | **2–3** | 提取/复制高半部分（输入常为同一 VREG） |
+| `vcombine.low` | 2 | 1 | **3** | 合并两个 VREG 的低半部分 |
+| `vrot.slane` | 1–2 | 1 | **2–3** | sublane 旋转，旋转量可为 VREG 或立即数 |
+
+```text
+// vpack: 2 个 f32 VREG → 1 个 bf16 VREG（为 MXU 准备输入）
+%v40498_v13 = vpack.c.b16 %v5993_v23, %v5937_v57
+
+// vunpack: 1 个 bf16 VREG → 1 个 f32 VREG
+%v5776_v6 = vunpack.c.l.b16 %v40325_v31
+
+// vcombine.high: 常见的「自身复制」模式——实际只占 2 VREG
+%v5014_v16 = vcombine.high %v40283_v5, %v40283_v5
+
+// vrot.slane: sublane 旋转，立即数旋转量时只占 2 VREG
+%v612_v45 = vrot.slane %v611_v44, 2
+// VREG 旋转量时占 3 VREG
+%v244_v7 = vrot.slane %v38460_v6, %v38447_v2
+```
+
+#### 4.2.7 其他操作
+
+| 指令 | 输入 VREG | 输出 VREG | 总 VREG 占用 | 说明 |
+|------|----------|----------|-------------|------|
+| `vstv` | 0 (SREG) | 1 | **1** | 标量 → 向量广播 |
+| `vmov` | 0 (立即数) | 1 | **1** | 常量物化到 VREG |
+| `vtos` | 1 | 0 (SREG) | **1** | 向量 → 标量提取 |
+| `vrng` | 0 | 1 | **1** | RNG 种子初始化 |
+| `vmmov` | 0–1 VMASK | 1 VMASK | **0** | 仅操作 VMASK，不涉及 VREG |
+| `vmand/vmor` | 2 VMASK | 1 VMASK | **0** | 仅操作 VMASK，不涉及 VREG |
+| `vlaneseq` | 0 | 1 | **1** | 生成 lane 序列号 |
+
+#### 4.2.8 VREG 占用汇总表
+
+| 功能单元 | 指令 | 输入 VREG | 输出 | 总 VREG | 关键逻辑 |
+|---------|------|----------|------|--------|---------|
+| **MXU** | `vmatprep` | 1 | token | 1 | 数据进入 MXU 内部，释放 VREG |
+| | `vmatpush1` | 1 | token | 1 | 同上 |
+| | `vmatmul` | 1 | token | 1 | 激活数据进入 pipeline |
+| | `vpop.f32.mrb` | 0 | 1 VREG | 1 | 结果从 MRB 读回 VREG |
+| **VALU** | 算术/逻辑 | 1–2 | 1 VREG | 2–3 | 立即数操作数不占 VREG |
+| | `vcmp` | 1–2 | 1 VMASK | 1–2 | 输出是 VMASK 而非 VREG |
+| | `vsel` | 1–2 + VMASK | 1 VREG | 2–3 | 额外消耗 1 个 VMASK |
+| **XLU** | 发射指令 | 1 | token | 1 | 数据进入 XLU pipeline |
+| | `vpop.permute/trf` | 0 | 1 VREG | 1 | 结果从 XLU 读回 |
+| **EUP** | `vrcp/vpow2` | 1 | token | 1 | 10 cycle 延迟 |
+| | `vpop.eup` | 0 | 1 VREG | 1 | 结果提取 |
+| **VMEM** | `vld` | 0 | 1 VREG | 1 | 地址由 SREG 提供 |
+| | `vst` | 1 | 0 | 1 | — |
+| **布局** | `vpack` | 2 | 1 VREG | 3 | 两个 f32 → 一个 bf16 |
+| | `vunpack` | 1 | 1 VREG | 2 | 一个 bf16 → 一个 f32 |
+| | `vcombine` | 1–2 | 1 VREG | 2–3 | 自身复制时输入计 1 |
+| | `vrot.slane` | 1–2 | 1 VREG | 2–3 | 立即数旋转量不占 VREG |
+
+#### 4.2.9 对寄存器压力的影响
+
+**核心逻辑**：异步 pipeline 操作（MXU/XLU/EUP）的**发射端消耗 VREG、输出 token**，**提取端消耗 token、产生 VREG**。这意味着：
+
+1. **MXU 不累积 VREG 压力**：`vmatprep`/`vmatpush1` 读入 VREG 后，数据进入 MXU 内部缓冲区，VREG 可被释放。但 `vpop.f32.mrb` 每次产生 1 个新 VREG——如果连续 pop 多个 MRB 槽位（典型为 4–8 个），会瞬间增加 4–8 个 live VREG
+2. **EUP 延迟放大压力**：`vrcp.f32` 发射后，编译器需要在 10 cycle 间隔内调度其他工作。如果连续发射 N 条 EUP 指令，则 N 个输出 VREG 在 pop 前都被"预订"，等效于 N 个额外的 live VREG
+3. **布局变换是 VREG 峰值来源**：`vpack` 需要同时持有 2 个输入 + 1 个输出 = 3 个 VREG；在大 tile 的布局变换区域，多条 `vpack`/`vunpack`/`vcombine` 叠加可能导致 live VREG 突破 64 个物理寄存器上限，触发 spill
+4. **`vld` 是净 VREG 生产者**：每条 `vld` 产生 1 个新 VREG 且无 VREG 输入。连续大量 `vld`（如 tile prefetch）会快速耗尽可用寄存器
+
+### 4.3 三种方法分析寄存器压力
+
+> 注意：下文 §4.3–§4.6 的编号延续 §4.2 之后。
 
 #### 方法 A：读 `packed-bundles-pre-ra.txt` 和 `packed-bundles-post-ra.txt`（最精确）
 
@@ -1050,7 +1268,7 @@ func.func @main(
 
 **VMEM 总量估算**：把所有 `vmem` 类型的参数字节数加起来，对比 VMEM 总容量（TPU v7x per-core VMEM ~几十 MB）。如果 VMEM 分配接近或超过容量，编译器会插入 spill（溢出到 HBM），这是性能下降的重要信号。
 
-### 4.3 VPR（向量寄存器）压力分析
+### 4.4 VPR（向量寄存器）压力分析
 
 每个 `llo.vector_load` 产生一个 VPR 值，后续的向量操作会消费和产生新的 VPR 值。IR 中实际出现的加载类型：
 
@@ -1071,7 +1289,7 @@ func.func @main(
 - 如果某段代码中 `vector_load` 的数量异常多于计算所需，可能是在 reload spill
 - 如果 `vector_store` 后面紧跟着 load 同一个地址，可能是 spill/fill 对
 
-### 4.4 寄存器压力分析实例
+### 4.5 寄存器压力分析实例
 
 在 `post-lower-to-llo.txt` 第 279 行附近的 index 计算区域：
 
@@ -1091,7 +1309,7 @@ func.func @main(
 
 这段代码中，4 个 load 产生了 4 个基础 VPR，然后每个通过 replicate + broadcast 产生 8× 子 lane 值（共 32 个临时 VPR），加上后续的 compare/select 操作，短期内可能有 40-50 个 VPR 同时存活。如果 VPR 文件只有 32 或 64 个寄存器，就可能触发 spill。
 
-### 4.5 Scalar 寄存器压力
+### 4.6 Scalar 寄存器压力
 
 标量操作（`llo.constant`、`llo.sadd` 等）使用标量寄存器。这类压力通常较低，但在以下情况可能成为瓶颈：
 
