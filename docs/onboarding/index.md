@@ -9,6 +9,7 @@ title: 新人入门
 ## 入职指南
 
 - [项目管理框架](./project-management.md) — 五层管理结构与端到端工作流程（Roadmap → 开发 → 审查）
+- [Beaver 项目流转使用指南](./beaver-workflow.md) — 从 Issue 创建到 PR 合并的完整操作指南与实现简述
 - [团队目标](./goals.md) — 四个核心方向：计算引擎、性能优化、基础设施、AI 辅助
 
 <!-- 以下内容暂时隐藏
