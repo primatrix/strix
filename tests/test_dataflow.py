@@ -86,9 +86,14 @@ def test_loop_tracking():
     root.end_time_ns = 50
 
     graph = extract_dataflow(root)
-    assert len(graph.nodes) == 1
-    assert graph.nodes[0].parent_loop_id is not None
-    assert graph.nodes[0].parent_loop_id in graph.loops
+    # LOOP node (scf.for) + inner vadd = 2 nodes
+    assert len(graph.nodes) == 2
+    loop_nodes = [n for n in graph.nodes if n.kind == OpKind.LOOP]
+    inner_nodes = [n for n in graph.nodes if n.kind == OpKind.LEAF]
+    assert len(loop_nodes) == 1
+    assert len(inner_nodes) == 1
+    assert inner_nodes[0].parent_loop_id is not None
+    assert inner_nodes[0].parent_loop_id in graph.loops
 
 
 def test_stall_events_included():
