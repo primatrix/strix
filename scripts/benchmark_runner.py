@@ -32,7 +32,7 @@ def parse_args(argv=None):
     p.add_argument(
         "--shape",
         default=os.environ.get("SHAPE"),
-        help="Comma-separated shape dimensions",
+        help="Comma-separated shape dimensions (metadata; kernel uses config defaults)",
     )
     p.add_argument(
         "--job-name",
@@ -67,8 +67,6 @@ def parse_args(argv=None):
 
     if args.kernel is None:
         p.error("--kernel is required (or set KERNEL_MODULE env var)")
-    if args.shape is None:
-        p.error("--shape is required (or set SHAPE env var)")
 
     return args
 
@@ -186,10 +184,12 @@ def upload_to_gcs(tarball_path, gcs_bucket, job_name):
     bucket_name = gcs_bucket.replace("gs://", "").strip("/")
     blob_path = f"{job_name}/{pathlib.Path(tarball_path).name}"
 
+    print(f"[benchmark] Uploading to gs://{bucket_name}/{blob_path}")
     client = storage.Client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
     blob.upload_from_filename(str(tarball_path))
+    print(f"[benchmark] Upload complete")
 
 
 _DEFAULT_IR_DUMP_ROOT = pathlib.Path("/tmp/ir_dumps")

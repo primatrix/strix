@@ -150,12 +150,12 @@ class TestEnvVarFallback:
             with pytest.raises(SystemExit):
                 runner.parse_args(["--shape", "1"])
 
-    def test_shape_required_when_no_env(self):
+    def test_shape_optional_when_no_env(self):
         runner = _import_runner()
         env = {k: v for k, v in os.environ.items() if k != "SHAPE"}
         with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(SystemExit):
-                runner.parse_args(["--kernel", "k"])
+            args = runner.parse_args(["--kernel", "k"])
+        assert args.shape is None
 
     def test_no_args_reads_all_from_env(self):
         """In K8s Job context: no CLI args, everything from env."""
