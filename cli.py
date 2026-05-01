@@ -4,6 +4,8 @@ import argparse
 from typing import Dict, List, Optional
 
 from .analyzer import PerformanceAnalyzer
+from .dataflow import extract_dataflow
+from .dataflow_exporter import DataFlowDotExporter
 from .domain import Instruction
 from .exporters import ChromeTraceExporter, ConsoleExporter, JsonSummaryExporter
 from .hardware import HardwareSpec
@@ -71,6 +73,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Optional maximum depth when printing the instruction tree.",
+    )
+    ap.add_argument(
+        "--dataflow-output",
+        default=None,
+        help=(
+            "Where to write Graphviz DOT dataflow graph. "
+            "Render with: dot -Tsvg output.dot -o output.svg"
+        ),
     )
     return ap
 
@@ -288,6 +298,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     trace_path = args.trace_output or ""
     if trace_path:
         ChromeTraceExporter().export(root_event, report, trace_path)
+
+    if args.dataflow_output:
+        df_graph = extract_dataflow(root_event)
+        DataFlowDotExporter().export(df_graph, args.dataflow_output)
 
 
 if __name__ == "__main__":
