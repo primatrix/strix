@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
+import sys
 from typing import Dict, List, Optional
 
 from .analyzer import PerformanceAnalyzer
@@ -14,25 +16,23 @@ from .parser import LLOParser
 from .simulator import Simulator
 from .value_resolver import ValueResolver
 
+# Known subcommands used for backward-compat detection.
+_SUBCOMMANDS = {"import"}
 
-def build_arg_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(
-        description=(
-            "Static profiler and timeline simulator for Mosaic TPU LLO dumps "
-            "(post-finalize-llo .txt/.mlir)."
-        )
-    )
-    ap.add_argument(
+
+def _add_analyze_args(parser: argparse.ArgumentParser) -> None:
+    """Add the LLO analyze arguments to *parser*."""
+    parser.add_argument(
         "path",
         help="Path to a post-finalize-llo .txt/.mlir file.",
     )
-    ap.add_argument(
+    parser.add_argument(
         "--trace-output",
         "-t",
         default="trace.json",
         help="Where to write Chrome trace JSON (set to '' to disable).",
     )
-    ap.add_argument(
+    parser.add_argument(
         "--arg-override",
         "--arg",
         dest="arg_override",
@@ -43,7 +43,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Can be specified multiple times. Required for DMA size resolution."
         ),
     )
-    ap.add_argument(
+    parser.add_argument(
         "--default-sld-value",
         type=int,
         default=None,
@@ -52,7 +52,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Useful when there are many llo.sld instructions. Common values: 0, 128."
         ),
     )
-    ap.add_argument(
+    parser.add_argument(
         "--exclude-instructions",
         nargs='+',
         default=None,
@@ -60,7 +60,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Exclude instructions."
         ),
     )
-    ap.add_argument(
+    parser.add_argument(
         "--dump-tree",
         action="store_true",
         help=(
@@ -68,13 +68,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "simulator (for debugging the parser)."
         ),
     )
-    ap.add_argument(
+    parser.add_argument(
         "--tree-max-depth",
         type=int,
         default=None,
         help="Optional maximum depth when printing the instruction tree.",
     )
-    ap.add_argument(
+    parser.add_argument(
         "--dataflow-output",
         default=None,
         help=(
@@ -82,6 +82,57 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Render with: dot -Tsvg output.dot -o output.svg"
         ),
     )
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        description=(
+            "Static profiler and timeline simulator for Mosaic TPU LLO dumps "
+            "(post-finalize-llo .txt/.mlir)."
+        )
+    )
+
+    sub = ap.add_subparsers(dest="subcommand")
+
+    # -- import subcommand --
+    import_p = sub.add_parser(
+        "import",
+        help="Import a kernel module, benchmark on TPU, and download IR dumps.",
+    )
+    import_p.add_argument(
+        "kernel",
+        help="Kernel module path (e.g. kernels.chunk_kda_fwd).",
+    )
+    import_p.add_argument(
+        "--shape",
+        required=True,
+        help="Comma-separated shape dimensions (e.g. 1,2048,4,128,128).",
+    )
+    import_p.add_argument(
+        "--chunk-size",
+        type=int,
+        default=None,
+        help="Chunk size for the kernel.",
+    )
+    import_p.add_argument(
+        "--tpu-type",
+        default="v7x",
+        help="TPU type (default: v7x).",
+    )
+    import_p.add_argument(
+        "--tpu-topology",
+        default="2x2x1",
+        help="TPU topology (default: 2x2x1).",
+    )
+
+    # -- analyze (legacy) subcommand: registered but also reachable without
+    #    the subcommand word for backward compatibility --
+    analyze_p = sub.add_parser(
+        "analyze",
+        help="Analyze a post-finalize LLO file (default when a file path is given).",
+    )
+    _add_analyze_args(analyze_p)
+
     return ap
 
 
@@ -187,10 +238,28 @@ def _print_opevent_tree(
         _print_opevent_tree(child, indent=indent + 2, max_depth=max_depth)
 
 
-def main(argv: Optional[List[str]] = None) -> None:
-    ap = build_arg_parser()
-    args = ap.parse_args(argv)
+def _run_import(args: argparse.Namespace) -> None:
+    """Handle the ``import`` subcommand."""
+    cmd: List[str] = [
+        "bash",
+        "scripts/run_benchmark.sh",
+        args.kernel,
+        "--shape",
+        args.shape,
+        "--tpu-type",
+        args.tpu_type,
+        "--tpu-topology",
+        args.tpu_topology,
+    ]
+    if args.chunk_size is not None:
+        cmd.extend(["--chunk-size", str(args.chunk_size)])
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
 
+
+def _run_analyze(args: argparse.Namespace) -> None:
+    """Handle the ``analyze`` (legacy) subcommand."""
     spec = HardwareSpec()
     parser = LLOParser()
     # Parse any %argX=value style overrides into a dict passed to the simulator.
@@ -302,6 +371,27 @@ def main(argv: Optional[List[str]] = None) -> None:
     if args.dataflow_output:
         df_graph = extract_dataflow(root_event)
         DataFlowDotExporter().export(df_graph, args.dataflow_output)
+
+
+def preprocess_argv(argv: Optional[List[str]] = None) -> List[str]:
+    """Apply backward-compat: prepend ``analyze`` when no subcommand given."""
+    raw = list(argv) if argv is not None else sys.argv[1:]
+    if raw and raw[0] not in _SUBCOMMANDS and not raw[0].startswith("-"):
+        raw = ["analyze"] + raw
+    return raw
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    ap = build_arg_parser()
+    args = ap.parse_args(preprocess_argv(argv))
+
+    if args.subcommand == "import":
+        _run_import(args)
+    elif args.subcommand == "analyze":
+        _run_analyze(args)
+    else:
+        ap.print_help()
+        raise SystemExit(0)
 
 
 if __name__ == "__main__":
