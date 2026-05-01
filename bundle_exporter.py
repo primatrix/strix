@@ -5,7 +5,7 @@ import json
 import os
 import sys
 from collections import Counter
-from typing import IO, Dict, List, Optional, Tuple
+from typing import IO, Dict, Iterable, List, Optional, Tuple
 
 from .bundle_domain import BundleProgram, SourceLoc
 
@@ -39,6 +39,9 @@ class BundleConsoleExporter:
         total_annotated = sum(len(slots) for _, slots in entries)
         total_locs = len(entries)
 
+        # Build address→bundle map once for opcode lookups
+        bundle_map = {b.address: b for b in program.bundles}
+
         # Header
         out.write("=== Bundle-Source Mapping ===\n")
 
@@ -48,7 +51,7 @@ class BundleConsoleExporter:
             out.write(f"File: {display_name}\n\n")
 
             for loc, slots in file_entries:
-                self._write_loc_entry(out, loc, slots, program, source_cache)
+                self._write_loc_entry(out, loc, slots, bundle_map, source_cache)
 
         # Summary
         out.write(
@@ -62,7 +65,7 @@ class BundleConsoleExporter:
         out: IO[str],
         loc: SourceLoc,
         slots: List[Tuple[int, int]],
-        program: BundleProgram,
+        bundle_map: Dict[int, "Bundle"],
         source_cache: Dict[str, List[str]],
     ) -> None:
         # Location label
@@ -97,12 +100,11 @@ class BundleConsoleExporter:
         )
 
         # Opcode frequency
-        opcodes = _count_opcodes(slots, program)
+        opcodes = _count_opcodes(slots, bundle_map)
 
         if opcodes:
-            freq = Counter(opcodes)
             parts = []
-            for op, count in freq.most_common():
+            for op, count in opcodes.most_common():
                 if count > 1:
                     parts.append(f"{op}\u00d7{count}")
                 else:
@@ -113,7 +115,7 @@ class BundleConsoleExporter:
 
     @staticmethod
     def _resolve_sources(
-        filenames: "Iterable[str]",
+        filenames: Iterable[str],
         source_root: str,
     ) -> Dict[str, List[str]]:
         """Map source file paths to local file contents via suffix matching."""
@@ -133,12 +135,14 @@ class BundleConsoleExporter:
 def _find_local_file(pod_path: str, source_root: str) -> Optional[str]:
     """Find a local file matching the given pod path by suffix match.
 
-    Tries progressively shorter suffixes of *pod_path* until a match is
-    found under *source_root*.
+    Tries progressively shorter suffixes of *pod_path* (longest first)
+    to find the most specific match under *source_root*.
     """
     parts = pod_path.replace("\\", "/").split("/")
-    # Try full basename first, then longer suffixes
-    for i in range(len(parts) - 1, -1, -1):
+    # Filter empty parts (from leading /)
+    parts = [p for p in parts if p]
+    # Try longest suffix first for most specific match
+    for i in range(len(parts)):
         suffix = os.path.join(*parts[i:])
         candidate = os.path.join(source_root, suffix)
         if os.path.isfile(candidate):
@@ -163,10 +167,9 @@ def _collect_mappings(
 
 def _count_opcodes(
     slots: List[Tuple[int, int]],
-    program: BundleProgram,
-) -> Dict[str, int]:
+    bundle_map: Dict[int, "Bundle"],
+) -> Counter[str]:
     """Count opcode frequency across the given slots."""
-    bundle_map = {b.address: b for b in program.bundles}
     opcodes: Counter[str] = Counter()
     for addr, slot_idx in slots:
         bundle = bundle_map.get(addr)
@@ -174,7 +177,7 @@ def _count_opcodes(
             op = bundle.instructions[slot_idx].opcode
             if op:
                 opcodes[op] += 1
-    return dict(opcodes)
+    return opcodes
 
 
 class BundleJsonExporter:
@@ -190,9 +193,11 @@ class BundleJsonExporter:
 
         total_annotated = sum(len(slots) for _, slots in entries)
 
+        bundle_map = {b.address: b for b in program.bundles}
+
         mappings = []
         for loc, slots in entries:
-            opcodes = _count_opcodes(slots, program)
+            opcodes = _count_opcodes(slots, bundle_map)
             mappings.append({
                 "loc": {
                     "file": loc.file,

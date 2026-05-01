@@ -105,7 +105,7 @@ class TestImportSubcommandParsing:
 
     def test_subcommands_derived_dynamically(self):
         ap = build_arg_parser()
-        assert _get_subcommands(ap) == {"import", "analyze"}
+        assert _get_subcommands(ap) == {"import", "analyze", "analyze-bundles"}
 
 
 class TestBackwardCompatibility:
