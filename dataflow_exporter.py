@@ -22,7 +22,11 @@ def _node_ref(node_id: int) -> str:
 
 
 def _escape_dot(text: str) -> str:
-    """Escape characters that are special inside DOT label strings."""
+    """Escape characters that are special inside DOT label strings.
+
+    Only escapes double-quotes.  Backslashes are intentionally left alone:
+    ``\\n`` sequences embedded in labels are meaningful to Graphviz.
+    """
     return text.replace('"', '\\"')
 
 

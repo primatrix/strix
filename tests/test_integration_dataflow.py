@@ -74,12 +74,15 @@ def test_node_count_matches_events():
     event_count = 0
     def count_events(ev):
         """Count events using the same logic as extract_dataflow._walk:
-        LEAF/BLOCK/STALL are counted and NOT recursed into;
-        LOOP/ROOT/IF are recursed into without counting."""
+        LEAF/BLOCK/STALL/LOOP/IF are counted as nodes;
+        LEAF/BLOCK/STALL are NOT recursed into;
+        LOOP/IF/ROOT are recursed into."""
         nonlocal event_count
         if ev.kind in (OpKind.LEAF, OpKind.BLOCK, OpKind.STALL):
             event_count += 1
-            return  # extract_dataflow does not recurse into these
+            return
+        if ev.kind in (OpKind.LOOP, OpKind.IF):
+            event_count += 1
         for c in ev.children:
             count_events(c)
     count_events(root_event)

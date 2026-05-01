@@ -87,9 +87,19 @@ def extract_dataflow(root: OpEvent) -> DataFlowGraph:
     ) -> None:
         nonlocal next_id, next_loop_id
 
-        if ev.kind in _NODE_KINDS:
+        node_id: Optional[int] = None
+        loop_id: Optional[int] = None
+
+        # Create DFNode for LEAF/BLOCK/STALL/LOOP/IF events.
+        if ev.kind in _NODE_KINDS or ev.kind in (OpKind.LOOP, OpKind.IF):
             node_id = next_id
             next_id += 1
+
+            if ev.kind == OpKind.LOOP:
+                loop_id = next_loop_id
+                next_loop_id += 1
+                loops.setdefault(loop_id, [])
+
             node = DFNode(
                 id=node_id,
                 name=ev.name,
@@ -106,21 +116,22 @@ def extract_dataflow(root: OpEvent) -> DataFlowGraph:
                 parent_loop_id=parent_loop_id,
             )
             nodes.append(node)
+
             if parent_loop_id is not None:
                 loops.setdefault(parent_loop_id, []).append(node_id)
+            if loop_id is not None:
+                loops[loop_id].append(node_id)
+
+        # LEAF/BLOCK/STALL have no children — stop here.
+        if ev.kind in _NODE_KINDS:
             return
 
-        if ev.kind == OpKind.LOOP:
-            loop_id = next_loop_id
-            next_loop_id += 1
-            loops.setdefault(loop_id, [])
-            for child in ev.children:
-                _walk(child, loop_depth + 1, loop_id)
-            return
+        # Recurse into children.
+        child_loop_depth = loop_depth + 1 if ev.kind == OpKind.LOOP else loop_depth
+        child_loop_id = loop_id if ev.kind == OpKind.LOOP else parent_loop_id
 
-        # ROOT, IF -- just recurse
         for child in ev.children:
-            _walk(child, loop_depth, parent_loop_id)
+            _walk(child, child_loop_depth, child_loop_id)
 
     _walk(root, loop_depth=0, parent_loop_id=None)
 
