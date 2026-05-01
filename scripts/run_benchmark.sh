@@ -123,9 +123,9 @@ echo "${RENDERED_YAML}" | kubectl apply -f -
 
 # ---- Wait for completion (fail fast if Job fails) ----
 echo "[run_benchmark] Waiting for Job to complete..."
-kubectl wait --for=condition=complete "job/${JOB_NAME}" --timeout=1800s &
+kubectl wait --for=condition=complete "job/${JOB_NAME}" --timeout=7200s &
 WAIT_COMPLETE=$!
-kubectl wait --for=condition=failed "job/${JOB_NAME}" --timeout=1800s &
+kubectl wait --for=condition=failed "job/${JOB_NAME}" --timeout=7200s &
 WAIT_FAILED=$!
 
 # Whichever finishes first wins

@@ -29,7 +29,7 @@ spec:
               cd /workspace && \
               pip install uv && \
               uv sync --extra tpu && \
-              python scripts/benchmark_runner.py
+              uv run python scripts/benchmark_runner.py
           env:
             - name: KERNEL_MODULE
               value: "${KERNEL_MODULE}"
