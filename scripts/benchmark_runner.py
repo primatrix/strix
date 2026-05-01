@@ -242,8 +242,7 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
     )
 
     if not is_coordinator():
-        import jax
-        print(f"[benchmark] Non-coordinator process (index={jax.process_index()}), skipping dump/upload")
+        print("[benchmark] Non-coordinator process, skipping dump/upload")
         return
 
     write_benchmark_result(

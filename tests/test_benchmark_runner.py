@@ -743,12 +743,19 @@ class TestMainIntegration:
         ir_dump_root = tmp_path / "ir_dumps"
         result_path = tmp_path / "benchmark_result.json"
 
-        mock_storage = MagicMock()
+        mock_storage_mod = MagicMock()
         mock_jax = MagicMock()
         mock_jax.process_index.return_value = 1
+        mock_google = MagicMock()
+        mock_google.cloud.storage = mock_storage_mod
         with (
             patch("importlib.import_module", return_value=fake_mod),
-            patch.dict(sys.modules, {"google.cloud.storage": mock_storage, "jax": mock_jax}),
+            patch.dict(sys.modules, {
+                "jax": mock_jax,
+                "google": mock_google,
+                "google.cloud": mock_google.cloud,
+                "google.cloud.storage": mock_storage_mod,
+            }),
             patch.dict(os.environ, {}, clear=False),
         ):
             runner.main(
@@ -770,7 +777,7 @@ class TestMainIntegration:
         # Tarball should NOT be created
         assert not (tmp_path / "test-job.tar.gz").exists()
         # GCS upload should NOT be called
-        mock_storage.Client.return_value.bucket.assert_not_called()
+        mock_storage_mod.Client.return_value.bucket.assert_not_called()
 
     def test_main_runs_dump_upload_on_coordinator(self, tmp_path):
         """Coordinator (process_index=0) runs the full pipeline as before."""
