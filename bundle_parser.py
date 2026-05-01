@@ -66,7 +66,7 @@ class BundleParser:
 
     # Bundle line: <addr> [flags]: [>...] { ... } [comments]
     _BUNDLE_HEAD_RE = re.compile(
-        r'^\s*(?P<addr>0x[0-9a-fA-F]+|0)\s*'
+        r'^\s*(?P<addr>0x[0-9a-fA-F]+|\d+)\s*'
         r'(?P<flags>[A-Z, ]*?)\s*:\s*'
         r'(?P<nesting>>*)\s*\{'
     )

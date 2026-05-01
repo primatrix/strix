@@ -171,6 +171,12 @@ class TestParseBundleLine:
         assert self.parser._parse_bundle_line("") is None
         assert self.parser._parse_bundle_line("= control target key start") is None
 
+    def test_decimal_non_zero_address(self):
+        line = "   5   :  { %1 = sfence }"
+        bundle = self.parser._parse_bundle_line(line)
+        assert bundle is not None
+        assert bundle.address == 5
+
 
 # --------------- Fixtures for parse_file tests ---------------
 
