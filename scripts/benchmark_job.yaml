@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  labels:
+    app: strix-benchmark
+    branch: ${BRANCH}
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        cloud.google.com/gke-tpu-topology: ${TPU_TOPOLOGY}
+    spec:
+      serviceAccountName: gcs-account
+      restartPolicy: Never
+      nodeSelector:
+        cloud.google.com/gke-tpu-accelerator: tpu-${TPU_TYPE}-slice
+      containers:
+        - name: benchmark
+          image: python:3.12-slim
+          command:
+            - bash
+            - -c
+            - |
+              pip install uv && \
+              uv sync --extra tpu && \
+              python scripts/benchmark_runner.py
+          env:
+            - name: KERNEL_MODULE
+              value: "${KERNEL_MODULE}"
+            - name: SHAPE
+              value: "${SHAPE}"
+            - name: CHUNK_SIZE
+              value: "${CHUNK_SIZE}"
+            - name: BRANCH
+              value: "${BRANCH}"
+            - name: JOB_NAME
+              value: "${JOB_NAME}"
+            - name: GCS_BUCKET
+              value: "gs://poc_profile/"
+            - name: XLA_FLAGS
+              value: "--xla_dump_hlo_as_text --xla_dump_to=/tmp/ir_dumps/hlo"
+            - name: LIBTPU_INIT_ARGS
+              value: >-
+                --xla_enable_custom_call_region_trace=true
+                --xla_xprof_register_llo_debug_info=true
+                --xla_jf_dump_to=/tmp/ir_dumps/llo
+                --xla_jf_dump_hlo_text=true
+                --xla_jf_dump_llo_text=true
+                --xla_jf_emit_annotations=true
+                --xla_mosaic_dump_to=/tmp/ir_dumps/mosaic
+                --xla_mosaic_enable_llo_source_annotations=true
+          resources:
+            limits:
+              google.com/tpu: ${TPU_CHIPS}
