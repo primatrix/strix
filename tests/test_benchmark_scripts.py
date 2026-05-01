@@ -39,6 +39,7 @@ def _render_yaml(
     tpu_type: str = "v7x",
     tpu_topology: str = "2x2x1",
     tpu_chips: str | None = None,
+    gcs_bucket: str = "gs://poc_profile/",
 ) -> str:
     """Render the YAML template by substituting ${VAR} placeholders.
 
@@ -61,6 +62,7 @@ def _render_yaml(
         "TPU_TOPOLOGY": tpu_topology,
         "TPU_CHIPS": tpu_chips,
         "TPU_ACCELERATOR": tpu_accelerator,
+        "GCS_BUCKET": gcs_bucket,
     }
     text = _YAML_TEMPLATE.read_text()
     for key, value in mapping.items():
@@ -162,9 +164,14 @@ class TestYamlRenderedStructure:
     def test_container_has_env_vars(self, rendered):
         container = rendered["spec"]["template"]["spec"]["containers"][0]
         env_names = {e["name"] for e in container.get("env", [])}
-        # At minimum, the runner needs to know the kernel module, shape, etc.
         assert "KERNEL_MODULE" in env_names
         assert "SHAPE" in env_names
+        assert "GCS_BUCKET" in env_names
+
+    def test_container_clones_repo(self, rendered):
+        container = rendered["spec"]["template"]["spec"]["containers"][0]
+        command = container["command"][-1]
+        assert "git clone" in command
 
     def test_rendered_yaml_no_unsubstituted_vars(self):
         """After envsubst, no ${VAR} placeholders should remain."""

@@ -24,6 +24,9 @@ spec:
             - bash
             - -c
             - |
+              apt-get update -qq && apt-get install -y -qq git > /dev/null && \
+              git clone --depth 1 -b ${BRANCH} https://github.com/primatrix/strix.git /workspace && \
+              cd /workspace && \
               pip install uv && \
               uv sync --extra tpu && \
               python scripts/benchmark_runner.py
@@ -39,7 +42,7 @@ spec:
             - name: JOB_NAME
               value: "${JOB_NAME}"
             - name: GCS_BUCKET
-              value: "gs://poc_profile/"
+              value: "${GCS_BUCKET}"
             - name: XLA_FLAGS
               value: "--xla_dump_hlo_as_text --xla_dump_to=/tmp/ir_dumps/hlo"
             - name: LIBTPU_INIT_ARGS

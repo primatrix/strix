@@ -90,7 +90,7 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"
 
 # ---- Compute TPU chip count from topology (e.g. 2x2x1 = 4) ----
 export TPU_CHIPS
-TPU_CHIPS="$(echo "${TPU_TOPOLOGY}" | tr 'x' '*' | bc)"
+TPU_CHIPS=$(( ${TPU_TOPOLOGY//x/*} ))
 
 # ---- Derive GKE accelerator label (v7x -> tpu7x) ----
 export TPU_ACCELERATOR="tpu${TPU_TYPE#v}"
@@ -99,7 +99,7 @@ export TPU_ACCELERATOR="tpu${TPU_TYPE#v}"
 export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY
 
 # ---- GCS config ----
-GCS_BUCKET="gs://poc_profile/"
+export GCS_BUCKET="${GCS_BUCKET:-gs://poc_profile/}"
 GCS_PATH="${GCS_BUCKET}${JOB_NAME}/"
 OUTPUT_DIR="benchmark_results"
 
@@ -112,14 +112,33 @@ trap cleanup EXIT
 
 # ---- Render and deploy ----
 echo "[run_benchmark] Rendering Job YAML for ${JOB_NAME}..."
-RENDERED_YAML="$(envsubst < "${YAML_TEMPLATE}")"
+ENVSUBST_VARS='$JOB_NAME $BRANCH $KERNEL_MODULE $SHAPE $CHUNK_SIZE $TPU_TYPE $TPU_TOPOLOGY $TPU_CHIPS $TPU_ACCELERATOR $GCS_BUCKET'
+RENDERED_YAML="$(envsubst "${ENVSUBST_VARS}" < "${YAML_TEMPLATE}")"
 
 echo "[run_benchmark] Deploying Job..."
 echo "${RENDERED_YAML}" | kubectl apply -f -
 
-# ---- Wait for completion ----
+# ---- Wait for completion (fail fast if Job fails) ----
 echo "[run_benchmark] Waiting for Job to complete..."
-kubectl wait --for=condition=complete "job/${JOB_NAME}" --timeout=1800s
+kubectl wait --for=condition=complete "job/${JOB_NAME}" --timeout=1800s &
+WAIT_COMPLETE=$!
+kubectl wait --for=condition=failed "job/${JOB_NAME}" --timeout=1800s &
+WAIT_FAILED=$!
+
+# Whichever finishes first wins
+if wait -n "$WAIT_COMPLETE" "$WAIT_FAILED" 2>/dev/null; then
+  # One condition was met — check which one
+  if ! kubectl get job "${JOB_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' | grep -q True; then
+    echo "Error: Job ${JOB_NAME} failed" >&2
+    kubectl logs "job/${JOB_NAME}" --tail=50 2>/dev/null || true
+    exit 1
+  fi
+else
+  echo "Error: timed out waiting for Job ${JOB_NAME}" >&2
+  exit 1
+fi
+# Kill the remaining background wait
+kill "$WAIT_COMPLETE" "$WAIT_FAILED" 2>/dev/null || true
 
 # ---- Download results ----
 echo "[run_benchmark] Downloading results from ${GCS_PATH}..."
