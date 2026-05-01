@@ -18,8 +18,14 @@ This will:
   * print a console summary and optionally emit a Chrome trace.json.
 """
 
-from .domain import Instruction, PerformanceMetrics
-from .hardware import HardwareSpec
+try:
+    from .domain import Instruction, PerformanceMetrics
+    from .hardware import HardwareSpec
+except ImportError:
+    # Pytest discovers root __init__.py outside of the strix package context,
+    # causing relative imports to fail.  The names remain available via the
+    # normal ``import strix`` path.
+    pass
 
 __all__ = [
     "Instruction",
