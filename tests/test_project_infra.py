@@ -48,11 +48,25 @@ class TestPyprojectToml:
             "google-cloud-storage not in [tpu] extras"
         )
 
+    def test_tpu_extras_include_libtpu(self):
+        with open(PYPROJECT_PATH, "rb") as f:
+            config = tomllib.load(f)
+        tpu_deps = config["project"]["optional-dependencies"]["tpu"]
+        assert any("libtpu" in d for d in tpu_deps), "libtpu not in [tpu] extras"
+
+    def test_tpu_extras_include_protobuf_cap(self):
+        with open(PYPROJECT_PATH, "rb") as f:
+            config = tomllib.load(f)
+        tpu_deps = config["project"]["optional-dependencies"]["tpu"]
+        protobuf = [d for d in tpu_deps if "protobuf" in d]
+        assert protobuf, "protobuf not in [tpu] extras"
+        assert "<6" in protobuf[0], "protobuf must be capped below 6.x"
+
     def test_requires_python_310_plus(self):
         with open(PYPROJECT_PATH, "rb") as f:
             config = tomllib.load(f)
         assert "requires-python" in config["project"]
-        assert "3.10" in config["project"]["requires-python"]
+        assert "3.12" in config["project"]["requires-python"]
 
 
 class TestMainEntry:

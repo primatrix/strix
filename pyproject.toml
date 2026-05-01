@@ -6,11 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "strix"
 version = "0.1.0"
 description = "Static profiler and timeline simulator for TPU Mosaic/Pallas LLO"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 
 [project.optional-dependencies]
 tpu = [
-    "jax[tpu]",
+    "jax[tpu]>=0.8.1",
+    "libtpu>=0.0.38",
+    # protobuf 6.x removed MessageFactory.GetPrototype, breaking xprof/libtpu
+    # initialization. Cap to 5.x until upstream migrates.
+    "protobuf>=5.29.5,<6.0.0",
     "google-cloud-storage",
 ]
 
