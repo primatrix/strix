@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import List, Optional
 
-from .bundle_domain import SourceLoc
+from .bundle_domain import BundleInstruction, SourceLoc
 
 
 class BundleParser:
@@ -33,4 +33,33 @@ class BundleParser:
             start_col=int(m.group("sc")),
             end_line=end_line,
             end_col=int(m.group("ec")),
+        )
+
+    # %name = opcode ...
+    _ASSIGN_RE = re.compile(r'^\s*(?P<out>%[A-Za-z0-9_]+)\s*=\s*(?P<opcode>[A-Za-z0-9_.]+)')
+    # /* loc(...) */  — find the first loc() in any comment
+    _LOC_COMMENT_RE = re.compile(r'loc\((?P<body>[^)]+)\)')
+
+    def _parse_instruction(self, text: str) -> BundleInstruction:
+        """Parse a single VLIW slot instruction text."""
+        text = text.strip()
+        opcode = ""
+        outputs: List[str] = []
+
+        m = self._ASSIGN_RE.match(text)
+        if m:
+            outputs = [m.group("out")]
+            opcode = m.group("opcode")
+
+        # Extract loc from the first loc() in comments
+        loc: Optional[SourceLoc] = None
+        m_loc = self._LOC_COMMENT_RE.search(text)
+        if m_loc:
+            loc = self._parse_loc(m_loc.group("body"))
+
+        return BundleInstruction(
+            opcode=opcode,
+            raw_text=text,
+            outputs=outputs,
+            loc=loc,
         )
