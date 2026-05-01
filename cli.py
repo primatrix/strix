@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .analyzer import PerformanceAnalyzer
+from .bundle_exporter import BundleConsoleExporter, BundleJsonExporter
+from .bundle_parser import BundleParser
 from .dataflow import extract_dataflow
 from .dataflow_exporter import DataFlowDotExporter
 from .domain import Instruction
@@ -134,6 +136,33 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     _add_analyze_args(analyze_p)
 
+    # -- analyze-bundles subcommand --
+    ab_p = sub.add_parser(
+        "analyze-bundles",
+        help="Analyze *-final_bundles.txt: map VLIW bundles to Pallas source lines.",
+    )
+    ab_p.add_argument(
+        "path",
+        help="Path to a *-final_bundles.txt file.",
+    )
+    ab_p.add_argument(
+        "--json",
+        default=None,
+        metavar="OUTPUT",
+        help="Write structured JSON to OUTPUT instead of console table.",
+    )
+    ab_p.add_argument(
+        "--line",
+        type=int,
+        default=None,
+        help="Filter to source locations that include this line number.",
+    )
+    ab_p.add_argument(
+        "--source-root",
+        default=None,
+        help="Local directory to match TPU pod source paths for code display.",
+    )
+
     return ap
 
 
@@ -257,6 +286,21 @@ def _run_import(args: argparse.Namespace) -> None:
     result = subprocess.run(cmd)
     if result.returncode != 0:
         raise SystemExit(result.returncode)
+
+
+def _run_analyze_bundles(args: argparse.Namespace) -> None:
+    """Handle the ``analyze-bundles`` subcommand."""
+    parser = BundleParser()
+    program = parser.parse_file(args.path)
+
+    if args.json:
+        BundleJsonExporter().export(program, args.json, line_filter=args.line)
+    else:
+        BundleConsoleExporter().export(
+            program,
+            line_filter=args.line,
+            source_root=args.source_root,
+        )
 
 
 def _run_analyze(args: argparse.Namespace) -> None:
@@ -404,6 +448,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         _run_import(args)
     elif args.subcommand == "analyze":
         _run_analyze(args)
+    elif args.subcommand == "analyze-bundles":
+        _run_analyze_bundles(args)
     else:
         ap.print_help()
         raise SystemExit(0)
