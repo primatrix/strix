@@ -17,7 +17,7 @@ from .simulator import Simulator
 from .value_resolver import ValueResolver
 
 # Known subcommands used for backward-compat detection.
-_SUBCOMMANDS = {"import"}
+_SUBCOMMANDS = {"import", "analyze"}
 
 
 def _add_analyze_args(parser: argparse.ArgumentParser) -> None:

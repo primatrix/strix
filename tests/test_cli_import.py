@@ -133,6 +133,12 @@ class TestBackwardCompatibility:
         args = ap.parse_args(preprocess_argv(["path/to/llo.txt"]))
         assert args.subcommand == "analyze"
 
+    def test_explicit_analyze_subcommand(self):
+        ap = build_arg_parser()
+        args = ap.parse_args(preprocess_argv(["analyze", "path/to/llo.txt"]))
+        assert args.subcommand == "analyze"
+        assert args.path == "path/to/llo.txt"
+
     def test_python_m_strix_help_still_works(self):
         """Existing test_project_infra expects --help to work."""
         result = subprocess.run(
