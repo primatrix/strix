@@ -4,7 +4,7 @@ metadata:
   name: ${JOB_NAME}
   labels:
     app: strix-benchmark
-    branch: ${BRANCH}
+    branch: ${BRANCH_LABEL}
 spec:
   backoffLimit: 0
   template:
