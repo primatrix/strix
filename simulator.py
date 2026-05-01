@@ -358,6 +358,8 @@ class Simulator:
         ev.start_time_ns = actual_start
         ev.end_time_ns = end_time
         ev.attributes.setdefault("category", metrics.category)
+        ev.attributes["ssa_inputs"] = list(inputs)
+        ev.attributes["ssa_outputs"] = list(outputs)
 
         # Advance clocks and mark outputs as ready.
         if is_dma:
@@ -405,6 +407,8 @@ class Simulator:
         ev.start_time_ns = dma_start
         ev.end_time_ns = dma_end
         ev.attributes.setdefault("category", "Memory")
+        ev.attributes["ssa_inputs"] = list(inputs)
+        ev.attributes["ssa_outputs"] = list(outputs)
 
         # Advance DMA clock
         state.dma_clock = dma_end
@@ -495,6 +499,8 @@ class Simulator:
         ev.start_time_ns = actual_start
         ev.end_time_ns = end_time
         ev.attributes.setdefault("category", "Overhead")
+        ev.attributes["ssa_inputs"] = list(inputs)
+        ev.attributes["ssa_outputs"] = list(outputs)
 
         state.vpu_clock = end_time
 
