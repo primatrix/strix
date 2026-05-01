@@ -35,7 +35,7 @@ def _node_label(node: DFNode) -> str:
         {start_ns}->{end_ns} ns
         {flops}F {bytes}B          (only if > 0)
     """
-    parts = [node.name, f"{node.start_ns}\\u2192{node.end_ns} ns"]
+    parts = [node.name, f"{node.start_ns}->{node.end_ns} ns"]
     metrics: List[str] = []
     if node.flops > 0:
         metrics.append(f"{node.flops}F")
@@ -103,7 +103,7 @@ class DataFlowDotExporter:
             if node.stream == OpStream.DMA:
                 hw_buckets["dma"].append(node)
             elif node.stream == OpStream.CONTROL:
-                hw_buckets["control"].append(node)
+                hw_buckets["vpu"].append(node)
             else:
                 hw_buckets["vpu"].append(node)
 

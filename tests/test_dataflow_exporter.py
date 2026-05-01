@@ -111,6 +111,23 @@ def test_time_buckets():
     assert "rankdir=LR" in dot
 
 
+def test_time_buckets_same_bucket():
+    """Two concurrent nodes should share a rank bucket."""
+    nodes = [
+        DFNode(id=0, name="op_a", stream=OpStream.VPU,
+               kind=OpKind.LEAF, start_ns=0, end_ns=10, flops=0, bytes=0,
+               ssa_outputs=[], ssa_inputs=[],
+               attributes={}, loop_depth=0, parent_loop_id=None),
+        DFNode(id=1, name="op_b", stream=OpStream.DMA,
+               kind=OpKind.LEAF, start_ns=0, end_ns=10, flops=0, bytes=0,
+               ssa_outputs=[], ssa_inputs=[],
+               attributes={}, loop_depth=0, parent_loop_id=None),
+    ]
+    graph = DataFlowGraph(nodes=nodes, edges=[], loops={})
+    dot = DataFlowDotExporter().render(graph)
+    assert "rank=same" in dot
+
+
 def test_stall_node_styling():
     """STALL nodes should be salmon-colored boxes."""
     nodes = [
