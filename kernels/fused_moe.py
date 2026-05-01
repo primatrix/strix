@@ -40,7 +40,12 @@ def kernel_fn(
     block_config=None,
 ):
     """Construct inputs and call fused_ep_moe, returning a JAX-compilable closure."""
-    devices = jax.devices()[:ep_size]
+    available_devices = jax.devices()
+    if len(available_devices) < ep_size:
+        raise ValueError(
+            f"Requested ep_size={ep_size} but only {len(available_devices)} devices are available."
+        )
+    devices = available_devices[:ep_size]
     mesh = jax.sharding.Mesh(
         np.array(devices).reshape(1, -1),
         axis_names=("data", "tensor"),
