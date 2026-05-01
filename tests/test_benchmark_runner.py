@@ -13,7 +13,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -539,3 +539,145 @@ class TestTarPackaging:
         with tarfile.open(tarball) as tf:
             names = tf.getnames()
         assert any("benchmark_result.json" in n for n in names)
+
+
+# ===================================================================
+# Part 4: GCS upload + main integration
+# ===================================================================
+
+
+class TestGcsUpload:
+    """upload_to_gcs uploads tarball to correct GCS path."""
+
+    def test_uploads_to_correct_blob_path(self, tmp_path):
+        runner = _import_runner()
+        tarball = tmp_path / "my-job.tar.gz"
+        tarball.write_bytes(b"fake tarball")
+
+        mock_blob = patch.object(
+            __builtins__, "__import__", side_effect=ImportError
+        )
+        # Mock the google.cloud.storage module
+        from unittest.mock import MagicMock
+
+        mock_client = MagicMock()
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+        mock_client.return_value.bucket.return_value = mock_bucket
+        mock_bucket.blob.return_value = mock_blob
+
+        with patch.dict(sys.modules, {"google.cloud.storage": MagicMock(Client=mock_client)}):
+            runner.upload_to_gcs(tarball, "gs://poc_profile/", "my-job")
+
+        mock_bucket.blob.assert_called_once_with("my-job/my-job.tar.gz")
+        mock_blob.upload_from_filename.assert_called_once_with(str(tarball))
+
+    def test_parses_bucket_name_from_gs_url(self, tmp_path):
+        runner = _import_runner()
+        tarball = tmp_path / "j.tar.gz"
+        tarball.write_bytes(b"data")
+
+        from unittest.mock import MagicMock
+
+        mock_client = MagicMock()
+        with patch.dict(sys.modules, {"google.cloud.storage": MagicMock(Client=mock_client)}):
+            runner.upload_to_gcs(tarball, "gs://my-custom-bucket/", "j")
+
+        mock_client.return_value.bucket.assert_called_once_with("my-custom-bucket")
+
+    def test_handles_bucket_without_trailing_slash(self, tmp_path):
+        runner = _import_runner()
+        tarball = tmp_path / "j.tar.gz"
+        tarball.write_bytes(b"data")
+
+        from unittest.mock import MagicMock
+
+        mock_client = MagicMock()
+        with patch.dict(sys.modules, {"google.cloud.storage": MagicMock(Client=mock_client)}):
+            runner.upload_to_gcs(tarball, "gs://bucket-name", "j")
+
+        mock_client.return_value.bucket.assert_called_once_with("bucket-name")
+
+
+class TestMainIntegration:
+    """main() wires all steps together."""
+
+    def test_main_runs_full_pipeline(self, tmp_path):
+        runner = _import_runner()
+        from unittest.mock import MagicMock
+
+        fake_mod = _make_fake_kernel_module()
+
+        ir_dump_root = tmp_path / "ir_dumps"
+        result_path = tmp_path / "benchmark_result.json"
+
+        mock_storage = MagicMock()
+        with (
+            patch("importlib.import_module", return_value=fake_mod),
+            patch.dict(sys.modules, {"google.cloud.storage": mock_storage}),
+            patch.dict(os.environ, {}, clear=False),
+        ):
+            runner.main(
+                [
+                    "--kernel", "kernels.test",
+                    "--shape", "1,2048",
+                    "--job-name", "test-job",
+                    "--num-warmup", "1",
+                    "--num-runs", "2",
+                    "--gcs-bucket", "gs://test-bucket/",
+                ],
+                ir_dump_root=ir_dump_root,
+                benchmark_result_path=result_path,
+                output_dir=tmp_path,
+            )
+
+        # Verify IR dump dirs created
+        assert (ir_dump_root / "hlo").is_dir()
+        assert (ir_dump_root / "llo").is_dir()
+        assert (ir_dump_root / "mosaic").is_dir()
+
+        # Verify result JSON written
+        import json
+        assert result_path.exists()
+        data = json.loads(result_path.read_text())
+        assert data["kernel"] == "kernels.test"
+        assert len(data["timings_ms"]) == 2
+
+        # Verify tarball created
+        assert (tmp_path / "test-job.tar.gz").exists()
+
+        # Verify GCS upload called
+        mock_storage.Client.return_value.bucket.assert_called_once()
+
+    def test_main_reads_env_vars(self, tmp_path):
+        runner = _import_runner()
+        from unittest.mock import MagicMock
+
+        fake_mod = _make_fake_kernel_module()
+        mock_storage = MagicMock()
+
+        ir_dump_root = tmp_path / "ir_dumps"
+        result_path = tmp_path / "benchmark_result.json"
+
+        env = {
+            "KERNEL_MODULE": "kernels.env_test",
+            "SHAPE": "32,64",
+            "JOB_NAME": "env-job",
+            "GCS_BUCKET": "gs://env-bucket/",
+        }
+        with (
+            patch("importlib.import_module", return_value=fake_mod),
+            patch.dict(sys.modules, {"google.cloud.storage": mock_storage}),
+            patch.dict(os.environ, env),
+        ):
+            runner.main(
+                [],
+                ir_dump_root=ir_dump_root,
+                benchmark_result_path=result_path,
+                output_dir=tmp_path,
+            )
+
+        import json
+        data = json.loads(result_path.read_text())
+        assert data["kernel"] == "kernels.env_test"
+        assert data["job_name"] == "env-job"

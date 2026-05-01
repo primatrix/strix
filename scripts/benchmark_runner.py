@@ -179,5 +179,58 @@ def package_results(job_name, ir_dump_root, benchmark_result_path, output_dir):
     return tarball_path
 
 
+def upload_to_gcs(tarball_path, gcs_bucket, job_name):
+    """Upload tarball to GCS."""
+    from google.cloud import storage
+
+    bucket_name = gcs_bucket.replace("gs://", "").strip("/")
+    blob_path = f"{job_name}/{pathlib.Path(tarball_path).name}"
+
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(blob_path)
+    blob.upload_from_filename(str(tarball_path))
+
+
+_DEFAULT_IR_DUMP_ROOT = pathlib.Path("/tmp/ir_dumps")
+_DEFAULT_RESULT_PATH = pathlib.Path("/tmp/benchmark_result.json")
+_DEFAULT_OUTPUT_DIR = pathlib.Path("/tmp")
+
+
+def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=None):
+    """Run the full benchmark pipeline."""
+    ir_dump_root = ir_dump_root or _DEFAULT_IR_DUMP_ROOT
+    benchmark_result_path = benchmark_result_path or _DEFAULT_RESULT_PATH
+    output_dir = output_dir or _DEFAULT_OUTPUT_DIR
+
+    args = parse_args(argv)
+
+    print(f"[benchmark] Starting benchmark for kernel: {args.kernel}")
+    print(f"[benchmark] Shape: {args.shape}, Job: {args.job_name}")
+
+    setup_ir_dump_dirs(ir_dump_root)
+    setup_xla_flags(ir_dump_root)
+
+    kernel_fn, config = import_kernel(args.kernel)
+
+    timings = run_benchmark(
+        kernel_fn, config, args.num_warmup, args.num_runs,
+        chunk_size=args.chunk_size,
+    )
+
+    write_benchmark_result(
+        timings, args.kernel, args.shape, args.job_name, config,
+        benchmark_result_path,
+    )
+
+    tarball = package_results(
+        args.job_name, ir_dump_root, benchmark_result_path, output_dir,
+    )
+
+    upload_to_gcs(tarball, args.gcs_bucket, args.job_name)
+
+    print(f"[benchmark] Done!")
+
+
 if __name__ == "__main__":
     main()
