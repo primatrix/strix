@@ -344,7 +344,7 @@ class Simulator:
                 start_time_ns=current_clock,
                 end_time_ns=actual_start,
                 stream=OpStream.VPU,
-                attributes={"reason": f"Waiting for {inputs}"},
+                attributes={"reason": f"Waiting for {inputs}", "ssa_inputs": list(inputs), "ssa_outputs": []},
                 children=[],
             )
             state.vpu_clock = actual_start
@@ -484,7 +484,7 @@ class Simulator:
                 start_time_ns=actual_start,
                 end_time_ns=dma_completion_time,
                 stream=OpStream.VPU,
-                attributes={"reason": f"Waiting for DMA {dma_token}"},
+                attributes={"reason": f"Waiting for DMA {dma_token}", "ssa_inputs": list(inputs), "ssa_outputs": []},
                 children=[],
             )
             actual_start = dma_completion_time

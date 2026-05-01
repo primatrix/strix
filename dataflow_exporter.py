@@ -178,5 +178,5 @@ class DataFlowDotExporter:
     def export(self, graph: DataFlowGraph, output_path: str) -> None:
         """Write the DOT representation of *graph* to *output_path*."""
         dot = self.render(graph)
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             f.write(dot)
