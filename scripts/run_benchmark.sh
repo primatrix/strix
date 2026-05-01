@@ -92,6 +92,9 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"
 export TPU_CHIPS
 TPU_CHIPS="$(echo "${TPU_TOPOLOGY}" | tr 'x' '*' | bc)"
 
+# ---- Derive GKE accelerator label (v7x -> tpu7x) ----
+export TPU_ACCELERATOR="tpu${TPU_TYPE#v}"
+
 # ---- Export for envsubst ----
 export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY
 

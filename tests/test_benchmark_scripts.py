@@ -49,6 +49,8 @@ def _render_yaml(
     if tpu_chips is None:
         import math
         tpu_chips = str(math.prod(int(d) for d in tpu_topology.split("x")))
+    # Derive accelerator label: v7x -> tpu7x (strip leading 'v')
+    tpu_accelerator = "tpu" + (tpu_type[1:] if tpu_type.startswith("v") else tpu_type)
     mapping = {
         "JOB_NAME": job_name,
         "BRANCH": branch,
@@ -58,6 +60,7 @@ def _render_yaml(
         "TPU_TYPE": tpu_type,
         "TPU_TOPOLOGY": tpu_topology,
         "TPU_CHIPS": tpu_chips,
+        "TPU_ACCELERATOR": tpu_accelerator,
     }
     text = _YAML_TEMPLATE.read_text()
     for key, value in mapping.items():
@@ -99,7 +102,7 @@ class TestYamlTemplateVariables:
 
     def test_contains_tpu_type_variable(self):
         content = _YAML_TEMPLATE.read_text()
-        assert "$TPU_TYPE" in content or "${TPU_TYPE}" in content
+        assert "$TPU_ACCELERATOR" in content or "${TPU_ACCELERATOR}" in content
 
     def test_contains_tpu_topology_variable(self):
         content = _YAML_TEMPLATE.read_text()
@@ -150,7 +153,11 @@ class TestYamlRenderedStructure:
 
     def test_tpu_type_selector(self, rendered):
         node_selector = rendered["spec"]["template"]["spec"]["nodeSelector"]
-        assert "cloud.google.com/gke-tpu-accelerator" in node_selector
+        assert node_selector.get("cloud.google.com/gke-tpu-accelerator") == "tpu7x"
+
+    def test_tpu_topology_in_node_selector(self, rendered):
+        node_selector = rendered["spec"]["template"]["spec"]["nodeSelector"]
+        assert node_selector.get("cloud.google.com/gke-tpu-topology") == "2x2x1"
 
     def test_container_has_env_vars(self, rendered):
         container = rendered["spec"]["template"]["spec"]["containers"][0]

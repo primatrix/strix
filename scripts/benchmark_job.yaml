@@ -15,7 +15,8 @@ spec:
       serviceAccountName: gcs-account
       restartPolicy: Never
       nodeSelector:
-        cloud.google.com/gke-tpu-accelerator: tpu-${TPU_TYPE}-slice
+        cloud.google.com/gke-tpu-accelerator: ${TPU_ACCELERATOR}
+        cloud.google.com/gke-tpu-topology: ${TPU_TOPOLOGY}
       containers:
         - name: benchmark
           image: python:3.12-slim
