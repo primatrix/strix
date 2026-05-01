@@ -106,6 +106,30 @@ export GCS_BUCKET="${GCS_BUCKET:-gs://poc_profile/}"
 GCS_PATH="${GCS_BUCKET}${JOB_NAME}/"
 OUTPUT_DIR="benchmark_results"
 
+# ---- Preflight checks ----
+echo "[preflight] Checking kubectl connectivity..."
+if ! kubectl cluster-info > /dev/null 2>&1; then
+  echo "Error: cannot connect to Kubernetes cluster" >&2
+  exit 1
+fi
+
+# Resolve the GCP service account bound to the K8s SA via Workload Identity
+K8S_SA="gcs-account"
+GCP_SA="$(kubectl get sa "${K8S_SA}" -o jsonpath='{.metadata.annotations.iam\.gke\.io/gcp-service-account}' 2>/dev/null || true)"
+if [[ -n "${GCP_SA}" ]]; then
+  echo "[preflight] Checking GCS write access for ${GCP_SA} on ${GCS_BUCKET}..."
+  BUCKET_POLICY="$(gcloud storage buckets get-iam-policy "${GCS_BUCKET}" --format=json 2>/dev/null || true)"
+  if [[ -n "${BUCKET_POLICY}" ]]; then
+    if ! echo "${BUCKET_POLICY}" | grep -q "${GCP_SA}"; then
+      echo "Error: ${GCP_SA} has no IAM binding on ${GCS_BUCKET}." >&2
+      echo "Fix: gcloud storage buckets add-iam-policy-binding ${GCS_BUCKET} \\" >&2
+      echo "  --member='serviceAccount:${GCP_SA}' --role='roles/storage.objectAdmin'" >&2
+      exit 1
+    fi
+  fi
+fi
+echo "[preflight] OK"
+
 # ---- Cleanup trap ----
 cleanup() {
   echo "[cleanup] Deleting K8s Job ${JOB_NAME}..."
