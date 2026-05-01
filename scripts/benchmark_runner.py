@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import statistics
+import sys
 import tarfile
 import time
 
@@ -109,6 +110,9 @@ def setup_xla_flags(ir_dump_root):
 
 def import_kernel(module_path):
     """Dynamically import a kernel module and return (kernel_fn, config)."""
+    cwd = os.getcwd()
+    if cwd not in sys.path:
+        sys.path.append(cwd)
     mod = importlib.import_module(module_path)
     return mod.kernel_fn, mod.config
 
@@ -142,6 +146,7 @@ def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None):
 def write_benchmark_result(timings, kernel, shape, job_name, config, output_path):
     """Write benchmark results to JSON file."""
     output_path = pathlib.Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     result = {
         "kernel": kernel,
         "shape": shape,
@@ -181,8 +186,14 @@ def upload_to_gcs(tarball_path, gcs_bucket, job_name):
     """Upload tarball to GCS."""
     from google.cloud import storage
 
-    bucket_name = gcs_bucket.replace("gs://", "").strip("/")
+    gcs_path = gcs_bucket.removeprefix("gs://").strip("/")
+    parts = gcs_path.split("/", 1)
+    bucket_name = parts[0]
+    bucket_prefix = parts[1] if len(parts) > 1 else ""
+
     blob_path = f"{job_name}/{pathlib.Path(tarball_path).name}"
+    if bucket_prefix:
+        blob_path = f"{bucket_prefix}/{blob_path}"
 
     print(f"[benchmark] Uploading to gs://{bucket_name}/{blob_path}")
     client = storage.Client()

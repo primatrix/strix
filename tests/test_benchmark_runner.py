@@ -287,6 +287,21 @@ class TestKernelImport:
             with pytest.raises(AttributeError):
                 runner.import_kernel("kernels.bad")
 
+    def test_adds_cwd_to_sys_path(self):
+        """CWD must be on sys.path so kernels package is importable."""
+        runner = _import_runner()
+        fake_mod = _make_fake_kernel_module()
+        cwd = os.getcwd()
+        # Remove CWD from sys.path to simulate running from scripts/ subdir
+        original_path = sys.path.copy()
+        sys.path = [p for p in sys.path if p != cwd]
+        try:
+            with patch("importlib.import_module", return_value=fake_mod):
+                runner.import_kernel("kernels.fake")
+            assert cwd in sys.path
+        finally:
+            sys.path[:] = original_path
+
 
 class TestBenchmarkExecution:
     """run_benchmark executes kernel_fn and collects timing."""
@@ -494,6 +509,23 @@ class TestResultWriting:
         data = json.loads(out.read_text())
         assert data["statistics"]["stdev_ms"] == 0.0
 
+    def test_creates_parent_dirs(self, tmp_path):
+        """Custom output path with non-existent parent dirs should work."""
+        import json
+
+        runner = _import_runner()
+        out = tmp_path / "nested" / "deep" / "result.json"
+        runner.write_benchmark_result(
+            timings=[0.1, 0.2],
+            kernel="k",
+            shape="1",
+            job_name="j",
+            config={},
+            output_path=out,
+        )
+        data = json.loads(out.read_text())
+        assert data["kernel"] == "k"
+
 
 class TestTarPackaging:
     """package_results creates tar.gz with correct contents."""
@@ -597,6 +629,23 @@ class TestGcsUpload:
             runner.upload_to_gcs(tarball, "gs://bucket-name", "j")
 
         mock_client.return_value.bucket.assert_called_once_with("bucket-name")
+
+    def test_handles_bucket_with_path_prefix(self, tmp_path):
+        """gs://bucket/prefix/ should split bucket name from prefix."""
+        runner = _import_runner()
+        tarball = tmp_path / "j.tar.gz"
+        tarball.write_bytes(b"data")
+
+        from unittest.mock import MagicMock
+
+        mock_client = MagicMock()
+        mock_bucket = MagicMock()
+        mock_client.return_value.bucket.return_value = mock_bucket
+        with patch.dict(sys.modules, {"google.cloud.storage": MagicMock(Client=mock_client)}):
+            runner.upload_to_gcs(tarball, "gs://my-bucket/benchmarks/", "j")
+
+        mock_client.return_value.bucket.assert_called_once_with("my-bucket")
+        mock_bucket.blob.assert_called_once_with("benchmarks/j/j.tar.gz")
 
 
 class TestMainIntegration:
