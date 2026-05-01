@@ -66,3 +66,26 @@ class TestMainEntry:
         )
         assert result.returncode == 0
         assert "usage" in result.stdout.lower()
+
+
+class TestKernelsPackage:
+    """kernels/ directory must exist, be importable, and document the convention."""
+
+    def test_kernels_dir_exists(self):
+        kernels_dir = REPO_ROOT / "kernels"
+        assert kernels_dir.is_dir(), "kernels/ directory not found"
+
+    def test_kernels_init_exists(self):
+        init_file = REPO_ROOT / "kernels" / "__init__.py"
+        assert init_file.is_file(), "kernels/__init__.py not found"
+
+    def test_kernels_importable(self):
+        from strix import kernels  # noqa: F401
+
+    def test_kernels_convention_documents_kernel_fn(self):
+        from strix import kernels
+        assert "kernel_fn" in kernels.__doc__
+
+    def test_kernels_convention_documents_config(self):
+        from strix import kernels
+        assert "config" in kernels.__doc__

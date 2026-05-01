@@ -15,7 +15,7 @@ tpu = [
 ]
 
 [tool.setuptools]
-packages = ["strix"]
+packages = ["strix", "strix.kernels"]
 
 [tool.setuptools.package-dir]
 strix = "."
