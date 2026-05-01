@@ -581,24 +581,30 @@ class TestTarPackaging:
 class TestGcsUpload:
     """upload_to_gcs uploads tarball to correct GCS path."""
 
+    @staticmethod
+    def _gcs_modules(mock_storage_mod):
+        """Build sys.modules dict for mocking 'from google.cloud import storage'."""
+        mock_google = MagicMock()
+        mock_google.cloud.storage = mock_storage_mod
+        return {
+            "google": mock_google,
+            "google.cloud": mock_google.cloud,
+            "google.cloud.storage": mock_storage_mod,
+        }
+
     def test_uploads_to_correct_blob_path(self, tmp_path):
         runner = _import_runner()
         tarball = tmp_path / "my-job.tar.gz"
         tarball.write_bytes(b"fake tarball")
-
-        mock_blob = patch.object(
-            __builtins__, "__import__", side_effect=ImportError
-        )
-        # Mock the google.cloud.storage module
-        from unittest.mock import MagicMock
 
         mock_client = MagicMock()
         mock_bucket = MagicMock()
         mock_blob = MagicMock()
         mock_client.return_value.bucket.return_value = mock_bucket
         mock_bucket.blob.return_value = mock_blob
+        mock_storage_mod = MagicMock(Client=mock_client)
 
-        with patch.dict(sys.modules, {"google.cloud.storage": MagicMock(Client=mock_client)}):
+        with patch.dict(sys.modules, self._gcs_modules(mock_storage_mod)):
             runner.upload_to_gcs(tarball, "gs://poc_profile/", "my-job")
 
         mock_bucket.blob.assert_called_once_with("my-job/my-job.tar.gz")
@@ -609,10 +615,9 @@ class TestGcsUpload:
         tarball = tmp_path / "j.tar.gz"
         tarball.write_bytes(b"data")
 
-        from unittest.mock import MagicMock
-
         mock_client = MagicMock()
-        with patch.dict(sys.modules, {"google.cloud.storage": MagicMock(Client=mock_client)}):
+        mock_storage_mod = MagicMock(Client=mock_client)
+        with patch.dict(sys.modules, self._gcs_modules(mock_storage_mod)):
             runner.upload_to_gcs(tarball, "gs://my-custom-bucket/", "j")
 
         mock_client.return_value.bucket.assert_called_once_with("my-custom-bucket")
@@ -622,10 +627,9 @@ class TestGcsUpload:
         tarball = tmp_path / "j.tar.gz"
         tarball.write_bytes(b"data")
 
-        from unittest.mock import MagicMock
-
         mock_client = MagicMock()
-        with patch.dict(sys.modules, {"google.cloud.storage": MagicMock(Client=mock_client)}):
+        mock_storage_mod = MagicMock(Client=mock_client)
+        with patch.dict(sys.modules, self._gcs_modules(mock_storage_mod)):
             runner.upload_to_gcs(tarball, "gs://bucket-name", "j")
 
         mock_client.return_value.bucket.assert_called_once_with("bucket-name")
@@ -636,16 +640,40 @@ class TestGcsUpload:
         tarball = tmp_path / "j.tar.gz"
         tarball.write_bytes(b"data")
 
-        from unittest.mock import MagicMock
-
         mock_client = MagicMock()
         mock_bucket = MagicMock()
         mock_client.return_value.bucket.return_value = mock_bucket
-        with patch.dict(sys.modules, {"google.cloud.storage": MagicMock(Client=mock_client)}):
+        mock_storage_mod = MagicMock(Client=mock_client)
+        with patch.dict(sys.modules, self._gcs_modules(mock_storage_mod)):
             runner.upload_to_gcs(tarball, "gs://my-bucket/benchmarks/", "j")
 
         mock_client.return_value.bucket.assert_called_once_with("my-bucket")
         mock_bucket.blob.assert_called_once_with("benchmarks/j/j.tar.gz")
+
+
+class TestCoordinatorGuard:
+    """is_coordinator returns True only for process_index == 0."""
+
+    def test_is_coordinator_returns_true_for_process_index_zero(self):
+        runner = _import_runner()
+        mock_jax = MagicMock()
+        mock_jax.process_index.return_value = 0
+        with patch.dict(sys.modules, {"jax": mock_jax}):
+            assert runner.is_coordinator() is True
+
+    def test_is_coordinator_returns_false_for_nonzero_process_index(self):
+        runner = _import_runner()
+        mock_jax = MagicMock()
+        mock_jax.process_index.return_value = 1
+        with patch.dict(sys.modules, {"jax": mock_jax}):
+            assert runner.is_coordinator() is False
+
+    def test_is_coordinator_returns_false_for_higher_index(self):
+        runner = _import_runner()
+        mock_jax = MagicMock()
+        mock_jax.process_index.return_value = 3
+        with patch.dict(sys.modules, {"jax": mock_jax}):
+            assert runner.is_coordinator() is False
 
 
 class TestMainIntegration:
@@ -653,17 +681,25 @@ class TestMainIntegration:
 
     def test_main_runs_full_pipeline(self, tmp_path):
         runner = _import_runner()
-        from unittest.mock import MagicMock
 
         fake_mod = _make_fake_kernel_module()
 
         ir_dump_root = tmp_path / "ir_dumps"
         result_path = tmp_path / "benchmark_result.json"
 
-        mock_storage = MagicMock()
+        mock_storage_mod = MagicMock()
+        mock_jax = MagicMock()
+        mock_jax.process_index.return_value = 0
+        mock_google = MagicMock()
+        mock_google.cloud.storage = mock_storage_mod
         with (
             patch("importlib.import_module", return_value=fake_mod),
-            patch.dict(sys.modules, {"google.cloud.storage": mock_storage}),
+            patch.dict(sys.modules, {
+                "jax": mock_jax,
+                "google": mock_google,
+                "google.cloud": mock_google.cloud,
+                "google.cloud.storage": mock_storage_mod,
+            }),
             patch.dict(os.environ, {}, clear=False),
         ):
             runner.main(
@@ -696,14 +732,103 @@ class TestMainIntegration:
         assert (tmp_path / "test-job.tar.gz").exists()
 
         # Verify GCS upload called
-        mock_storage.Client.return_value.bucket.assert_called_once()
+        mock_storage_mod.Client.return_value.bucket.assert_called_once()
+
+    def test_main_skips_dump_upload_on_non_coordinator(self, tmp_path):
+        """Non-coordinator processes skip write/package/upload silently."""
+        runner = _import_runner()
+
+        fake_mod = _make_fake_kernel_module()
+
+        ir_dump_root = tmp_path / "ir_dumps"
+        result_path = tmp_path / "benchmark_result.json"
+
+        mock_storage = MagicMock()
+        mock_jax = MagicMock()
+        mock_jax.process_index.return_value = 1
+        with (
+            patch("importlib.import_module", return_value=fake_mod),
+            patch.dict(sys.modules, {"google.cloud.storage": mock_storage, "jax": mock_jax}),
+            patch.dict(os.environ, {}, clear=False),
+        ):
+            runner.main(
+                [
+                    "--kernel", "kernels.test",
+                    "--shape", "1,2048",
+                    "--job-name", "test-job",
+                    "--num-warmup", "1",
+                    "--num-runs", "2",
+                    "--gcs-bucket", "gs://test-bucket/",
+                ],
+                ir_dump_root=ir_dump_root,
+                benchmark_result_path=result_path,
+                output_dir=tmp_path,
+            )
+
+        # Result JSON should NOT be written
+        assert not result_path.exists()
+        # Tarball should NOT be created
+        assert not (tmp_path / "test-job.tar.gz").exists()
+        # GCS upload should NOT be called
+        mock_storage.Client.return_value.bucket.assert_not_called()
+
+    def test_main_runs_dump_upload_on_coordinator(self, tmp_path):
+        """Coordinator (process_index=0) runs the full pipeline as before."""
+        runner = _import_runner()
+        import json
+
+        fake_mod = _make_fake_kernel_module()
+
+        ir_dump_root = tmp_path / "ir_dumps"
+        result_path = tmp_path / "benchmark_result.json"
+
+        mock_storage_mod = MagicMock()
+        mock_jax = MagicMock()
+        mock_jax.process_index.return_value = 0
+        mock_google = MagicMock()
+        mock_google.cloud.storage = mock_storage_mod
+        with (
+            patch("importlib.import_module", return_value=fake_mod),
+            patch.dict(sys.modules, {
+                "jax": mock_jax,
+                "google": mock_google,
+                "google.cloud": mock_google.cloud,
+                "google.cloud.storage": mock_storage_mod,
+            }),
+            patch.dict(os.environ, {}, clear=False),
+        ):
+            runner.main(
+                [
+                    "--kernel", "kernels.test",
+                    "--shape", "1,2048",
+                    "--job-name", "test-job",
+                    "--num-warmup", "1",
+                    "--num-runs", "2",
+                    "--gcs-bucket", "gs://test-bucket/",
+                ],
+                ir_dump_root=ir_dump_root,
+                benchmark_result_path=result_path,
+                output_dir=tmp_path,
+            )
+
+        # Result JSON should be written
+        assert result_path.exists()
+        data = json.loads(result_path.read_text())
+        assert data["kernel"] == "kernels.test"
+        # Tarball should be created
+        assert (tmp_path / "test-job.tar.gz").exists()
+        # GCS upload should be called
+        mock_storage_mod.Client.return_value.bucket.assert_called_once()
 
     def test_main_reads_env_vars(self, tmp_path):
         runner = _import_runner()
-        from unittest.mock import MagicMock
 
         fake_mod = _make_fake_kernel_module()
-        mock_storage = MagicMock()
+        mock_storage_mod = MagicMock()
+        mock_jax = MagicMock()
+        mock_jax.process_index.return_value = 0
+        mock_google = MagicMock()
+        mock_google.cloud.storage = mock_storage_mod
 
         ir_dump_root = tmp_path / "ir_dumps"
         result_path = tmp_path / "benchmark_result.json"
@@ -716,7 +841,12 @@ class TestMainIntegration:
         }
         with (
             patch("importlib.import_module", return_value=fake_mod),
-            patch.dict(sys.modules, {"google.cloud.storage": mock_storage}),
+            patch.dict(sys.modules, {
+                "jax": mock_jax,
+                "google": mock_google,
+                "google.cloud": mock_google.cloud,
+                "google.cloud.storage": mock_storage_mod,
+            }),
             patch.dict(os.environ, env),
         ):
             runner.main(

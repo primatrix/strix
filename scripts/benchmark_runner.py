@@ -21,6 +21,16 @@ import time
 IR_DUMP_SUBDIRS = ("hlo", "llo", "mosaic")
 
 
+def is_coordinator():
+    """Return True if this process is the coordinator (process_index == 0).
+
+    In multi-host TPU Pod runs, only the coordinator (process_index 0) should
+    perform dump file generation and GCS upload to avoid redundancy.
+    """
+    import jax
+    return jax.process_index() == 0
+
+
 def parse_args(argv=None):
     """Parse CLI arguments with env var fallbacks."""
     p = argparse.ArgumentParser(description="Run kernel benchmark on TPU Pod")
@@ -230,6 +240,11 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
         kernel_fn, config, args.num_warmup, args.num_runs,
         chunk_size=args.chunk_size,
     )
+
+    if not is_coordinator():
+        import jax
+        print(f"[benchmark] Non-coordinator process (index={jax.process_index()}), skipping dump/upload")
+        return
 
     write_benchmark_result(
         timings, args.kernel, args.shape, args.job_name, config,
