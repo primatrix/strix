@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from .bundle_domain import Bundle, BundleInstruction, SourceLoc
+from .bundle_domain import Bundle, BundleInstruction, BundleProgram, SourceLoc
 
 
 class BundleParser:
@@ -108,3 +108,64 @@ class BundleParser:
         instructions = [self._parse_instruction(s) for s in raw_instrs if s.strip()]
 
         return Bundle(address, control_flags, nesting_depth, instructions, comments, is_empty=False)
+
+    _HEADER_END = "= control target key end"
+
+    def parse_file(self, path: str) -> BundleProgram:
+        """Parse a *-final_bundles.txt file into a BundleProgram."""
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        # Skip header (up to and including "= control target key end")
+        start = 0
+        for i, line in enumerate(lines):
+            if self._HEADER_END in line:
+                start = i + 1
+                break
+
+        bundles: List[Bundle] = []
+        idx = start
+        while idx < len(lines):
+            line = lines[idx].rstrip("\n")
+
+            # Skip blank lines
+            if not line.strip():
+                idx += 1
+                continue
+
+            # Check if this looks like a bundle start
+            m = self._BUNDLE_HEAD_RE.match(line)
+            if not m:
+                idx += 1
+                continue
+
+            # Multi-line bundle: accumulate lines until braces balance
+            full_text = line
+            open_braces = line.count("{") - line.count("}")
+            while open_braces > 0 and idx + 1 < len(lines):
+                idx += 1
+                full_text += "\n" + lines[idx].rstrip("\n")
+                open_braces += lines[idx].count("{") - lines[idx].count("}")
+
+            bundle = self._parse_bundle_line(full_text)
+            if bundle is not None:
+                bundles.append(bundle)
+
+            idx += 1
+
+        source_index = self._build_source_index(bundles)
+        return BundleProgram(bundles=bundles, source_index=source_index)
+
+    @staticmethod
+    def _build_source_index(
+        bundles: List[Bundle],
+    ) -> Dict[SourceLoc, List[Tuple[int, int]]]:
+        """Build an inverted index: SourceLoc -> [(bundle_address, slot_index), ...]."""
+        index: Dict[SourceLoc, List[Tuple[int, int]]] = {}
+        for bundle in bundles:
+            for slot_idx, instr in enumerate(bundle.instructions):
+                if instr.loc is not None:
+                    index.setdefault(instr.loc, []).append(
+                        (bundle.address, slot_idx)
+                    )
+        return index

@@ -1,4 +1,7 @@
 """Tests for BundleParser."""
+import os
+import tempfile
+
 from strix.bundle_domain import BundleInstruction, SourceLoc
 from strix.bundle_parser import BundleParser
 
@@ -167,3 +170,138 @@ class TestParseBundleLine:
         assert self.parser._parse_bundle_line("LH: loop header") is None
         assert self.parser._parse_bundle_line("") is None
         assert self.parser._parse_bundle_line("= control target key start") is None
+
+
+# --------------- Fixtures for parse_file tests ---------------
+
+SIMPLE_BUNDLES = """\
+= control target key start
+LH: loop header
+LB: loop body
+LE: loop exit
+PB: predicated region body
+PF: predicated region fallthrough
+CT: control target
+= control target key end
+
+     0   :  { %0 = vdelay 1 } /* Start region 0 */
+   0x1   :  { %1 = sfence }
+   0x2   :  { %s4_s0 = smov 0 /* materialized constant */ }
+   0x3   :  { %2 = sst [smem:[#allocation0]] %s4_s0 } /* End region 0 */
+"""
+
+BUNDLES_WITH_LOCS = """\
+= control target key start
+LH: loop header
+LB: loop body
+LE: loop exit
+PB: predicated region body
+PF: predicated region fallthrough
+CT: control target
+= control target key end
+
+     0   :  { %0 = vdelay 1 }
+   0x1   :  { %s30 = sld [smem:[#a]] /* loc("kernel.py":587:14 to :42) */ }
+   0x2   :  { %s31 = sld [smem:[#b]] /* loc("kernel.py":587:14 to :42) */ }
+   0x3   :  { %s32 = sadd.s32 %s30, %s31 /* loc("kernel.py":665:12 to 669:13) */ }
+"""
+
+MULTILINE_BUNDLE = """\
+= control target key start
+LH: loop header
+LB: loop body
+LE: loop exit
+PB: predicated region body
+PF: predicated region fallthrough
+CT: control target
+= control target key end
+
+     0   :  { %0 = vdelay 1 }
+   0x1   :  { %100 = shalt.err (!%p1) /* BoundsCheck 0 [deref of %s4] for %150 = dma.hbm_to_vmem /* loc("k.py":684:10 to :34) */
+hlo: fused-moe
+ */ }
+   0x2   :  { %1 = sfence }
+"""
+
+
+class TestParseFile:
+    def setup_method(self):
+        self.parser = BundleParser()
+
+    def _write_temp(self, content: str) -> str:
+        fd, path = tempfile.mkstemp(suffix="_final_bundles.txt")
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        return path
+
+    def test_simple_file(self):
+        path = self._write_temp(SIMPLE_BUNDLES)
+        try:
+            prog = self.parser.parse_file(path)
+            assert len(prog.bundles) == 4
+            assert prog.bundles[0].address == 0
+            assert prog.bundles[1].address == 1
+            assert prog.bundles[2].address == 2
+            assert prog.bundles[3].address == 3
+        finally:
+            os.unlink(path)
+
+    def test_header_skipped(self):
+        path = self._write_temp(SIMPLE_BUNDLES)
+        try:
+            prog = self.parser.parse_file(path)
+            # Header lines should not produce bundles
+            for b in prog.bundles:
+                assert b.address >= 0
+        finally:
+            os.unlink(path)
+
+    def test_source_index_built(self):
+        path = self._write_temp(BUNDLES_WITH_LOCS)
+        try:
+            prog = self.parser.parse_file(path)
+            loc587 = SourceLoc("kernel.py", 587, 14, 587, 42)
+            loc665 = SourceLoc("kernel.py", 665, 12, 669, 13)
+            assert loc587 in prog.source_index
+            assert loc665 in prog.source_index
+            # loc587 appears at bundle 0x1 slot 0 and bundle 0x2 slot 0
+            slots587 = prog.source_index[loc587]
+            assert (0x1, 0) in slots587
+            assert (0x2, 0) in slots587
+            # loc665 appears at bundle 0x3 slot 0
+            assert (0x3, 0) in prog.source_index[loc665]
+        finally:
+            os.unlink(path)
+
+    def test_multiline_bundle(self):
+        path = self._write_temp(MULTILINE_BUNDLE)
+        try:
+            prog = self.parser.parse_file(path)
+            # Should have 3 bundles: vdelay, shalt.err (multi-line), sfence
+            assert len(prog.bundles) == 3
+            assert prog.bundles[0].address == 0
+            assert prog.bundles[1].address == 1
+            assert prog.bundles[1].instructions[0].opcode == "shalt.err"
+            assert prog.bundles[2].address == 2
+        finally:
+            os.unlink(path)
+
+    def test_multiline_bundle_loc_extracted(self):
+        path = self._write_temp(MULTILINE_BUNDLE)
+        try:
+            prog = self.parser.parse_file(path)
+            shalt_bundle = prog.bundles[1]
+            assert shalt_bundle.instructions[0].loc == SourceLoc("k.py", 684, 10, 684, 34)
+        finally:
+            os.unlink(path)
+
+    def test_empty_file(self):
+        path = self._write_temp(
+            "= control target key start\n= control target key end\n"
+        )
+        try:
+            prog = self.parser.parse_file(path)
+            assert len(prog.bundles) == 0
+            assert len(prog.source_index) == 0
+        finally:
+            os.unlink(path)
