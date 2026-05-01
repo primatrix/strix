@@ -285,6 +285,12 @@ class TestShellScriptContent:
     def test_references_yaml_template(self, script_content):
         assert "benchmark_job.yaml" in script_content
 
+    def test_has_preflight_kubectl_check(self, script_content):
+        assert "kubectl cluster-info" in script_content
+
+    def test_has_preflight_gcs_permission_check(self, script_content):
+        assert "get-iam-policy" in script_content
+
 
 class TestShellScriptArgParsing:
     """run_benchmark.sh parses arguments correctly (dry run via --help or parse-only)."""
