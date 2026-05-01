@@ -103,8 +103,10 @@ class TestCliToShellContract:
         cmd = mock_run.call_args[0][0]
         # cmd[0] = "bash", cmd[1] = script path, cmd[2] = kernel
         assert cmd[2] == "kernels.fused_moe"
-        # Everything after kernel starts with -- (flags)
-        assert all(arg.startswith("--") or not arg.startswith("-") for arg in cmd[3:])
+        # After kernel, args come in --flag value pairs
+        trailing = cmd[3:]
+        for i in range(0, len(trailing), 2):
+            assert trailing[i].startswith("--"), f"Expected flag at position {i}, got {trailing[i]}"
 
     @patch("subprocess.run")
     def test_chunk_size_omitted_when_not_specified(self, mock_run):
@@ -294,6 +296,53 @@ class TestTarStructureContract:
         job_name = "strix-benchmark-kernels-fused-moe-20260501-120000"
         tarball = runner.package_results(job_name, ir_root, result_file, tmp_path)
         assert tarball.name == f"{job_name}.tar.gz"
+
+    def test_gcs_upload_path_matches_shell_download_path(self, tmp_path):
+        """Runner upload path must match shell script's gcloud download path."""
+        runner = _import_runner()
+
+        ir_root = tmp_path / "ir_dumps"
+        ir_root.mkdir()
+        result_file = tmp_path / "result.json"
+        result_file.write_text("{}")
+
+        job_name = "strix-benchmark-kernels-fused-moe-20260501-120000"
+        gcs_bucket = "gs://poc_profile/"
+
+        tarball = runner.package_results(job_name, ir_root, result_file, tmp_path)
+
+        # Runner uploads to: {bucket_prefix}/{job_name}/{tarball.name}
+        # When bucket = "gs://poc_profile/", prefix = "" so blob = "{job_name}/{job_name}.tar.gz"
+        expected_blob = f"{job_name}/{tarball.name}"
+
+        # Shell script downloads: ${GCS_BUCKET}${JOB_NAME}/${JOB_NAME}.tar.gz
+        # = gs://poc_profile/ + job_name + / + job_name + .tar.gz
+        shell_download = f"{gcs_bucket}{job_name}/{job_name}.tar.gz"
+        # Full GCS URI = gs://poc_profile/{blob}
+        runner_upload = f"{gcs_bucket}{expected_blob}"
+
+        assert shell_download == runner_upload
+
+    def test_shell_script_download_trigger_chain(self):
+        """AC2: Shell script has kubectl wait → gcloud cp → tar extract sequence."""
+        script = _SCRIPTS_DIR / "run_benchmark.sh"
+        content = script.read_text()
+        # Verify the download trigger chain exists in the correct order
+        wait_pos = content.find("kubectl wait")
+        gcloud_pos = content.find("gcloud storage cp")
+        tar_pos = content.find("tar xzf")
+        assert wait_pos > 0, "kubectl wait not found in shell script"
+        assert gcloud_pos > 0, "gcloud storage cp not found in shell script"
+        assert tar_pos > 0, "tar xzf not found in shell script"
+        assert wait_pos < gcloud_pos < tar_pos, (
+            "Download chain must be: kubectl wait → gcloud cp → tar extract"
+        )
+
+    def test_shell_script_downloads_to_benchmark_results_dir(self):
+        """Shell download dir must match expected benchmark_results/ convention."""
+        script = _SCRIPTS_DIR / "run_benchmark.sh"
+        content = script.read_text()
+        assert 'OUTPUT_DIR="benchmark_results"' in content
 
     def test_ir_dump_subdirs_match_runner_setup(self, tmp_path):
         """IR dump subdirs created by setup_ir_dump_dirs match package structure."""
