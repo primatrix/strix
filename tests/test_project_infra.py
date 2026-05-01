@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import os
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -52,3 +53,16 @@ class TestPyprojectToml:
             config = tomllib.load(f)
         assert "requires-python" in config["project"]
         assert "3.10" in config["project"]["requires-python"]
+
+
+class TestMainEntry:
+    """``python -m strix`` must invoke the CLI entry point."""
+
+    def test_python_m_strix_help(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "strix", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "usage" in result.stdout.lower()
