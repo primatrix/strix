@@ -122,6 +122,8 @@ def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None):
     kwargs = dict(config.get("default_shape", {}))
     if chunk_size is not None:
         kwargs["chunk_size"] = chunk_size
+    if "ep_size" in config:
+        kwargs["ep_size"] = config["ep_size"]
 
     run_fn = kernel_fn(**kwargs)
 
