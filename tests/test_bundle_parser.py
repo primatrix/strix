@@ -92,3 +92,78 @@ class TestParseInstruction:
         text = "%1 = sfence"
         instr = self.parser._parse_instruction(text)
         assert instr.raw_text == text
+
+
+class TestParseBundleLine:
+    def setup_method(self):
+        self.parser = BundleParser()
+
+    def test_simple_single_instruction(self):
+        line = "   0x1   :  { %1 = sfence }"
+        bundle = self.parser._parse_bundle_line(line)
+        assert bundle is not None
+        assert bundle.address == 0x1
+        assert bundle.control_flags == []
+        assert bundle.nesting_depth == 0
+        assert len(bundle.instructions) == 1
+        assert bundle.instructions[0].opcode == "sfence"
+        assert not bundle.is_empty
+
+    def test_address_zero(self):
+        line = "     0   :  { %0 = vdelay 1 } /* Start region 0 */"
+        bundle = self.parser._parse_bundle_line(line)
+        assert bundle is not None
+        assert bundle.address == 0
+
+    def test_empty_bundle(self):
+        line = "   0x5   :  { }"
+        bundle = self.parser._parse_bundle_line(line)
+        assert bundle is not None
+        assert bundle.is_empty
+        assert len(bundle.instructions) == 0
+
+    def test_multiple_instructions(self):
+        line = (
+            '  0x15   :  { %p34_p0 = scmp.lt.s32.totalorder %s33_s22, 0 '
+            '/* loc("k.py":587:14 to :42) */  ;;  '
+            '%s35_s23 = ssub.s32 0, %s33_s22 '
+            '/* loc("k.py":587:14 to :42) */ }'
+        )
+        bundle = self.parser._parse_bundle_line(line)
+        assert bundle is not None
+        assert bundle.address == 0x15
+        assert len(bundle.instructions) == 2
+        assert bundle.instructions[0].opcode == "scmp.lt.s32.totalorder"
+        assert bundle.instructions[1].opcode == "ssub.s32"
+
+    def test_control_flags_and_nesting(self):
+        line = " 0x2d4 LB: > { %s17484_s16 = sshll.u32 %s17103_s30, 7 }"
+        bundle = self.parser._parse_bundle_line(line)
+        assert bundle is not None
+        assert bundle.address == 0x2D4
+        assert bundle.control_flags == ["LB"]
+        assert bundle.nesting_depth == 1
+
+    def test_pf_flag_double_nesting(self):
+        line = " 0x8e6 PF: >> { %s21403_s7 = smov %s18731_s10 }"
+        bundle = self.parser._parse_bundle_line(line)
+        assert bundle is not None
+        assert bundle.control_flags == ["PF"]
+        assert bundle.nesting_depth == 2
+
+    def test_triple_nesting(self):
+        line = ' 0xc26 PF: >>> { %s13779_s14 = sshll.u32 %s17167_s23, 3 }'
+        bundle = self.parser._parse_bundle_line(line)
+        assert bundle is not None
+        assert bundle.nesting_depth == 3
+
+    def test_comments_after_bundle(self):
+        line = "     0   :  { %0 = vdelay 1 } /* Start region 0 */"
+        bundle = self.parser._parse_bundle_line(line)
+        assert bundle is not None
+        assert "Start region 0" in bundle.comments
+
+    def test_non_bundle_line_returns_none(self):
+        assert self.parser._parse_bundle_line("LH: loop header") is None
+        assert self.parser._parse_bundle_line("") is None
+        assert self.parser._parse_bundle_line("= control target key start") is None
