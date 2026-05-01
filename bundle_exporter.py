@@ -7,7 +7,7 @@ import sys
 from collections import Counter
 from typing import IO, Dict, Iterable, List, Optional, Tuple
 
-from .bundle_domain import BundleProgram, SourceLoc
+from .bundle_domain import Bundle, BundleProgram, SourceLoc
 
 
 class BundleConsoleExporter:
