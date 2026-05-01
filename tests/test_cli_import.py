@@ -8,13 +8,14 @@ Acceptance criteria:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from unittest.mock import patch
 
 import pytest
 
-from strix.cli import build_arg_parser, main, preprocess_argv
+from strix.cli import build_arg_parser, main, preprocess_argv, _get_subcommands
 
 
 class TestImportSubcommandParsing:
@@ -102,6 +103,10 @@ class TestImportSubcommandParsing:
         )
         assert args.subcommand == "import"
 
+    def test_subcommands_derived_dynamically(self):
+        ap = build_arg_parser()
+        assert _get_subcommands(ap) == {"import", "analyze"}
+
 
 class TestBackwardCompatibility:
     """旧模式（直接传 LLO 路径）继续工作。"""
@@ -168,7 +173,9 @@ class TestImportSubcommandExecution:
         )
         mock_run.assert_called_once()
         call_args = mock_run.call_args[0][0]
-        assert "scripts/run_benchmark.sh" in call_args
+        script_path = call_args[1]
+        assert script_path.endswith("scripts/run_benchmark.sh")
+        assert os.path.isabs(script_path)
         assert "kernels.chunk_kda_fwd" in call_args
 
     @patch("subprocess.run")

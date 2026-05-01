@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from .analyzer import PerformanceAnalyzer
@@ -16,8 +17,8 @@ from .parser import LLOParser
 from .simulator import Simulator
 from .value_resolver import ValueResolver
 
-# Known subcommands used for backward-compat detection.
-_SUBCOMMANDS = {"import", "analyze"}
+# Package root directory (used to resolve scripts/).
+_PACKAGE_DIR = Path(__file__).resolve().parent
 
 
 def _add_analyze_args(parser: argparse.ArgumentParser) -> None:
@@ -242,7 +243,7 @@ def _run_import(args: argparse.Namespace) -> None:
     """Handle the ``import`` subcommand."""
     cmd: List[str] = [
         "bash",
-        "scripts/run_benchmark.sh",
+        str(_PACKAGE_DIR / "scripts" / "run_benchmark.sh"),
         args.kernel,
         "--shape",
         args.shape,
@@ -373,17 +374,31 @@ def _run_analyze(args: argparse.Namespace) -> None:
         DataFlowDotExporter().export(df_graph, args.dataflow_output)
 
 
-def preprocess_argv(argv: Optional[List[str]] = None) -> List[str]:
+def _get_subcommands(ap: argparse.ArgumentParser) -> set[str]:
+    """Extract registered subcommand names from the parser."""
+    for action in ap._subparsers._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return set(action.choices.keys())
+    return set()
+
+
+def preprocess_argv(
+    argv: Optional[List[str]] = None,
+    ap: Optional[argparse.ArgumentParser] = None,
+) -> List[str]:
     """Apply backward-compat: prepend ``analyze`` when no subcommand given."""
+    if ap is None:
+        ap = build_arg_parser()
+    subcommands = _get_subcommands(ap)
     raw = list(argv) if argv is not None else sys.argv[1:]
-    if raw and raw[0] not in _SUBCOMMANDS and not raw[0].startswith("-"):
+    if raw and raw[0] not in subcommands and not raw[0].startswith("-"):
         raw = ["analyze"] + raw
     return raw
 
 
 def main(argv: Optional[List[str]] = None) -> None:
     ap = build_arg_parser()
-    args = ap.parse_args(preprocess_argv(argv))
+    args = ap.parse_args(preprocess_argv(argv, ap))
 
     if args.subcommand == "import":
         _run_import(args)
