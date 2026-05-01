@@ -52,9 +52,11 @@ def _render_yaml(
         tpu_chips = str(math.prod(int(d) for d in tpu_topology.split("x")))
     # Derive accelerator label: v7x -> tpu7x (strip leading 'v')
     tpu_accelerator = "tpu" + (tpu_type[1:] if tpu_type.startswith("v") else tpu_type)
+    branch_label = branch.replace("/", "-")[:63]
     mapping = {
         "JOB_NAME": job_name,
         "BRANCH": branch,
+        "BRANCH_LABEL": branch_label,
         "SHAPE": shape,
         "CHUNK_SIZE": chunk_size,
         "KERNEL_MODULE": kernel_module,

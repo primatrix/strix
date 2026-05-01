@@ -87,6 +87,9 @@ export JOB_NAME="strix-benchmark-${KERNEL_SLUG}-${TIMESTAMP}"
 # ---- Resolve branch ----
 export BRANCH
 BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"
+# Sanitise branch for K8s label (max 63 chars, alphanumeric + dash/dot/underscore)
+export BRANCH_LABEL
+BRANCH_LABEL="$(echo "${BRANCH}" | tr '/' '-' | cut -c1-63)"
 
 # ---- Compute TPU chip count from topology (e.g. 2x2x1 = 4) ----
 export TPU_CHIPS
@@ -112,7 +115,7 @@ trap cleanup EXIT
 
 # ---- Render and deploy ----
 echo "[run_benchmark] Rendering Job YAML for ${JOB_NAME}..."
-ENVSUBST_VARS='$JOB_NAME $BRANCH $KERNEL_MODULE $SHAPE $CHUNK_SIZE $TPU_TYPE $TPU_TOPOLOGY $TPU_CHIPS $TPU_ACCELERATOR $GCS_BUCKET'
+ENVSUBST_VARS='$JOB_NAME $BRANCH $BRANCH_LABEL $KERNEL_MODULE $SHAPE $CHUNK_SIZE $TPU_TYPE $TPU_TOPOLOGY $TPU_CHIPS $TPU_ACCELERATOR $GCS_BUCKET'
 RENDERED_YAML="$(envsubst "${ENVSUBST_VARS}" < "${YAML_TEMPLATE}")"
 
 echo "[run_benchmark] Deploying Job..."
