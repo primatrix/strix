@@ -160,6 +160,14 @@ class TestEnvVarContract:
         container = rendered["spec"]["template"]["spec"]["containers"][0]
         return {e["name"] for e in container.get("env", [])}
 
+    @pytest.fixture()
+    def yaml_env_map(self):
+        import yaml
+
+        rendered = yaml.safe_load(_render_yaml())
+        container = rendered["spec"]["template"]["spec"]["containers"][0]
+        return {e["name"]: e["value"] for e in container.get("env", [])}
+
     def test_yaml_covers_runner_required_env_vars(self, yaml_env_names):
         """YAML template must set all env vars that benchmark_runner reads."""
         runner_required = {"KERNEL_MODULE", "SHAPE", "CHUNK_SIZE", "JOB_NAME", "GCS_BUCKET"}
@@ -178,47 +186,27 @@ class TestEnvVarContract:
         """LIBTPU_INIT_ARGS set in YAML (runner skips if already present)."""
         assert "LIBTPU_INIT_ARGS" in yaml_env_names
 
-    def test_yaml_xla_flags_enable_hlo_dump(self):
+    def test_yaml_xla_flags_enable_hlo_dump(self, yaml_env_map):
         """XLA_FLAGS in YAML must enable HLO text dump."""
-        import yaml
-
-        rendered = yaml.safe_load(_render_yaml())
-        container = rendered["spec"]["template"]["spec"]["containers"][0]
-        env_map = {e["name"]: e["value"] for e in container["env"]}
-        xla_flags = env_map["XLA_FLAGS"]
+        xla_flags = yaml_env_map["XLA_FLAGS"]
         assert "--xla_dump_hlo_as_text" in xla_flags
         assert "/tmp/ir_dumps/hlo" in xla_flags
 
-    def test_yaml_libtpu_enables_llo_dump(self):
+    def test_yaml_libtpu_enables_llo_dump(self, yaml_env_map):
         """LIBTPU_INIT_ARGS in YAML must enable LLO text dump."""
-        import yaml
-
-        rendered = yaml.safe_load(_render_yaml())
-        container = rendered["spec"]["template"]["spec"]["containers"][0]
-        env_map = {e["name"]: e["value"] for e in container["env"]}
-        libtpu = env_map["LIBTPU_INIT_ARGS"]
+        libtpu = yaml_env_map["LIBTPU_INIT_ARGS"]
         assert "--xla_jf_dump_llo_text=true" in libtpu
         assert "/tmp/ir_dumps/llo" in libtpu
 
-    def test_yaml_libtpu_enables_mosaic_dump(self):
+    def test_yaml_libtpu_enables_mosaic_dump(self, yaml_env_map):
         """LIBTPU_INIT_ARGS in YAML must enable Mosaic dump."""
-        import yaml
-
-        rendered = yaml.safe_load(_render_yaml())
-        container = rendered["spec"]["template"]["spec"]["containers"][0]
-        env_map = {e["name"]: e["value"] for e in container["env"]}
-        libtpu = env_map["LIBTPU_INIT_ARGS"]
+        libtpu = yaml_env_map["LIBTPU_INIT_ARGS"]
         assert "/tmp/ir_dumps/mosaic" in libtpu
 
-    def test_ir_dump_paths_consistent_across_yaml_and_runner(self):
+    def test_ir_dump_paths_consistent_across_yaml_and_runner(self, yaml_env_map):
         """IR dump paths in YAML env vars must match runner's default paths."""
-        import yaml
-
-        rendered = yaml.safe_load(_render_yaml())
-        container = rendered["spec"]["template"]["spec"]["containers"][0]
-        env_map = {e["name"]: e["value"] for e in container["env"]}
-        xla = env_map["XLA_FLAGS"]
-        libtpu = env_map["LIBTPU_INIT_ARGS"]
+        xla = yaml_env_map["XLA_FLAGS"]
+        libtpu = yaml_env_map["LIBTPU_INIT_ARGS"]
 
         # Runner's default IR dump root is /tmp/ir_dumps
         runner = _import_runner()
@@ -381,14 +369,25 @@ class TestFusedMoeE2E:
     def test_fused_moe_config_has_ac_shape_values(self):
         """config default_shape must contain AC shape: 1024,128,8,4096,2048."""
         kernel_path = _REPO_ROOT / "kernels" / "fused_moe.py"
-        source = kernel_path.read_text()
-        # AC shape maps to: num_tokens=1024, num_experts=128, top_k=8,
-        #                    hidden_size=4096, intermediate_size=2048
-        assert '"num_tokens": 1024' in source or "'num_tokens': 1024" in source
-        assert '"num_experts": 128' in source or "'num_experts': 128" in source
-        assert '"top_k": 8' in source or "'top_k': 8" in source
-        assert '"hidden_size": 4096' in source or "'hidden_size': 4096" in source
-        assert '"intermediate_size": 2048' in source or "'intermediate_size': 2048" in source
+        tree = ast.parse(kernel_path.read_text())
+
+        config_dict = None
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "config":
+                        config_dict = ast.literal_eval(node.value)
+                        break
+                if config_dict:
+                    break
+
+        assert config_dict is not None, "Could not find 'config' dictionary in fused_moe.py"
+        default_shape = config_dict.get("default_shape", {})
+        assert default_shape.get("num_tokens") == 1024
+        assert default_shape.get("num_experts") == 128
+        assert default_shape.get("top_k") == 8
+        assert default_shape.get("hidden_size") == 4096
+        assert default_shape.get("intermediate_size") == 2048
 
     def test_cli_parses_ac_shape_for_fused_moe(self):
         """--shape 1024,128,8,4096,2048 is parsed correctly by CLI."""
