@@ -20,7 +20,7 @@ config = {
     "dtype": "bfloat16",
     "weight_dtype": "bfloat16",
     "act_fn": "silu",
-    "ep_size": 8,
+    "ep_size": 4,
     "tpu_type": "v7x",
     "tpu_topology": "2x2x1",
     "description": "Fused EP MoE kernel with batch scatter optimization (Qwen3-MoE-128E config)",
