@@ -135,25 +135,29 @@ def _build_edges(nodes: List[DFNode]) -> List[DFEdge]:
     For every consumer node that lists a variable in its ``ssa_inputs``,
     find the producer node that has that variable in ``ssa_outputs`` and
     create an edge.  Edges are deduplicated on (src, dst, variable).
-    """
-    # Map variable name -> producer node id (last writer wins)
-    producer: Dict[str, int] = {}
-    for node in nodes:
-        for var in node.ssa_outputs:
-            producer[var] = node.id
 
+    The producer map is built incrementally: each node's inputs are
+    resolved against producers seen *so far*, then its outputs update
+    the map.  This ensures correct edges in expanded loops where the
+    same SSA name is redefined across iterations.
+    """
+    producer: Dict[str, int] = {}
     seen: Set[Tuple[int, int, str]] = set()
     edges: List[DFEdge] = []
 
     for node in nodes:
+        # Resolve inputs against producers defined before this node.
         for var in node.ssa_inputs:
             src_id = producer.get(var)
             if src_id is None:
                 continue  # external input (e.g. %arg0)
             key = (src_id, node.id, var)
-            if key in seen:
-                continue
-            seen.add(key)
-            edges.append(DFEdge(src=src_id, dst=node.id, variable=var))
+            if key not in seen:
+                seen.add(key)
+                edges.append(DFEdge(src=src_id, dst=node.id, variable=var))
+
+        # Update producer map with this node's outputs.
+        for var in node.ssa_outputs:
+            producer[var] = node.id
 
     return edges

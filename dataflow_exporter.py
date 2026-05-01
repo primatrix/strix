@@ -23,7 +23,7 @@ def _node_ref(node_id: int) -> str:
 
 def _escape_dot(text: str) -> str:
     """Escape characters that are special inside DOT label strings."""
-    return text.replace("\\", "\\\\").replace('"', '\\"')
+    return text.replace('"', '\\"')
 
 
 def _node_label(node: DFNode) -> str:
