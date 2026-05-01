@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "strix"
+version = "0.1.0"
+description = "Static profiler and timeline simulator for TPU Mosaic/Pallas LLO"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+tpu = [
+    "jax[tpu]",
+    "google-cloud-storage",
+]
+
+[tool.setuptools]
+packages = ["strix"]
+
+[tool.setuptools.package-dir]
+strix = "."
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
