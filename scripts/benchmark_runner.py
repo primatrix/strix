@@ -9,8 +9,10 @@ to GCS.
 from __future__ import annotations
 
 import argparse
+import importlib
 import os
 import pathlib
+import time
 
 IR_DUMP_SUBDIRS = ("hlo", "llo", "mosaic")
 
@@ -102,6 +104,38 @@ def setup_xla_flags(ir_dump_root):
             f"--xla_mosaic_dump_to={ir_dump_root / 'mosaic'}",
             "--xla_mosaic_enable_llo_source_annotations=true",
         ])
+
+
+def import_kernel(module_path):
+    """Dynamically import a kernel module and return (kernel_fn, config)."""
+    mod = importlib.import_module(module_path)
+    return mod.kernel_fn, mod.config
+
+
+def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None):
+    """Execute kernel benchmark and return list of timing values (seconds)."""
+    kwargs = dict(config.get("default_shape", {}))
+    if chunk_size is not None:
+        kwargs["chunk_size"] = chunk_size
+
+    run_fn = kernel_fn(**kwargs)
+
+    # Warmup
+    for _ in range(num_warmup):
+        result = run_fn()
+        if hasattr(result, "block_until_ready"):
+            result.block_until_ready()
+
+    # Timed runs
+    timings = []
+    for _ in range(num_runs):
+        start = time.perf_counter()
+        result = run_fn()
+        if hasattr(result, "block_until_ready"):
+            result.block_until_ready()
+        timings.append(time.perf_counter() - start)
+
+    return timings
 
 
 if __name__ == "__main__":

@@ -227,3 +227,151 @@ class TestXlaFlagsSetup:
         with patch.dict(os.environ, {"LIBTPU_INIT_ARGS": "custom-args"}):
             runner.setup_xla_flags("/tmp/ir_dumps")
             assert os.environ["LIBTPU_INIT_ARGS"] == "custom-args"
+
+
+# ===================================================================
+# Part 2: Kernel import + benchmark execution
+# ===================================================================
+
+
+def _make_fake_kernel_module():
+    """Create a fake kernel module with kernel_fn and config."""
+    import types
+
+    mod = types.ModuleType("fake_kernel")
+    mod.config = {
+        "default_shape": {"num_tokens": 32, "hidden_size": 64},
+        "dtype": "bfloat16",
+        "description": "test kernel",
+    }
+    call_count = 0
+
+    def kernel_fn(**kwargs):
+        def run():
+            nonlocal call_count
+            call_count += 1
+            return call_count
+        return run
+
+    mod.kernel_fn = kernel_fn
+    mod._get_call_count = lambda: call_count
+    return mod
+
+
+class TestKernelImport:
+    """import_kernel loads a module and extracts kernel_fn + config."""
+
+    def test_imports_and_returns_kernel_fn_and_config(self):
+        runner = _import_runner()
+        fake_mod = _make_fake_kernel_module()
+        with patch("importlib.import_module", return_value=fake_mod):
+            kernel_fn, config = runner.import_kernel("kernels.fake")
+        assert callable(kernel_fn)
+        assert config["dtype"] == "bfloat16"
+
+    def test_raises_on_missing_kernel_fn(self):
+        runner = _import_runner()
+        import types
+        bad_mod = types.ModuleType("bad")
+        bad_mod.config = {}
+        with patch("importlib.import_module", return_value=bad_mod):
+            with pytest.raises(AttributeError):
+                runner.import_kernel("kernels.bad")
+
+    def test_raises_on_missing_config(self):
+        runner = _import_runner()
+        import types
+        bad_mod = types.ModuleType("bad")
+        bad_mod.kernel_fn = lambda: None
+        with patch("importlib.import_module", return_value=bad_mod):
+            with pytest.raises(AttributeError):
+                runner.import_kernel("kernels.bad")
+
+
+class TestBenchmarkExecution:
+    """run_benchmark executes kernel_fn and collects timing."""
+
+    def test_returns_correct_number_of_timings(self):
+        runner = _import_runner()
+        fake_mod = _make_fake_kernel_module()
+        timings = runner.run_benchmark(
+            fake_mod.kernel_fn, fake_mod.config, num_warmup=2, num_runs=5,
+        )
+        assert len(timings) == 5
+
+    def test_all_timings_are_positive(self):
+        runner = _import_runner()
+        fake_mod = _make_fake_kernel_module()
+        timings = runner.run_benchmark(
+            fake_mod.kernel_fn, fake_mod.config, num_warmup=1, num_runs=3,
+        )
+        assert all(t > 0 for t in timings)
+
+    def test_warmup_runs_not_counted_in_timings(self):
+        runner = _import_runner()
+        fake_mod = _make_fake_kernel_module()
+        timings = runner.run_benchmark(
+            fake_mod.kernel_fn, fake_mod.config, num_warmup=3, num_runs=2,
+        )
+        # 3 warmup + 2 timed = 5 total calls, but only 2 timings returned
+        assert len(timings) == 2
+
+    def test_calls_block_until_ready_on_jax_arrays(self):
+        runner = _import_runner()
+        import types
+
+        blocked = []
+
+        class FakeArray:
+            def block_until_ready(self):
+                blocked.append(True)
+                return self
+
+        mod = types.ModuleType("jax_kernel")
+        mod.config = {"default_shape": {}}
+
+        def kernel_fn(**kwargs):
+            def run():
+                return FakeArray()
+            return run
+
+        mod.kernel_fn = kernel_fn
+        runner.run_benchmark(mod.kernel_fn, mod.config, num_warmup=1, num_runs=2)
+        # 1 warmup + 2 timed = 3 block_until_ready calls
+        assert len(blocked) == 3
+
+    def test_passes_default_shape_to_kernel_fn(self):
+        runner = _import_runner()
+        import types
+
+        received_kwargs = {}
+
+        mod = types.ModuleType("shape_kernel")
+        mod.config = {"default_shape": {"num_tokens": 64, "hidden_size": 128}}
+
+        def kernel_fn(**kwargs):
+            received_kwargs.update(kwargs)
+            return lambda: None
+
+        mod.kernel_fn = kernel_fn
+        runner.run_benchmark(mod.kernel_fn, mod.config, num_warmup=0, num_runs=1)
+        assert received_kwargs == {"num_tokens": 64, "hidden_size": 128}
+
+    def test_passes_chunk_size_when_provided(self):
+        runner = _import_runner()
+        import types
+
+        received_kwargs = {}
+
+        mod = types.ModuleType("chunk_kernel")
+        mod.config = {"default_shape": {"num_tokens": 32}}
+
+        def kernel_fn(**kwargs):
+            received_kwargs.update(kwargs)
+            return lambda: None
+
+        mod.kernel_fn = kernel_fn
+        runner.run_benchmark(
+            mod.kernel_fn, mod.config, num_warmup=0, num_runs=1, chunk_size=64,
+        )
+        assert received_kwargs["chunk_size"] == 64
