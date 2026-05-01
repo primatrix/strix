@@ -375,3 +375,167 @@ class TestBenchmarkExecution:
             mod.kernel_fn, mod.config, num_warmup=0, num_runs=1, chunk_size=64,
         )
         assert received_kwargs["chunk_size"] == 64
+
+
+# ===================================================================
+# Part 3: Result JSON + tar packaging
+# ===================================================================
+
+
+class TestResultWriting:
+    """write_benchmark_result produces correct JSON structure."""
+
+    def test_writes_valid_json(self, tmp_path):
+        import json
+
+        runner = _import_runner()
+        out = tmp_path / "result.json"
+        runner.write_benchmark_result(
+            timings=[0.1, 0.2, 0.15],
+            kernel="kernels.test",
+            shape="1,2048",
+            job_name="test-job",
+            config={"description": "test"},
+            output_path=out,
+        )
+        data = json.loads(out.read_text())
+        assert isinstance(data, dict)
+
+    def test_contains_timing_stats(self, tmp_path):
+        import json
+
+        runner = _import_runner()
+        out = tmp_path / "result.json"
+        runner.write_benchmark_result(
+            timings=[0.1, 0.2, 0.3],
+            kernel="k",
+            shape="1",
+            job_name="j",
+            config={},
+            output_path=out,
+        )
+        data = json.loads(out.read_text())
+        stats = data["statistics"]
+        assert "mean_ms" in stats
+        assert "median_ms" in stats
+        assert "stdev_ms" in stats
+        assert "min_ms" in stats
+        assert "max_ms" in stats
+
+    def test_timing_stats_values_correct(self, tmp_path):
+        import json
+
+        runner = _import_runner()
+        out = tmp_path / "result.json"
+        # 100ms, 200ms, 300ms → mean=200ms, median=200ms, min=100ms, max=300ms
+        runner.write_benchmark_result(
+            timings=[0.1, 0.2, 0.3],
+            kernel="k",
+            shape="1",
+            job_name="j",
+            config={},
+            output_path=out,
+        )
+        data = json.loads(out.read_text())
+        stats = data["statistics"]
+        assert abs(stats["mean_ms"] - 200.0) < 0.01
+        assert abs(stats["median_ms"] - 200.0) < 0.01
+        assert abs(stats["min_ms"] - 100.0) < 0.01
+        assert abs(stats["max_ms"] - 300.0) < 0.01
+
+    def test_includes_kernel_metadata(self, tmp_path):
+        import json
+
+        runner = _import_runner()
+        out = tmp_path / "result.json"
+        runner.write_benchmark_result(
+            timings=[0.1],
+            kernel="kernels.moe",
+            shape="1024,128",
+            job_name="strix-benchmark-moe",
+            config={"description": "MoE kernel"},
+            output_path=out,
+        )
+        data = json.loads(out.read_text())
+        assert data["kernel"] == "kernels.moe"
+        assert data["shape"] == "1024,128"
+        assert data["job_name"] == "strix-benchmark-moe"
+        assert data["config"]["description"] == "MoE kernel"
+
+    def test_includes_raw_timings_ms(self, tmp_path):
+        import json
+
+        runner = _import_runner()
+        out = tmp_path / "result.json"
+        runner.write_benchmark_result(
+            timings=[0.1, 0.2],
+            kernel="k",
+            shape="1",
+            job_name="j",
+            config={},
+            output_path=out,
+        )
+        data = json.loads(out.read_text())
+        assert data["timings_ms"] == [100.0, 200.0]
+
+    def test_stdev_zero_for_single_run(self, tmp_path):
+        import json
+
+        runner = _import_runner()
+        out = tmp_path / "result.json"
+        runner.write_benchmark_result(
+            timings=[0.1],
+            kernel="k",
+            shape="1",
+            job_name="j",
+            config={},
+            output_path=out,
+        )
+        data = json.loads(out.read_text())
+        assert data["statistics"]["stdev_ms"] == 0.0
+
+
+class TestTarPackaging:
+    """package_results creates tar.gz with correct contents."""
+
+    def test_creates_tarball(self, tmp_path):
+        runner = _import_runner()
+        ir_root = tmp_path / "ir_dumps"
+        (ir_root / "hlo").mkdir(parents=True)
+        (ir_root / "hlo" / "dump.txt").write_text("hlo data")
+        result_file = tmp_path / "benchmark_result.json"
+        result_file.write_text("{}")
+
+        tarball = runner.package_results("test-job", ir_root, result_file, tmp_path)
+        assert tarball.exists()
+        assert tarball.name == "test-job.tar.gz"
+
+    def test_tarball_contains_ir_dumps(self, tmp_path):
+        import tarfile
+
+        runner = _import_runner()
+        ir_root = tmp_path / "ir_dumps"
+        (ir_root / "llo").mkdir(parents=True)
+        (ir_root / "llo" / "module.llo").write_text("llo content")
+        result_file = tmp_path / "benchmark_result.json"
+        result_file.write_text("{}")
+
+        tarball = runner.package_results("j", ir_root, result_file, tmp_path)
+        with tarfile.open(tarball) as tf:
+            names = tf.getnames()
+        assert any("ir_dumps" in n for n in names)
+        assert any("module.llo" in n for n in names)
+
+    def test_tarball_contains_benchmark_result(self, tmp_path):
+        import tarfile
+
+        runner = _import_runner()
+        ir_root = tmp_path / "ir_dumps"
+        ir_root.mkdir()
+        result_file = tmp_path / "benchmark_result.json"
+        result_file.write_text('{"key": "value"}')
+
+        tarball = runner.package_results("j", ir_root, result_file, tmp_path)
+        with tarfile.open(tarball) as tf:
+            names = tf.getnames()
+        assert any("benchmark_result.json" in n for n in names)

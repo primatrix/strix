@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import os
 import pathlib
+import statistics
+import tarfile
 import time
 
 IR_DUMP_SUBDIRS = ("hlo", "llo", "mosaic")
@@ -136,6 +139,44 @@ def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None):
         timings.append(time.perf_counter() - start)
 
     return timings
+
+
+def write_benchmark_result(timings, kernel, shape, job_name, config, output_path):
+    """Write benchmark results to JSON file."""
+    output_path = pathlib.Path(output_path)
+    result = {
+        "kernel": kernel,
+        "shape": shape,
+        "job_name": job_name,
+        "num_runs": len(timings),
+        "timings_ms": [t * 1000 for t in timings],
+        "statistics": {
+            "mean_ms": statistics.mean(timings) * 1000,
+            "median_ms": statistics.median(timings) * 1000,
+            "stdev_ms": statistics.stdev(timings) * 1000 if len(timings) > 1 else 0.0,
+            "min_ms": min(timings) * 1000,
+            "max_ms": max(timings) * 1000,
+        },
+        "config": config,
+    }
+    output_path.write_text(json.dumps(result, indent=2, default=str))
+    return result
+
+
+def package_results(job_name, ir_dump_root, benchmark_result_path, output_dir):
+    """Create tar.gz archive of IR dumps and benchmark results."""
+    ir_dump_root = pathlib.Path(ir_dump_root)
+    benchmark_result_path = pathlib.Path(benchmark_result_path)
+    output_dir = pathlib.Path(output_dir)
+    tarball_path = output_dir / f"{job_name}.tar.gz"
+
+    with tarfile.open(tarball_path, "w:gz") as tar:
+        if ir_dump_root.exists():
+            tar.add(str(ir_dump_root), arcname="ir_dumps")
+        if benchmark_result_path.exists():
+            tar.add(str(benchmark_result_path), arcname="benchmark_result.json")
+
+    return tarball_path
 
 
 if __name__ == "__main__":
