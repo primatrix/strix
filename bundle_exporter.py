@@ -1,6 +1,7 @@
 """Bundle analysis exporters: console table and JSON output."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections import Counter
@@ -22,16 +23,12 @@ class BundleConsoleExporter:
     ) -> None:
         out = file or sys.stdout
 
-        # Group source locations by file, sorted by start_line
-        by_file: Dict[str, List[Tuple[SourceLoc, List[Tuple[int, int]]]]] = {}
-        for loc, slots in program.source_index.items():
-            if line_filter is not None:
-                if not (loc.start_line <= line_filter <= loc.end_line):
-                    continue
-            by_file.setdefault(loc.file, []).append((loc, slots))
+        entries = _collect_mappings(program, line_filter)
 
-        for entries in by_file.values():
-            entries.sort(key=lambda e: (e[0].start_line, e[0].start_col))
+        # Group by file
+        by_file: Dict[str, List[Tuple[SourceLoc, List[Tuple[int, int]]]]] = {}
+        for loc, slots in entries:
+            by_file.setdefault(loc.file, []).append((loc, slots))
 
         # Resolve source files if --source-root provided
         source_cache: Dict[str, List[str]] = {}
@@ -39,25 +36,18 @@ class BundleConsoleExporter:
             source_cache = self._resolve_sources(by_file.keys(), source_root)
 
         # Count annotated instructions
-        total_annotated = sum(
-            len(slots)
-            for entries in by_file.values()
-            for _, slots in entries
-        )
-
-        # Count distinct source locations shown
-        total_locs = sum(len(entries) for entries in by_file.values())
+        total_annotated = sum(len(slots) for _, slots in entries)
+        total_locs = len(entries)
 
         # Header
         out.write("=== Bundle-Source Mapping ===\n")
 
         for filename in sorted(by_file.keys()):
-            entries = by_file[filename]
-            # Use just the basename for display
+            file_entries = by_file[filename]
             display_name = os.path.basename(filename)
             out.write(f"File: {display_name}\n\n")
 
-            for loc, slots in entries:
+            for loc, slots in file_entries:
                 self._write_loc_entry(out, loc, slots, program, source_cache)
 
         # Summary
@@ -107,18 +97,12 @@ class BundleConsoleExporter:
         )
 
         # Opcode frequency
-        opcodes: Counter[str] = Counter()
-        bundle_map = {b.address: b for b in program.bundles}
-        for addr, slot_idx in slots:
-            bundle = bundle_map.get(addr)
-            if bundle and slot_idx < len(bundle.instructions):
-                op = bundle.instructions[slot_idx].opcode
-                if op:
-                    opcodes[op] += 1
+        opcodes = _count_opcodes(slots, program)
 
         if opcodes:
+            freq = Counter(opcodes)
             parts = []
-            for op, count in opcodes.most_common():
+            for op, count in freq.most_common():
                 if count > 1:
                     parts.append(f"{op}\u00d7{count}")
                 else:
@@ -160,3 +144,75 @@ def _find_local_file(pod_path: str, source_root: str) -> Optional[str]:
         if os.path.isfile(candidate):
             return candidate
     return None
+
+
+def _collect_mappings(
+    program: BundleProgram,
+    line_filter: int | None = None,
+) -> List[Tuple[SourceLoc, List[Tuple[int, int]]]]:
+    """Collect and filter source-index entries, sorted by line number."""
+    entries: List[Tuple[SourceLoc, List[Tuple[int, int]]]] = []
+    for loc, slots in program.source_index.items():
+        if line_filter is not None:
+            if not (loc.start_line <= line_filter <= loc.end_line):
+                continue
+        entries.append((loc, slots))
+    entries.sort(key=lambda e: (e[0].file, e[0].start_line, e[0].start_col))
+    return entries
+
+
+def _count_opcodes(
+    slots: List[Tuple[int, int]],
+    program: BundleProgram,
+) -> Dict[str, int]:
+    """Count opcode frequency across the given slots."""
+    bundle_map = {b.address: b for b in program.bundles}
+    opcodes: Counter[str] = Counter()
+    for addr, slot_idx in slots:
+        bundle = bundle_map.get(addr)
+        if bundle and slot_idx < len(bundle.instructions):
+            op = bundle.instructions[slot_idx].opcode
+            if op:
+                opcodes[op] += 1
+    return dict(opcodes)
+
+
+class BundleJsonExporter:
+    """Export a BundleProgram as structured JSON."""
+
+    def export(
+        self,
+        program: BundleProgram,
+        output_path: str,
+        line_filter: int | None = None,
+    ) -> None:
+        entries = _collect_mappings(program, line_filter)
+
+        total_annotated = sum(len(slots) for _, slots in entries)
+
+        mappings = []
+        for loc, slots in entries:
+            opcodes = _count_opcodes(slots, program)
+            mappings.append({
+                "loc": {
+                    "file": loc.file,
+                    "start_line": loc.start_line,
+                    "start_col": loc.start_col,
+                    "end_line": loc.end_line,
+                    "end_col": loc.end_col,
+                },
+                "slots": [
+                    {"bundle": f"0x{addr:02x}", "slot": slot_idx}
+                    for addr, slot_idx in slots
+                ],
+                "opcodes": opcodes,
+            })
+
+        data = {
+            "total_bundles": len(program.bundles),
+            "annotated_instructions": total_annotated,
+            "mappings": mappings,
+        }
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)

@@ -5,7 +5,7 @@ import tempfile
 from io import StringIO
 
 from strix.bundle_domain import Bundle, BundleInstruction, BundleProgram, SourceLoc
-from strix.bundle_exporter import BundleConsoleExporter
+from strix.bundle_exporter import BundleConsoleExporter, BundleJsonExporter
 
 
 # --------------- Fixtures ---------------
@@ -218,3 +218,113 @@ class TestBundleConsoleExporter:
         BundleConsoleExporter().export(prog, file=out)
         text = out.getvalue()
         assert "kernel.py" in text
+
+
+class TestBundleJsonExporter:
+    def test_json_structure(self):
+        """AC2: JSON output has correct top-level structure."""
+        prog = _make_program()
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            BundleJsonExporter().export(prog, path)
+            with open(path) as f:
+                data = json.load(f)
+            assert data["total_bundles"] == 5
+            assert data["annotated_instructions"] == 5
+            assert "mappings" in data
+            assert isinstance(data["mappings"], list)
+        finally:
+            os.unlink(path)
+
+    def test_json_mappings_sorted(self):
+        """Mappings sorted by start_line."""
+        prog = _make_program()
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            BundleJsonExporter().export(prog, path)
+            with open(path) as f:
+                data = json.load(f)
+            lines = [m["loc"]["start_line"] for m in data["mappings"]]
+            assert lines == sorted(lines)
+        finally:
+            os.unlink(path)
+
+    def test_json_mapping_entry_fields(self):
+        """Each mapping has loc, slots, opcodes."""
+        prog = _make_program()
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            BundleJsonExporter().export(prog, path)
+            with open(path) as f:
+                data = json.load(f)
+            m = data["mappings"][0]  # loc_587 (sorted first)
+            assert "loc" in m
+            assert m["loc"]["file"] == "kernel.py"
+            assert m["loc"]["start_line"] == 587
+            assert "slots" in m
+            assert "opcodes" in m
+        finally:
+            os.unlink(path)
+
+    def test_json_slots_format(self):
+        """Slots are {bundle: hex_str, slot: int}."""
+        prog = _make_program()
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            BundleJsonExporter().export(prog, path)
+            with open(path) as f:
+                data = json.load(f)
+            m = data["mappings"][0]  # loc_587
+            slots = m["slots"]
+            assert {"bundle": "0x11", "slot": 0} in slots
+            assert {"bundle": "0x11", "slot": 1} in slots
+        finally:
+            os.unlink(path)
+
+    def test_json_opcodes_count(self):
+        """Opcodes are {opcode: count}."""
+        prog = _make_program()
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            BundleJsonExporter().export(prog, path)
+            with open(path) as f:
+                data = json.load(f)
+            m = data["mappings"][0]  # loc_587
+            assert m["opcodes"]["sld"] == 2
+            assert m["opcodes"]["sshll.u32"] == 1
+        finally:
+            os.unlink(path)
+
+    def test_json_line_filter(self):
+        """AC3: line filter applied to JSON output."""
+        prog = _make_program()
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            BundleJsonExporter().export(prog, path, line_filter=684)
+            with open(path) as f:
+                data = json.load(f)
+            assert len(data["mappings"]) == 1
+            assert data["mappings"][0]["loc"]["start_line"] == 684
+        finally:
+            os.unlink(path)
+
+    def test_json_empty_program(self):
+        """Empty program produces valid JSON with zeros."""
+        prog = BundleProgram(bundles=[], source_index={})
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            BundleJsonExporter().export(prog, path)
+            with open(path) as f:
+                data = json.load(f)
+            assert data["total_bundles"] == 0
+            assert data["annotated_instructions"] == 0
+            assert data["mappings"] == []
+        finally:
+            os.unlink(path)
