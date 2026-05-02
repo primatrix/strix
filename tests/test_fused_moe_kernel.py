@@ -99,16 +99,16 @@ class TestFusedMoeConfig:
         assert "default_shape" in self.config
 
     def test_default_shape_num_tokens(self):
-        assert self.config["default_shape"]["num_tokens"] == 1024
+        assert self.config["default_shape"]["num_tokens"] == 256
 
     def test_default_shape_num_experts(self):
-        assert self.config["default_shape"]["num_experts"] == 128
+        assert self.config["default_shape"]["num_experts"] == 256
 
     def test_default_shape_top_k(self):
         assert self.config["default_shape"]["top_k"] == 8
 
     def test_default_shape_hidden_size(self):
-        assert self.config["default_shape"]["hidden_size"] == 4096
+        assert self.config["default_shape"]["hidden_size"] == 8192
 
     def test_default_shape_intermediate_size(self):
         assert self.config["default_shape"]["intermediate_size"] == 2048

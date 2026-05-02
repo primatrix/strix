@@ -11,32 +11,34 @@ from ._fused_moe_impl import (
 
 config = {
     "default_shape": {
-        "num_tokens": 1024,
-        "num_experts": 128,
+        "num_tokens": 256,
+        "num_experts": 256,
         "top_k": 8,
-        "hidden_size": 4096,
+        "hidden_size": 8192,
         "intermediate_size": 2048,
     },
     "dtype": "bfloat16",
     "weight_dtype": "bfloat16",
     "act_fn": "silu",
     "ep_size": 4,
+    "se_intermediate_size": 2048,
     "tpu_type": "v7x",
     "tpu_topology": "2x2x1",
-    "description": "Fused EP MoE kernel with batch scatter optimization (Qwen3-MoE-128E config)",
+    "description": "Fused EP MoE kernel — Ling 2.6 1T decode config (256e, top_k=8, H=8192, I=2048, shared expert)",
 }
 
 
 def kernel_fn(
-    num_tokens=1024,
-    num_experts=128,
+    num_tokens=256,
+    num_experts=256,
     top_k=8,
-    hidden_size=4096,
+    hidden_size=8192,
     intermediate_size=2048,
     dtype=jnp.bfloat16,
     weight_dtype=jnp.bfloat16,
     act_fn="silu",
     ep_size=8,
+    se_intermediate_size=2048,
     block_config=None,
 ):
     """Construct inputs and call fused_ep_moe, returning a JAX-compilable closure."""
@@ -52,12 +54,17 @@ def kernel_fn(
     )
 
     key = jax.random.key(42)
-    k1, k2, k3, k4, k5 = jax.random.split(key, 5)
+    k1, k2, k3, k4, k5, k6, k7, k8 = jax.random.split(key, 8)
 
     tokens = jax.random.normal(k1, (num_tokens, hidden_size), dtype=dtype)
     w1 = jax.random.normal(k2, (num_experts, hidden_size, intermediate_size), dtype=weight_dtype)
     w2 = jax.random.normal(k3, (num_experts, intermediate_size, hidden_size), dtype=weight_dtype)
     w3 = jax.random.normal(k4, (num_experts, hidden_size, intermediate_size), dtype=weight_dtype)
+
+    # Shared expert weights for models like Ling 2.6 with 1 shared expert.
+    w1_shared = jax.random.normal(k6, (hidden_size, se_intermediate_size), dtype=weight_dtype)
+    w2_shared = jax.random.normal(k7, (se_intermediate_size, hidden_size), dtype=weight_dtype)
+    w3_shared = jax.random.normal(k8, (hidden_size, se_intermediate_size), dtype=weight_dtype)
 
     topk_weights = jnp.ones((num_tokens, top_k), dtype=jnp.float32) / top_k
     topk_ids = jax.random.randint(k5, (num_tokens, top_k), 0, num_experts)
@@ -73,6 +80,9 @@ def kernel_fn(
             topk_ids=topk_ids,
             top_k=top_k,
             act_fn=act_fn,
+            w1_shared=w1_shared,
+            w2_shared=w2_shared,
+            w3_shared=w3_shared,
             block_config=block_config,
             tp_axis_name="tensor",
         )
