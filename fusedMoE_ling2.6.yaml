@@ -1,0 +1,44 @@
+# Ling 2.6 1T — MoE Decode Profile Config
+# ==========================================
+# Model: Ling-2.6-1T (万亿参数旗舰版, ~1T params)
+# Stage: Decode (autoregressive, 1 token per sequence)
+# Batch size: 256 → num_tokens=256
+#
+# MoE Architecture (inferred from Ling 2.0 1T technical report + Ling 2.6 evolution):
+#   Routed experts:        256
+#   Active experts/token:  8
+#   Shared expert:         1 (always active, ~9/257 experts per token)
+#   Hidden size:           8192
+#   Expert intermediate:   2048
+#   Activation:            SwiGLU (silu)
+#   Total intermediate:    2048 × 9 = 18432 per token
+#   Dense layers:          first 4 of 80 total (MoE: layers 4–79)
+#   Attention:             MLA + Lightning Linear (replaces GQA)
+#   Precision:             BF16 (training: FP8)
+#
+# Shape encoding (metadata): num_tokens,num_experts,top_k,hidden_size,intermediate_size
+# → decode @ bs=256: "256,256,8,8192,2048"
+#
+# Note: The benchmark runner reads kernel params from kernel config's
+# `default_shape`. To profile with these exact parameters, temporarily
+# update kernels/fused_moe.py config.default_shape to match.
+
+kernel: kernels.fused_moe
+shape: "256,256,8,8192,2048"
+chunk_size: 128
+tpu_type: v7x
+tpu_topology: 2x2x1
+
+# Additional model context (not used by runner, for reference):
+# model:
+#   name: Ling-2.6-1T
+#   total_params: ~1T
+#   activated_params: ~51B (estimated, ~5.1% per token)
+#   num_layers: 80
+#   moe_layers: 76 (layers 4-79)
+#   use_shared_expert: true
+#   use_grouped_topk: false
+#
+# Closest tuned block config (v7x, ep_size=32):
+#   ('bfloat16', 'bfloat16', 256, 256, 8, 8192, 2048, 32, True, False):
+#     (8, 2048, 2048, 2048, 8, 8, 2048, 2048, 2048, 256)
