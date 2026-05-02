@@ -1,7 +1,7 @@
 """Tests for end-to-end integration: CLI -> K8s -> GCS -> local download (Issue #212).
 
 Acceptance criteria:
-1. `python -m strix.cli import kernels.fused_moe --shape 1024,128,8,4096,2048` submits K8s Job
+1. `python -m strix.cli import kernels.fused_moe --shape 256,256,8,8192,2048` submits K8s Job
 2. Job completion triggers automatic IR dump download to local directory
 3. Downloaded benchmark_results/ contains benchmark_result.json and ir_dumps/{hlo,llo,mosaic}/
 4. Downloaded LLO files can be fed to `python -m strix.cli <llo.txt>` for analysis
@@ -42,7 +42,7 @@ def _import_runner():
 def _render_yaml(
     job_name: str = "strix-benchmark-test-20260501-120000",
     branch: str = "main",
-    shape: str = "1024,128,8,4096,2048",
+    shape: str = "256,256,8,8192,2048",
     chunk_size: str = "",
     kernel_module: str = "kernels.fused_moe",
     tpu_type: str = "v7x",
@@ -87,13 +87,13 @@ class TestCliToShellContract:
     def test_fused_moe_full_command_structure(self, mock_run):
         """AC1: CLI generates correct command for fused_moe kernel with AC shape."""
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
-        main(["import", "kernels.fused_moe", "--shape", "1024,128,8,4096,2048"])
+        main(["import", "kernels.fused_moe", "--shape", "256,256,8,8192,2048"])
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "bash"
         assert cmd[1].endswith("scripts/run_benchmark.sh")
         # Shell script expects kernel as first positional arg ($1)
         assert cmd[2] == "kernels.fused_moe"
-        assert cmd[3:5] == ["--shape", "1024,128,8,4096,2048"]
+        assert cmd[3:5] == ["--shape", "256,256,8,8192,2048"]
         assert cmd[5:7] == ["--tpu-type", "v7x"]
         assert cmd[7:9] == ["--tpu-topology", "2x2x1"]
 
@@ -367,7 +367,7 @@ class TestFusedMoeE2E:
         assert "config" in top_level_names
 
     def test_fused_moe_config_has_ac_shape_values(self):
-        """config default_shape must contain AC shape: 1024,128,8,4096,2048."""
+        """config default_shape must contain AC shape: 256,256,8,8192,2048."""
         kernel_path = _REPO_ROOT / "kernels" / "fused_moe.py"
         tree = ast.parse(kernel_path.read_text())
 
@@ -383,19 +383,19 @@ class TestFusedMoeE2E:
 
         assert config_dict is not None, "Could not find 'config' dictionary in fused_moe.py"
         default_shape = config_dict.get("default_shape", {})
-        assert default_shape.get("num_tokens") == 1024
-        assert default_shape.get("num_experts") == 128
+        assert default_shape.get("num_tokens") == 256
+        assert default_shape.get("num_experts") == 256
         assert default_shape.get("top_k") == 8
-        assert default_shape.get("hidden_size") == 4096
+        assert default_shape.get("hidden_size") == 8192
         assert default_shape.get("intermediate_size") == 2048
 
     def test_cli_parses_ac_shape_for_fused_moe(self):
-        """--shape 1024,128,8,4096,2048 is parsed correctly by CLI."""
+        """--shape 256,256,8,8192,2048 is parsed correctly by CLI."""
         ap = build_arg_parser()
         args = ap.parse_args(
-            ["import", "kernels.fused_moe", "--shape", "1024,128,8,4096,2048"]
+            ["import", "kernels.fused_moe", "--shape", "256,256,8,8192,2048"]
         )
-        assert args.shape == "1024,128,8,4096,2048"
+        assert args.shape == "256,256,8,8192,2048"
         assert args.kernel == "kernels.fused_moe"
 
     def test_job_name_slug_derivation_for_fused_moe(self):

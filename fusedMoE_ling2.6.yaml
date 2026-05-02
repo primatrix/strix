@@ -19,13 +19,11 @@
 # Shape encoding (metadata): num_tokens,num_experts,top_k,hidden_size,intermediate_size
 # → decode @ bs=256: "256,256,8,8192,2048"
 #
-# Note: The benchmark runner reads kernel params from kernel config's
-# `default_shape`. To profile with these exact parameters, temporarily
-# update kernels/fused_moe.py config.default_shape to match.
+# Note: kernels/fused_moe.py default_shape and kernel_fn defaults have been
+# updated to match these Ling 2.6 1T parameters, including shared expert weights.
 
 kernel: kernels.fused_moe
 shape: "256,256,8,8192,2048"
-chunk_size: 128
 tpu_type: v7x
 tpu_topology: 2x2x1
 
