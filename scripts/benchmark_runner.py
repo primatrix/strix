@@ -254,7 +254,12 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
         args.job_name, ir_dump_root, benchmark_result_path, output_dir,
     )
 
-    upload_to_gcs(tarball, args.gcs_bucket, args.job_name)
+    try:
+        upload_to_gcs(tarball, args.gcs_bucket, args.job_name)
+    except Exception as exc:
+        print(f"[benchmark] ERROR: GCS upload failed: {exc}", file=sys.stderr)
+        print(f"[benchmark] Tarball saved locally at: {tarball}", file=sys.stderr)
+        raise
 
     print(f"[benchmark] Done!")
 
