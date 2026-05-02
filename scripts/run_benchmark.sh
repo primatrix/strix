@@ -87,7 +87,7 @@ export JOB_NAME="strix-benchmark-${KERNEL_SLUG}-${TIMESTAMP}"
 
 # ---- Resolve branch ----
 export BRANCH
-BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"
+BRANCH="${BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')}"
 # Sanitise branch for K8s label (max 63 chars, alphanumeric + dash/dot/underscore)
 export BRANCH_LABEL
 BRANCH_LABEL="$(echo "${BRANCH}" | tr '/' '-' | cut -c1-63)"
