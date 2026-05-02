@@ -17,6 +17,7 @@ YAML_TEMPLATE="${SCRIPT_DIR}/benchmark_job.yaml"
 TPU_TYPE="v7x"
 TPU_TOPOLOGY="2x2x1"
 CHUNK_SIZE=""
+JOB_TIMEOUT=${JOB_TIMEOUT:-7200}
 
 # ---- Usage ----
 usage() {
@@ -145,27 +146,28 @@ RENDERED_YAML="$(envsubst "${ENVSUBST_VARS}" < "${YAML_TEMPLATE}")"
 echo "[run_benchmark] Deploying Job..."
 echo "${RENDERED_YAML}" | kubectl apply -f -
 
-# ---- Wait for completion (fail fast if Job fails) ----
-echo "[run_benchmark] Waiting for Job to complete..."
-kubectl wait --for=condition=complete "job/${JOB_NAME}" --timeout=7200s &
-WAIT_COMPLETE=$!
-kubectl wait --for=condition=failed "job/${JOB_NAME}" --timeout=7200s &
-WAIT_FAILED=$!
-
-# Whichever finishes first wins
-if wait -n "$WAIT_COMPLETE" "$WAIT_FAILED" 2>/dev/null; then
-  # One condition was met — check which one
-  if ! kubectl get job "${JOB_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' | grep -q True; then
+# ---- Wait for completion (polling loop, bash 3.2 compatible) ----
+echo "[run_benchmark] Waiting for Job to complete (timeout: ${JOB_TIMEOUT}s)..."
+ELAPSED=0
+INTERVAL=30
+while [[ $ELAPSED -lt $JOB_TIMEOUT ]]; do
+  STATUS=$(kubectl get job "${JOB_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)
+  if echo "$STATUS" | grep -q True; then
+    break
+  fi
+  STATUS=$(kubectl get job "${JOB_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)
+  if echo "$STATUS" | grep -q True; then
     echo "Error: Job ${JOB_NAME} failed" >&2
     kubectl logs "job/${JOB_NAME}" --tail=50 2>/dev/null || true
     exit 1
   fi
-else
+  sleep $INTERVAL
+  ELAPSED=$((ELAPSED + INTERVAL))
+done
+if [[ $ELAPSED -ge $JOB_TIMEOUT ]]; then
   echo "Error: timed out waiting for Job ${JOB_NAME}" >&2
   exit 1
 fi
-# Kill the remaining background wait
-kill "$WAIT_COMPLETE" "$WAIT_FAILED" 2>/dev/null || true
 
 # ---- Download results ----
 echo "[run_benchmark] Downloading results from ${GCS_PATH}..."
