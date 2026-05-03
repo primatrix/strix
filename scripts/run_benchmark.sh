@@ -19,6 +19,7 @@ TPU_TOPOLOGY="2x2x1"
 CHUNK_SIZE=""
 COMPILE_ONLY=""
 TARGET_TOPOLOGY=""
+NUM_TOKENS=""
 JOB_TIMEOUT=${JOB_TIMEOUT:-7200}
 
 # ---- Usage ----
@@ -36,6 +37,7 @@ Options:
   --tpu-topology <t>   TPU topology (default: 2x2x1)
   --compile-only       Cross-compile only, no execution
   --target-topology <t> Target topology for cross-compilation (default: 2x8x8)
+  --num-tokens <n>     Override num_tokens for cross-compilation
   -h, --help           Show this help
 EOF
   exit 1
@@ -77,6 +79,10 @@ while [[ $# -gt 0 ]]; do
       TARGET_TOPOLOGY="${2:?--target-topology requires a value}"
       shift 2
       ;;
+    --num-tokens)
+      NUM_TOKENS="${2:?--num-tokens requires a value}"
+      shift 2
+      ;;
     -h|--help)
       usage
       ;;
@@ -96,6 +102,9 @@ fi
 if [[ -n "${COMPILE_ONLY}" ]]; then
   TARGET_TOPOLOGY="${TARGET_TOPOLOGY:-2x8x8}"
   RUNNER_CMD="python scripts/cross_compile.py --topology ${TARGET_TOPOLOGY}"
+  if [[ -n "${NUM_TOKENS}" ]]; then
+    RUNNER_CMD="${RUNNER_CMD} --num-tokens ${NUM_TOKENS}"
+  fi
 else
   RUNNER_CMD="python scripts/benchmark_runner.py"
 fi

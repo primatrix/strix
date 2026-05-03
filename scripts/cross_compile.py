@@ -62,11 +62,38 @@ def parse_args():
     return p.parse_args()
 
 
-def setup_ir_dump_flags(ir_root: pathlib.Path):
+def _parse_flag(env_value: str, flag_name: str) -> str | None:
+    """Extract a flag value from a space-separated flags string."""
+    import re
+    m = re.search(rf"{re.escape(flag_name)}=(\S+)", env_value)
+    return m.group(1) if m else None
+
+
+def setup_ir_dump_flags(ir_root: pathlib.Path) -> pathlib.Path:
     """Set XLA_FLAGS and LIBTPU_INIT_ARGS for IR dump collection.
 
+    If the env vars are already set (e.g. by K8s Job YAML), detects the
+    actual dump root from the existing flags and returns it.  Otherwise
+    configures dumps under *ir_root*.
+
     MUST be called before ``import jax``.
+
+    Returns the effective IR root directory (may differ from *ir_root*
+    when env vars were pre-set).
     """
+    # If env vars are already set, derive ir_root from them.
+    existing_libtpu = os.environ.get("LIBTPU_INIT_ARGS", "")
+    if existing_libtpu:
+        llo_dir = _parse_flag(existing_libtpu, "--xla_jf_dump_to")
+        if llo_dir:
+            # llo_dir is e.g. "/tmp/ir_dumps/llo" → parent is the ir_root
+            effective_root = pathlib.Path(llo_dir).parent
+            for sub in ("hlo", "llo", "mosaic"):
+                (effective_root / sub).mkdir(parents=True, exist_ok=True)
+            print(f"Using pre-set IR dump root: {effective_root}")
+            return effective_root
+
+    # No pre-existing env vars — set our own.
     for sub in ("hlo", "llo", "mosaic"):
         (ir_root / sub).mkdir(parents=True, exist_ok=True)
 
@@ -87,6 +114,7 @@ def setup_ir_dump_flags(ir_root: pathlib.Path):
             "--xla_mosaic_enable_llo_source_annotations=true",
         ]),
     )
+    return ir_root
 
 
 def create_virtual_topology(topology_str: str, tpu_name: str):
@@ -129,7 +157,7 @@ def main():
     ir_root = pathlib.Path(args.output_dir) / args.topology
 
     # ── Step 0: IR dump flags (BEFORE import jax) ──
-    setup_ir_dump_flags(ir_root)
+    ir_root = setup_ir_dump_flags(ir_root)
 
     import jax
     import jax.numpy as jnp
