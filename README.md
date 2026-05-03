@@ -43,6 +43,7 @@ Strix provides three subcommands:
 | `analyze` | Parse and simulate an LLO dump. **Default** — if the first positional arg doesn't match any subcommand, `analyze` is prepended automatically. |
 | `analyze-bundles` | Parse a `*-final_bundles.txt` file and map VLIW bundles to Pallas source lines. |
 | `import` | Deploy a kernel to a GKE TPU pod, run a benchmark, and download IR dumps. |
+| `cross-compile` | Cross-compile a kernel for a target TPU topology and export LLO without running. |
 
 ---
 
@@ -155,6 +156,37 @@ python -m strix import kernels.chunk_kda_fwd \
 This deploys a K8s Job to the GKE cluster, runs the kernel with the given shape,
 collects HLO/LLO/Mosaic IR dumps, and downloads them locally for further
 analysis with `strix analyze`.
+
+---
+
+### `cross-compile` — Cross-compile a kernel for a target TPU topology
+
+```
+python scripts/cross_compile.py [OPTIONS]
+```
+
+Cross-compiles the fused MoE kernel on a small TPU slice (e.g. 4-chip v7x) targeting a larger topology (e.g. `2x8x8` = 128 chips, 256 devices). Uses `jax.experimental.topologies` to create a virtual mesh, then compiles via libtpu to dump HLO/LLO/Mosaic IR — without needing all physical devices.
+
+| Option | Default | Description |
+|---|---|---|
+| `--topology` | `2x8x8` | Target TPU chip topology (e.g. `2x8x8`, `2x2x1`). |
+| `--output-dir` | `/tmp/cross_compile` | Root output directory for IR dumps. |
+| `--num-tokens` | `256` | Number of tokens. |
+| `--num-experts` | `256` | Number of experts. |
+| `--top-k` | `8` | Top-K experts per token. |
+| `--hidden-size` | `8192` | Hidden dimension size. |
+| `--intermediate-size` | `2048` | Intermediate (FFN) dimension size. |
+| `--se-intermediate-size` | `2048` | Shared expert intermediate dimension size. |
+
+Requires running on a TPU VM with JAX >= 0.5.x and libtpu.
+
+**Example:**
+
+```bash
+python scripts/cross_compile.py --topology 2x8x8
+```
+
+IR dumps are written to `<output-dir>/<topology>/{hlo,llo,mosaic}/`.
 
 ---
 

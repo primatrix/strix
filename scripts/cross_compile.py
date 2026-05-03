@@ -44,6 +44,21 @@ def parse_args():
     p.add_argument("--hidden-size", type=int, default=8192)
     p.add_argument("--intermediate-size", type=int, default=2048)
     p.add_argument("--se-intermediate-size", type=int, default=2048)
+    p.add_argument(
+        "--tpu-type",
+        default="v7x",
+        help="TPU type for topology name prefix (default: v7x)",
+    )
+    p.add_argument(
+        "--job-name",
+        default=os.environ.get("JOB_NAME", ""),
+        help="Job name for GCS upload (default: from JOB_NAME env var)",
+    )
+    p.add_argument(
+        "--gcs-bucket",
+        default=os.environ.get("GCS_BUCKET", ""),
+        help="GCS bucket for result upload (default: from GCS_BUCKET env var)",
+    )
     return p.parse_args()
 
 
@@ -74,7 +89,7 @@ def setup_ir_dump_flags(ir_root: pathlib.Path):
     )
 
 
-def create_virtual_topology(topology_str: str):
+def create_virtual_topology(topology_str: str, tpu_name: str):
     """Create a virtual TPU topology using jax.experimental.topologies.
 
     Returns the topology descriptor whose ``.devices`` array contains virtual
@@ -82,19 +97,15 @@ def create_virtual_topology(topology_str: str):
     """
     from jax.experimental import topologies  # noqa: E402
 
-    # The API may accept (platform, topology=...) or (name, platform, topology=...).
-    # Try the kwargs-only form first, then the positional form.
-    try:
-        return topologies.get_topology_desc(
-            platform="tpu",
-            topology=topology_str,
-        )
-    except TypeError:
-        return topologies.get_topology_desc(
-            "cross_compile",
-            "tpu",
-            topology=topology_str,
-        )
+    # TPU topology_name format: "<name>:<chip_grid>", e.g. "TPU7x:2x8x8"
+    # The name part must match libtpu's known external names.
+    topology_name = f"{tpu_name}:{topology_str}"
+    print(f"Using topology_name: {topology_name}")
+
+    return topologies.get_topology_desc(
+        topology_name,
+        platform="tpu",
+    )
 
 
 def report_ir_dumps(ir_root: pathlib.Path):
@@ -126,12 +137,16 @@ def main():
     from jax.sharding import Mesh
 
     print(f"JAX version : {jax.__version__}")
-    print(f"Local devices: {len(jax.local_devices())} × {jax.local_devices()[0].device_kind}")
+    local_device = jax.local_devices()[0]
+    print(f"Local devices: {len(jax.local_devices())} × {local_device.device_kind}")
 
     # ── Step 1: Virtual topology ──
-    print(f"\nCreating virtual topology: {args.topology}")
-    topo = create_virtual_topology(args.topology)
-    virtual_devices = topo.devices.flatten()
+    # Use the device_kind (e.g. "TPU7x") as the topology name prefix,
+    # since it matches libtpu's known external names.
+    tpu_name = local_device.device_kind
+    print(f"\nCreating virtual topology: {tpu_name}:{args.topology}")
+    topo = create_virtual_topology(args.topology, tpu_name=tpu_name)
+    virtual_devices = np.array(topo.devices).flatten()
     num_devices = len(virtual_devices)
     print(f"Virtual devices: {num_devices}")
 
@@ -152,30 +167,46 @@ def main():
     from kernels._fused_moe_impl import FusedMoEBlockConfig, fused_ep_moe
 
     # ── Step 4: Input arrays (zeros — values irrelevant for compilation) ──
+    # Ensure num_tokens is large enough: local_num_tokens = num_tokens / ep_size
+    # must be >= t_packing (2 for bf16). Auto-scale if needed.
+    num_tokens = args.num_tokens
+    t_packing = 32 // (jnp.dtype(jnp.bfloat16).itemsize * 8)  # 2 for bf16
+    min_tokens = num_devices * t_packing  # each device needs >= t_packing tokens
+    if num_tokens < min_tokens:
+        print(f"Adjusting num_tokens from {num_tokens} to {min_tokens} "
+              f"(EP={num_devices} × t_packing={t_packing})")
+        num_tokens = min_tokens
+
     print(f"\nAllocating inputs on local TPU …")
-    tokens = jnp.zeros((args.num_tokens, args.hidden_size), dtype=jnp.bfloat16)
+    tokens = jnp.zeros((num_tokens, args.hidden_size), dtype=jnp.bfloat16)
     w1 = jnp.zeros((args.num_experts, args.hidden_size, args.intermediate_size), dtype=jnp.bfloat16)
     w2 = jnp.zeros((args.num_experts, args.intermediate_size, args.hidden_size), dtype=jnp.bfloat16)
     w3 = jnp.zeros((args.num_experts, args.hidden_size, args.intermediate_size), dtype=jnp.bfloat16)
-    topk_weights = jnp.ones((args.num_tokens, args.top_k), dtype=jnp.float32) / args.top_k
-    topk_ids = jnp.zeros((args.num_tokens, args.top_k), dtype=jnp.int32)
+    topk_weights = jnp.ones((num_tokens, args.top_k), dtype=jnp.float32) / args.top_k
+    topk_ids = jnp.zeros((num_tokens, args.top_k), dtype=jnp.int32)
     w1_shared = jnp.zeros((args.hidden_size, args.se_intermediate_size), dtype=jnp.bfloat16)
     w2_shared = jnp.zeros((args.se_intermediate_size, args.hidden_size), dtype=jnp.bfloat16)
     w3_shared = jnp.zeros((args.hidden_size, args.se_intermediate_size), dtype=jnp.bfloat16)
 
     # ── Step 5: Block config ──
-    # bt will be clamped to local_num_tokens (= num_tokens // ep_size) by
-    # effective_for().  Use the closest tuned config as starting point.
+    # Adjust block config for the target EP size.
+    # local_num_tokens = num_tokens / ep_size; bt must divide it.
+    # bd1/bd2/bd1c/bd2c must be aligned to tile_align = t_packing * 128 = 256 (bf16).
+    local_num_tokens = num_tokens // ep_size
+    bt = min(8, local_num_tokens)  # clamp bt to local_num_tokens
+    bt = max(bt, t_packing)  # must be >= t_packing
     block_config = FusedMoEBlockConfig(
-        bt=8, btc=2048, bf=2048, bfc=2048,
-        bd1=8, bd1c=8, bd2=2048, bd2c=2048,
+        bt=bt, btc=2048, bf=2048, bfc=2048,
+        bd1=256, bd1c=256, bd2=2048, bd2c=2048,
         bse=2048, bts=256,
     )
 
-    # ── Step 6: Compile (compile_only=True → returns (kernel_fn, args)) ──
-    print(f"\nBuilding SPMD kernel for {ep_size} devices …")
+    # ── Step 6: Lower (trace + SPMD partitioning) ──
+    # Use .lower() on the jitted fused_ep_moe to get the lowered form
+    # without executing. This works with virtual devices.
+    print(f"\nLowering SPMD kernel for {ep_size} devices …")
     t0 = time.monotonic()
-    kernel_fn, kernel_args = fused_ep_moe(
+    lowered = fused_ep_moe.lower(
         mesh=virtual_mesh,
         tokens=tokens,
         w1=w1, w2=w2, w3=w3,
@@ -187,19 +218,11 @@ def main():
         w2_shared=w2_shared,
         w3_shared=w3_shared,
         block_config=block_config,
-        compile_only=True,
     )
-    t_build = time.monotonic() - t0
-    print(f"Kernel built in {t_build:.1f}s")
-
-    # ── Step 7: Lower ──
-    print(f"Lowering (tracing SPMD for {ep_size}-device mesh) …")
-    t0 = time.monotonic()
-    lowered = kernel_fn.lower(*kernel_args)
     t_lower = time.monotonic() - t0
     print(f"Lowered in {t_lower:.1f}s")
 
-    # ── Step 8: Compile → LLO is generated here ──
+    # ── Step 7: Compile → LLO is generated here ──
     print(f"Compiling (libtpu XLA → LLO for {args.topology} topology) …")
     t0 = time.monotonic()
     compiled = lowered.compile()
@@ -217,7 +240,31 @@ def main():
 
     # ── Step 9: Report ──
     report_ir_dumps(ir_root)
-    print(f"\nDone. Total wall time: {t_build + t_lower + t_compile:.1f}s")
+    print(f"\nDone. Total wall time: {t_lower + t_compile:.1f}s")
+
+    # ── Step 10: Package and upload to GCS (when running as K8s Job) ──
+    if args.job_name and args.gcs_bucket:
+        import tarfile
+        tarball_path = pathlib.Path(f"/tmp/{args.job_name}.tar.gz")
+        print(f"\nPackaging IR dumps to {tarball_path} ...")
+        with tarfile.open(tarball_path, "w:gz") as tar:
+            tar.add(str(ir_root), arcname="ir_dumps")
+        print(f"Tarball size: {tarball_path.stat().st_size:,} bytes")
+
+        from google.cloud import storage
+        gcs_path = args.gcs_bucket.removeprefix("gs://").strip("/")
+        parts = gcs_path.split("/", 1)
+        bucket_name = parts[0]
+        bucket_prefix = parts[1] if len(parts) > 1 else ""
+        blob_path = f"{args.job_name}/{tarball_path.name}"
+        if bucket_prefix:
+            blob_path = f"{bucket_prefix}/{blob_path}"
+        print(f"Uploading to gs://{bucket_name}/{blob_path} ...")
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_path)
+        blob.upload_from_filename(str(tarball_path))
+        print("Upload complete")
 
 
 if __name__ == "__main__":

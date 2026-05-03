@@ -3139,7 +3139,6 @@ def fused_ep_moe(
     block_config: FusedMoEBlockConfig | None = None,
     dp_axis_name: str = "data",
     tp_axis_name: str = "tensor",
-    compile_only: bool = False,
 ):
 
     ep_size = get_ep_size(mesh, dp_axis_name, tp_axis_name)
@@ -3643,6 +3642,4 @@ def fused_ep_moe(
         w3_shared_scale,
         w2_shared_scale,
     )
-    if compile_only:
-        return kernel, args
     return kernel(*args)
