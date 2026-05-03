@@ -3139,6 +3139,7 @@ def fused_ep_moe(
     block_config: FusedMoEBlockConfig | None = None,
     dp_axis_name: str = "data",
     tp_axis_name: str = "tensor",
+    compile_only: bool = False,
 ):
 
     ep_size = get_ep_size(mesh, dp_axis_name, tp_axis_name)
@@ -3619,7 +3620,7 @@ def fused_ep_moe(
     )
     a2a_g_hbm_scratch = pl.empty((num_experts, bt, t_packing, hidden_size // t_packing), t_dtype)
 
-    return kernel(
+    args = (
         tokens,
         w1,
         w2,
@@ -3642,3 +3643,6 @@ def fused_ep_moe(
         w3_shared_scale,
         w2_shared_scale,
     )
+    if compile_only:
+        return kernel, args
+    return kernel(*args)
