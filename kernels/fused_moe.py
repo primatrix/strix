@@ -25,6 +25,18 @@ config = {
     "tpu_type": "v7x",
     "tpu_topology": "2x2x1",
     "description": "Fused EP MoE kernel — Ling 2.6 1T decode config (256e, top_k=8, H=8192, I=2048, shared expert)",
+    "block_config": {
+        "bt": 64,
+        "bf": 2048,
+        "bd1": 2048,
+        "bd2": 2048,
+        "bts": 8,
+        "btc": 8,
+        "bfc": 2048,
+        "bd1c": 2048,
+        "bd2c": 2048,
+        "bse": 256,
+    },
 }
 
 

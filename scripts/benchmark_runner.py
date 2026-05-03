@@ -134,6 +134,9 @@ def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None):
         kwargs["chunk_size"] = chunk_size
     if "ep_size" in config:
         kwargs["ep_size"] = config["ep_size"]
+    if "block_config" in config:
+        from kernels._fused_moe_impl import FusedMoEBlockConfig
+        kwargs["block_config"] = FusedMoEBlockConfig(**config["block_config"])
 
     run_fn = kernel_fn(**kwargs)
 
