@@ -1,0 +1,141 @@
+[
+  {
+    "name": "routing_metadata",
+    "op_type": "elementwise",
+    "inputs": [
+      {"name": "topk_ids", "shape": [64, 8], "dtype": "int32"},
+      {"name": "topk_weights", "shape": [64, 8], "dtype": "f32"}
+    ],
+    "outputs": [
+      {"name": "expert_sizes", "shape": [1, 256], "dtype": "int32"},
+      {"name": "t2e_routing", "shape": [64, 256], "dtype": "int32"}
+    ],
+    "flops_formula": "5*M*N",
+    "flops_vars": {"M": 64, "N": 256},
+    "compute_unit": "VPU",
+    "fusable_with_prev": false
+  },
+  {
+    "name": "expert_ffn1_gate_all64",
+    "op_type": "matmul",
+    "inputs": [
+      {"name": "tokens_scattered", "shape": [4096, 8192], "dtype": "bf16"},
+      {"name": "W1_all_experts", "shape": [8192, 131072], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "gate_all", "shape": [4096, 131072], "dtype": "bf16"}],
+    "flops_formula": "2*M*N*K",
+    "flops_vars": {"M": 4096, "N": 131072, "K": 8192},
+    "compute_unit": "MXU",
+    "fusable_with_prev": false,
+    "_comment": "64 experts × [64,8192]×[8192,2048], aggregated. M=64×64=4096, N=64×2048=131072 for total data volume. FLOPs = 64 × 2×64×8192×2048 = 137,438,953,472"
+  },
+  {
+    "name": "expert_ffn1_up_all64",
+    "op_type": "matmul",
+    "inputs": [
+      {"name": "tokens_scattered", "shape": [4096, 8192], "dtype": "bf16"},
+      {"name": "W3_all_experts", "shape": [8192, 131072], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "up_all", "shape": [4096, 131072], "dtype": "bf16"}],
+    "flops_formula": "2*M*N*K",
+    "flops_vars": {"M": 4096, "N": 131072, "K": 8192},
+    "compute_unit": "MXU",
+    "fusable_with_prev": false,
+    "_comment": "64 experts × [64,8192]×[8192,2048] aggregated"
+  },
+  {
+    "name": "silu_gated_activation_all64",
+    "op_type": "elementwise",
+    "inputs": [
+      {"name": "gate_all", "shape": [4096, 131072], "dtype": "bf16"},
+      {"name": "up_all", "shape": [4096, 131072], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "act_all", "shape": [4096, 131072], "dtype": "bf16"}],
+    "flops_formula": "4*M*N",
+    "flops_vars": {"M": 4096, "N": 131072},
+    "compute_unit": "VPU",
+    "fusable_with_prev": true,
+    "_comment": "SiLU(gate) * up across all 64 experts"
+  },
+  {
+    "name": "expert_ffn2_down_all64",
+    "op_type": "matmul",
+    "inputs": [
+      {"name": "act_all", "shape": [4096, 131072], "dtype": "bf16"},
+      {"name": "W2_all_experts", "shape": [131072, 8192], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "expert_out_all", "shape": [4096, 8192], "dtype": "bf16"}],
+    "flops_formula": "2*M*N*K",
+    "flops_vars": {"M": 4096, "N": 8192, "K": 131072},
+    "compute_unit": "MXU",
+    "fusable_with_prev": false,
+    "_comment": "64 experts × [64,2048]×[2048,8192] aggregated"
+  },
+  {
+    "name": "se_ffn1_gate",
+    "op_type": "matmul",
+    "inputs": [
+      {"name": "se_tokens", "shape": [64, 8192], "dtype": "bf16"},
+      {"name": "W1_shared", "shape": [8192, 2048], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "se_gate", "shape": [64, 2048], "dtype": "bf16"}],
+    "flops_formula": "2*M*N*K",
+    "flops_vars": {"M": 64, "N": 2048, "K": 8192},
+    "compute_unit": "MXU",
+    "fusable_with_prev": false
+  },
+  {
+    "name": "se_ffn1_up",
+    "op_type": "matmul",
+    "inputs": [
+      {"name": "se_tokens", "shape": [64, 8192], "dtype": "bf16"},
+      {"name": "W3_shared", "shape": [8192, 2048], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "se_up", "shape": [64, 2048], "dtype": "bf16"}],
+    "flops_formula": "2*M*N*K",
+    "flops_vars": {"M": 64, "N": 2048, "K": 8192},
+    "compute_unit": "MXU",
+    "fusable_with_prev": false
+  },
+  {
+    "name": "se_activation",
+    "op_type": "elementwise",
+    "inputs": [
+      {"name": "se_gate", "shape": [64, 2048], "dtype": "bf16"},
+      {"name": "se_up", "shape": [64, 2048], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "se_act", "shape": [64, 2048], "dtype": "bf16"}],
+    "flops_formula": "4*M*N",
+    "flops_vars": {"M": 64, "N": 2048},
+    "compute_unit": "VPU",
+    "fusable_with_prev": true
+  },
+  {
+    "name": "se_ffn2_down",
+    "op_type": "matmul",
+    "inputs": [
+      {"name": "se_act", "shape": [64, 2048], "dtype": "bf16"},
+      {"name": "W2_shared", "shape": [2048, 8192], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "se_out", "shape": [64, 8192], "dtype": "bf16"}],
+    "flops_formula": "2*M*N*K",
+    "flops_vars": {"M": 64, "N": 8192, "K": 2048},
+    "compute_unit": "MXU",
+    "fusable_with_prev": false
+  },
+  {
+    "name": "output_accumulation",
+    "op_type": "elementwise",
+    "inputs": [
+      {"name": "expert_out_all", "shape": [64, 8, 8192], "dtype": "bf16"},
+      {"name": "topk_weights", "shape": [64, 8], "dtype": "f32"},
+      {"name": "se_out", "shape": [64, 8192], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "final_output", "shape": [64, 8192], "dtype": "bf16"}],
+    "flops_formula": "M*K*N",
+    "flops_vars": {"M": 64, "N": 8192, "K": 8},
+    "compute_unit": "VPU",
+    "fusable_with_prev": false,
+    "_comment": "Weighted sum of top_k=8 expert outputs + SE output"
+  }
+]

@@ -1,0 +1,64 @@
+[
+  {
+    "name": "ffn1_gate_matmul",
+    "op_type": "matmul",
+    "inputs": [
+      {"name": "tokens", "shape": [64, 8192], "dtype": "bf16"},
+      {"name": "W1", "shape": [8192, 2048], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "gate", "shape": [64, 2048], "dtype": "bf16"}],
+    "flops_formula": "2*M*N*K",
+    "flops_vars": {"M": 64, "N": 2048, "K": 8192},
+    "compute_unit": "MXU",
+    "fusable_with_prev": false
+  },
+  {
+    "name": "ffn1_up_matmul",
+    "op_type": "matmul",
+    "inputs": [
+      {"name": "tokens", "shape": [64, 8192], "dtype": "bf16"},
+      {"name": "W3", "shape": [8192, 2048], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "up", "shape": [64, 2048], "dtype": "bf16"}],
+    "flops_formula": "2*M*N*K",
+    "flops_vars": {"M": 64, "N": 2048, "K": 8192},
+    "compute_unit": "MXU",
+    "fusable_with_prev": false
+  },
+  {
+    "name": "silu_activation",
+    "op_type": "elementwise",
+    "inputs": [{"name": "gate", "shape": [64, 2048], "dtype": "bf16"}],
+    "outputs": [{"name": "silu_gate", "shape": [64, 2048], "dtype": "bf16"}],
+    "flops_formula": "3*M*N",
+    "flops_vars": {"M": 64, "N": 2048},
+    "compute_unit": "VPU",
+    "fusable_with_prev": true
+  },
+  {
+    "name": "gated_mul",
+    "op_type": "elementwise",
+    "inputs": [
+      {"name": "silu_gate", "shape": [64, 2048], "dtype": "bf16"},
+      {"name": "up", "shape": [64, 2048], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "act", "shape": [64, 2048], "dtype": "bf16"}],
+    "flops_formula": "M*N",
+    "flops_vars": {"M": 64, "N": 2048},
+    "compute_unit": "VPU",
+    "fusable_with_prev": true
+  },
+  {
+    "name": "ffn2_down_matmul",
+    "op_type": "matmul",
+    "inputs": [
+      {"name": "act", "shape": [64, 2048], "dtype": "bf16"},
+      {"name": "W2", "shape": [2048, 8192], "dtype": "bf16"}
+    ],
+    "outputs": [{"name": "expert_out", "shape": [64, 8192], "dtype": "bf16"}],
+    "flops_formula": "2*M*N*K",
+    "flops_vars": {"M": 64, "N": 8192, "K": 2048},
+    "compute_unit": "MXU",
+    "fusable_with_prev": false
+  }
+]
