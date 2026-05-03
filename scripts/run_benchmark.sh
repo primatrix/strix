@@ -17,6 +17,8 @@ YAML_TEMPLATE="${SCRIPT_DIR}/benchmark_job.yaml"
 TPU_TYPE="v7x"
 TPU_TOPOLOGY="2x2x1"
 CHUNK_SIZE=""
+COMPILE_ONLY=""
+TARGET_TOPOLOGY=""
 JOB_TIMEOUT=${JOB_TIMEOUT:-7200}
 
 # ---- Usage ----
@@ -28,10 +30,12 @@ Arguments:
   kernel_module        Kernel module path (e.g. kernels.chunk_kda_fwd)
 
 Options:
-  --shape <dims>       Comma-separated shape (required)
+  --shape <dims>       Comma-separated shape (required for benchmark mode)
   --chunk-size <n>     Chunk size for the kernel
   --tpu-type <type>    TPU type (default: v7x)
   --tpu-topology <t>   TPU topology (default: 2x2x1)
+  --compile-only       Cross-compile only, no execution
+  --target-topology <t> Target topology for cross-compilation (default: 2x8x8)
   -h, --help           Show this help
 EOF
   exit 1
@@ -65,6 +69,14 @@ while [[ $# -gt 0 ]]; do
       TPU_TOPOLOGY="${2:?--tpu-topology requires a value}"
       shift 2
       ;;
+    --compile-only)
+      COMPILE_ONLY="true"
+      shift
+      ;;
+    --target-topology)
+      TARGET_TOPOLOGY="${2:?--target-topology requires a value}"
+      shift 2
+      ;;
     -h|--help)
       usage
       ;;
@@ -75,10 +87,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${SHAPE}" ]]; then
-  echo "Error: --shape is required" >&2
+if [[ -z "${SHAPE}" && -z "${COMPILE_ONLY}" ]]; then
+  echo "Error: --shape is required (unless --compile-only)" >&2
   usage
 fi
+
+# ---- Set runner command ----
+if [[ -n "${COMPILE_ONLY}" ]]; then
+  TARGET_TOPOLOGY="${TARGET_TOPOLOGY:-2x8x8}"
+  RUNNER_CMD="python scripts/cross_compile.py --topology ${TARGET_TOPOLOGY}"
+else
+  RUNNER_CMD="python scripts/benchmark_runner.py"
+fi
+export RUNNER_CMD
 
 # ---- Generate job name ----
 KERNEL_SLUG="${KERNEL_MODULE//[._]/-}"
@@ -140,7 +161,7 @@ trap cleanup EXIT
 
 # ---- Render and deploy ----
 echo "[run_benchmark] Rendering Job YAML for ${JOB_NAME}..."
-ENVSUBST_VARS='$JOB_NAME $BRANCH $BRANCH_LABEL $KERNEL_MODULE $SHAPE $CHUNK_SIZE $TPU_TYPE $TPU_TOPOLOGY $TPU_CHIPS $TPU_ACCELERATOR $GCS_BUCKET'
+ENVSUBST_VARS='$JOB_NAME $BRANCH $BRANCH_LABEL $KERNEL_MODULE $SHAPE $CHUNK_SIZE $TPU_TYPE $TPU_TOPOLOGY $TPU_CHIPS $TPU_ACCELERATOR $GCS_BUCKET $RUNNER_CMD'
 RENDERED_YAML="$(envsubst "${ENVSUBST_VARS}" < "${YAML_TEMPLATE}")"
 
 echo "[run_benchmark] Deploying Job..."
