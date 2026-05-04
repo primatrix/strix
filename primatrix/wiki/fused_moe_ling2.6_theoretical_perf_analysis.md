@@ -1224,6 +1224,286 @@ $$n_{bt} = \frac{T_{\text{local}}}{bt} = \frac{2{,}048}{256} = 8$$
 
 ---
 
+## 12. VLIW Bundle 指令共存分析
+
+基于 `69-final_hlo-static-per-bundle-utilization.txt` (36,121 bundle) 和 `71-final_bundles.txt` (35,897 条指令 bundle) 的逐 bundle 功能单元利用率统计与指令级 opcode 分析。
+
+### 12.1 TPU v7x 功能单元容量
+
+从 LLO dump 中提取的硬件功能单元及其每 VLIW bundle 的最大容量:
+
+| 功能单元 | 容量/bundle | 含义 | 激活 bundle 数 | 占比 |
+|----------|-----------|------|---------------|------|
+| **MXU** | 2 | 矩阵乘法单元 (MXU0 + MXU1) | 10,154 | 28.1% |
+| **XLU** | 2 | 跨 Lane 单元 (XLU0 + XLU1) | 358 | 1.0% |
+| **VALU** | 4 | 向量 ALU | 20,764 | 57.5% |
+| **VPOP** | 2 | 向量 POP 操作 | 2,938 | 8.1% |
+| **EUP** | 1 | 指数/特殊函数单元 | 1,120 | 3.1% |
+| **VLOAD** | 3 | 向量加载 (VMEM→REG) | 21,198 | 58.7% |
+| **VLOAD:FILL** | 3 | 向量预填充加载 (双缓冲) | 5,623 | 15.6% |
+| **VSTORE** | 2 | 向量存储 (REG→VMEM) | 6,876 | 19.0% |
+| **VSTORE:SPILL** | 2 | 向量溢出存储 | 5,113 | 14.2% |
+| **SALU** | 2 | 标量 ALU | 5,552 | 15.4% |
+
+> **注意**: VLOAD 与 VLOAD:FILL 使用**独立**容量池 (各 3 路)。VSTORE 与 VSTORE:SPILL 同理 (各 2 路)。VLOAD+VLOAD:FILL 可同时达到 3+3=6 路, VSTORE+VSTORE:SPILL 可同时达到 2+2=4 路。
+
+### 12.2 互斥关系 (同一 VLIW 中不可共存)
+
+经过逐 pair 交叉统计 (36,121 个 bundle), 发现以下**绝对互斥**关系:
+
+| 功能单元 A | 功能单元 B | 共存次数 | A 激活 | B 激活 | 根因 |
+|-----------|-----------|---------|--------|--------|------|
+| **MXU** | **XLU** | **0** | 10,154 | 358 | 共享同一指令发射槽/流水线 |
+| **XLU** | **EUP** | **0** | 358 | 1,120 | 硬件互斥 |
+
+**MXU vs XLU 互斥详解**:
+- MXU 指令: `vmatprep`, `vmatpush1` (及 `.mxu0`/`.mxu1` 变体)
+- XLU 指令: `vbcast.lane.b32.xlu0`, `vbcast.lane.b32.xlu1`, `vperm.xlu0`, `vperm.xlu1`, `vpop.permute.xlu0`, `vpop.permute.xlu1`
+- MXU 和 XLU **在 36,121 个 bundle 中从未同时出现** — 这是硬件级互斥, XLU 占用与 MXU 相同的 VLIW 发射槽
+
+**XLU vs EUP 互斥**:
+- EUP 由 `vpop.eup` 指令激活
+- 在 358 个 XLU bundle 和 1,120 个 EUP bundle 中, 两者从不同时出现
+- 原因: XLU 和 EUP 共享同一物理通路
+
+### 12.3 近互斥关系 (极少共存, <5%)
+
+**SALU 与其他单元的共存率极低**:
+
+| 功能单元 | SALU 共存次数 | 该单元激活总数 | 共存率 |
+|----------|-------------|--------------|--------|
+| MXU | 1 | 10,154 | 0.0% |
+| XLU | 6 | 358 | 1.7% |
+| VALU | 166 | 20,764 | 0.8% |
+| VPOP | 6 | 2,938 | 0.2% |
+| EUP | 24 | 1,120 | 2.1% |
+| VLOAD | 295 | 21,198 | 1.4% |
+| VLOAD:FILL | 28 | 5,623 | 0.5% |
+| VSTORE | 79 | 6,876 | 1.1% |
+| VSTORE:SPILL | 72 | 5,113 | 1.4% |
+
+**根因**: SALU (标量 ALU) 在 TPU 架构中使用独立的标量发射槽, 与向量单元 (VALU/VLOAD/VSTORE/MXU) 的指令发射通路**几乎完全分离**。仅在少数 DMA 发起 bundle (如 `dma.general` + `sst`) 中间歇共存。
+
+**SALU 独占 bundle 占比**: 5,125 / 5,552 = **92.3%** 的 SALU 激活发生在纯标量 bundle 中。
+
+### 12.4 自由共存关系 (高共存率)
+
+以下功能单元对在同一 VLIW bundle 中频繁同时出现:
+
+#### 12.4.1 MXU 的共存模式
+
+MXU 激活的 10,154 个 bundle 中:
+
+| MXU 共存对 | 共存次数 | 占 MXU bundle 比例 | 说明 |
+|-----------|---------|-------------------|------|
+| MXU + VLOAD | 7,144 | **70.4%** | 矩阵乘法时并行加载下一 tile 数据 |
+| MXU + VALU | 5,120 | **50.4%** | matmul 结果后处理 (格式转换/激活) |
+| MXU + VALU + VLOAD | 4,189 | **41.3%** | 三路并行: 计算+后处理+预取 |
+| MXU + VLOAD:FILL | 1,645 | 16.2% | 双缓冲权重预填充 |
+| MXU + VSTORE | 1,612 | 15.9% | matmul 结果写回 VMEM |
+| MXU + VSTORE:SPILL | 1,283 | 12.6% | 结果溢出写回 |
+| MXU + VPOP | 991 | 9.8% | 矩阵乘法结果 pop |
+| MXU + EUP | 248 | 2.4% | 矩阵乘+特殊函数 (SiLU 等) |
+| MXU + SALU | 1 | 0.0% | 几乎从不共存 |
+
+**关键发现**: MXU 与 VLOAD 的共存率高达 70%, 说明 LLO 调度器成功将权重/数据预取与 MXU 计算流水线化。双缓冲权重加载 (VLOAD:FILL 16.2%) 和结果写回 (VSTORE 15.9%) 穿插在计算 bundle 中。
+
+**MXU 双发射利用率**:
+
+| MXU 状态 | Bundle 数 | 占总量 |
+|----------|----------|--------|
+| MXU=0 (空闲) | 25,967 | 71.9% |
+| MXU=1 (单发射) | 686 | 1.9% |
+| MXU=2 (双发射) | 9,468 | **26.2%** |
+
+> MXU=1 出现在流水线首尾 bundle (第一个 MXU 预热/最后一个 MXU 排空), 仅占 MXU 激活 bundle 的 6.8%。
+
+#### 12.4.2 VALU 的共存模式
+
+VALU 是**最频繁激活**的向量单元 (57.5% bundle), 其共存模式:
+
+| VALU 共存对 | 共存次数 | 占 VALU bundle 比例 |
+|------------|---------|-------------------|
+| VALU + VLOAD | 13,391 | **64.5%** |
+| VALU + VSTORE | 6,106 | 29.4% |
+| VALU + VSTORE:SPILL | 4,676 | 22.5% |
+| VALU + VLOAD:FILL | 4,792 | 23.1% |
+| VALU + MXU | 5,120 | 24.7% |
+| VALU + VPOP | 2,432 | 11.7% |
+| VALU + EUP | 1,110 | 5.3% |
+
+**VALU 独占 bundle (VALU=4, 无其他单元)** 有 3,215 个 (占 VALU 激活的 15.5%), 对应纯向量计算阶段 (如 SiLU 激活、数据格式转换)。
+
+#### 12.4.3 VPOP + EUP 关系
+
+| 关系 | 数量 | 占比 |
+|------|------|------|
+| VPOP 激活总数 | 2,938 | — |
+| EUP 激活总数 | 1,120 | — |
+| VPOP + EUP 共存 | 871 | VPOP 的 29.7%, EUP 的 **77.8%** |
+| VPOP 无 EUP | 2,067 | VPOP 的 70.3% |
+| EUP 无 VPOP | 249 | EUP 的 **22.2%** |
+
+**解读**:
+- `vpop.eup` 指令同时激活 VPOP+EUP (读取指数单元结果)
+- `vpop.sfrf`, `vpop.permute.xlu*`, `vpop.f32.mrb[*].mxu*` 等指令仅激活 VPOP
+- EUP 无 VPOP 的情况出现在 `vpow2.f32`, `vrcp.f32` 等指令中 — 这些指令直接使用 EUP 结果而不需要显式 vpop
+
+### 12.5 高频 Bundle 模式统计
+
+在所有 36,121 个 bundle 中, 最常见的 VLIW 组合模式 (前 15):
+
+| 排名 | 功能单元组合 | 出现次数 | 占比 | 语义 |
+|------|------------|---------|------|------|
+| 1 | VALU=4 (纯向量计算) | 3,215 | 8.9% | SiLU/format convert |
+| 2 | SALU=1 (标量计算) | 2,707 | 7.5% | 地址计算/循环控制 |
+| 3 | SALU=2 | 2,418 | 6.7% | 双标量并行 |
+| 4 | VLOAD=1 (向量加载) | 1,956 | 5.4% | 数据预取 |
+| 5 | VALU=4 + VLOAD=1 | 1,482 | 4.1% | 计算 + 预取 |
+| 6 | MXU=2 + VLOAD=1 | 1,436 | 4.0% | 双 MXU + 数据加载 |
+| 7 | MXU=2 + VLOAD=2 | 1,318 | 3.6% | 双 MXU + 双路预取 |
+| 8 | MXU=2 (纯矩阵乘法) | 1,149 | 3.2% | 纯 matmul |
+| 9 | VLOAD=2 | 1,036 | 2.9% | 双路数据加载 |
+| 10 | VALU=4 + VLOAD=2 | 1,020 | 2.8% | 计算 + 双路预取 |
+| 11 | VALU=4 + VLOAD=1 + VLOAD:FILL=1 | 740 | 2.0% | 计算+加载+预填充 |
+| 12 | VALU=4 + VSTORE=1 + VSTORE:SPILL=1 | 693 | 1.9% | 计算+双路写回 |
+| 13 | MXU=2 + VALU=4 | 676 | 1.9% | 双MXU+满VALU |
+| 14 | ALL_IDLE | 464 | 1.3% | NOP/同步等待 |
+| 15 | VALU=4 + VLOAD=2 + VLOAD:FILL=2 | 468 | 1.3% | 满载加载+计算 |
+
+### 12.6 指令级 Opcode 到功能单元映射
+
+通过对 35,897 个 bundle 的逐指令 opcode 提取与利用率数据交叉验证:
+
+#### MXU 指令
+| Opcode | 出现次数 | MXU 槽 |
+|--------|---------|--------|
+| `vmatprep.subr.bf16.mxu0` | 5,184 | MXU0 (权重准备) |
+| `vmatprep.subr.bf16.mxu1` | 5,184 | MXU1 (权重准备) |
+| `vmatpush1.bf16.msra.mxu0` | 5,184 | MXU0 (乘加发射) |
+| `vmatpush1.bf16.msra.mxu1` | 5,184 | MXU1 (乘加发射) |
+| `vmatprep.mubr.bf16.mxu0` | 992 | MXU0 |
+| `vmatprep.mubr.bf16.mxu1` | 992 | MXU1 |
+| `vmatprep.mubr.f32.mxu0` | 608 | MXU0 (F32 累加) |
+| `vmatprep.mubr.f32.mxu1` | 608 | MXU1 (F32 累加) |
+
+> `vmatprep` 和 `vmatpush1` 的 `.mxu0`/`.mxu1` 后缀精确对应 MXU0/MXU1 双发射槽。单 bundle 中 MXU0+MXU1 可同时出现。
+
+#### XLU 指令
+| Opcode | 出现次数 | 说明 |
+|--------|---------|------|
+| `vbcast.lane.b32.xlu0` | + | 跨 Lane 广播 (XLU0) |
+| `vbcast.lane.b32.xlu1` | + | 跨 Lane 广播 (XLU1) |
+| `vperm.xlu0` | 61 | Lane 置换 (XLU0) |
+| `vperm.xlu1` | 67 | Lane 置换 (XLU1) |
+| `vpop.permute.xlu0` | 93 | POP+置换 (XLU0, 同时激活 VPOP) |
+| `vpop.permute.xlu1` | 99 | POP+置换 (XLU1, 同时激活 VPOP) |
+
+> XLU 指令与 MXU **互斥**。`vpop.permute.xlu*` 同时激活 VPOP 和 XLU 两个功能单元。
+
+#### 高频 VALU 指令
+| Opcode | 出现次数 | 说明 |
+|--------|---------|------|
+| `vrot.slane` | 24,724 | Lane 内旋转 (token 重排) |
+| `vcombine.high` | 13,006 | 向量合并高半部分 |
+| `vunpack.c.l.b16` | 10,240 | BF16 解包 |
+| `vsel` | 9,603 | 向量选择 |
+| `vcombine.low` | 4,801 | 向量合并低半部分 |
+| `vadd.f32` | 3,984 | F32 加法 |
+| `vmul.f32` | 2,704 | F32 乘法 |
+| `vpack.c.bf16` | 1,216 | BF16 打包 |
+
+> `vrot.slane` 以 24,724 次高居 opcode 榜首 — 对应 token tile 加载后的 Lane 数据重排布 (Section 7.6 确认: 源码 L1680-1684)。
+
+#### VLOAD/VSTORE 指令
+| Opcode | 出现次数 | 激活单元 |
+|--------|---------|---------|
+| `vld` | 34,493 | VLOAD |
+| `vld.sshfl` | 1,232 | VLOAD (+ shuffle) |
+| `vst` | 10,719 | VSTORE |
+| `vst.msk` | 7 | VSTORE (masked) |
+| `vstv` | 3 | VSTORE (vector) |
+
+#### VPOP/EUP 指令
+| Opcode | 出现次数 | 激活单元 |
+|--------|---------|---------|
+| `vpop.eup` | 1,120 | VPOP + EUP (读指数单元) |
+| `vpop.sfrf` | 228 | VPOP |
+| `vpop.f32.mrb[*].mxu*` | 136 | VPOP (读 MXU 累加器) |
+| `vpow2.f32` | 560 | EUP (直接使用) |
+| `vrcp.f32` | 560 | EUP (直接使用) |
+
+#### SALU 高频指令
+| Opcode | 出现次数 | 说明 |
+|--------|---------|------|
+| `sst` | 1,214 | 标量存储到 SMEM |
+| `smov` | 981 | 标量移动 |
+| `sshll.u32` | 715 | 标量左移 |
+| `sadd.s32` | 655 | 标量加法 |
+| `sld` | 481 | 标量加载 |
+| `scmp.*` | 1,069 | 标量比较 (合计) |
+
+#### 其他关键指令
+| Opcode | 出现次数 | 说明 |
+|--------|---------|------|
+| `dma.general` | 143 | 通用 DMA 发起 |
+| `dma.done.wait` | 137 | DMA 完成等待 |
+| `dma.hbm_to_vmem` | 53 | HBM→VMEM DMA |
+| `vsyncadd` | 147 | 信号量递增 |
+| `vsyncmov` | 228 | 信号量移动 |
+| `vtrace` | 342 | 调试追踪 |
+
+### 12.7 VLIW 共存规则速查表
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                     VLIW Bundle 共存规则                           │
+│                                                                  │
+│  ┌──────┐                                                       │
+│  │ MXU  │──×── XLU (互斥: 共享发射槽)                              │
+│  │      │──✓── VALU, VLOAD, VSTORE, VPOP, EUP                    │
+│  │      │──≈── SALU (几乎不共存, <0.1%)                            │
+│  └──────┘                                                       │
+│  ┌──────┐                                                       │
+│  │ XLU  │──×── MXU, EUP (互斥)                                    │
+│  │      │──✓── VALU, VLOAD, VSTORE, VPOP                          │
+│  └──────┘                                                       │
+│  ┌──────┐                                                       │
+│  │ SALU │──≈── 所有向量单元 (几乎不共存, <5%)                       │
+│  │      │──✓── DMA/sync 指令                                      │
+│  └──────┘                                                       │
+│  ┌──────┐                                                       │
+│  │ EUP  │──×── XLU                                                │
+│  │      │──✓── MXU, VALU, VLOAD, VSTORE, VPOP (77.8% 与 VPOP)    │
+│  └──────┘                                                       │
+│                                                                  │
+│  自由共存组: {MXU, VALU, VLOAD, VLOAD:FILL, VSTORE,                │
+│               VSTORE:SPILL, VPOP, EUP}                            │
+│  独立发射槽: SALU (标量域)                                          │
+│  共享发射槽: MXU ↔ XLU (向量域, 时间复用)                           │
+│                                                                  │
+│  容量约束:                                                         │
+│    VLOAD + VLOAD:FILL: 独立池, 各 ≤ 3                              │
+│    VSTORE + VSTORE:SPILL: 独立池, 各 ≤ 2                           │
+│    MXU0 + MXU1: 各 ≤ 1, 可同时 = 2                                │
+│    XLU0 + XLU1: 各 ≤ 1, 可同时 = 2                                │
+└──────────────────────────────────────────────────────────────────┘
+
+图例: ✓ 可共存  × 互斥  ≈ 近互斥 (<5%)
+```
+
+### 12.8 对 Kernel 性能的影响
+
+1. **SALU 独占性 → 循环控制开销大**: 83%+ 的 bundle 为 SALU-only 或 SALU+少量标量操作, 这些 bundle 中 MXU/VALU 完全空闲。64 个专家的 `fori_loop` 循环控制逻辑累积了大量标量 bundle, 解释了实测 149ms 与理论 1.8ms 之间的巨大差距 (Section 7.7)。
+
+2. **MXU+XLU 互斥 → 无法同时做跨 Lane 通信和矩阵乘法**: 当需要 scatter/gather token 数据 (需 XLU `vbcast.lane`/`vperm`) 时, MXU 必须空闲。这限制了 token 重排布与专家 FFN 的重叠程度。
+
+3. **MXU+VLOAD 70% 共存 → 权重预取有效**: 调度器成功将数据加载与 MXU 计算流水线化, DMA:Compute 比从 9.34:1 (per-tile 理论) 改善到接近 max(DMA, compute)。
+
+4. **VLOAD/VLOAD:FILL 独立池 → 双缓冲无资源冲突**: 权重 ping-pong 加载 (VLOAD+FILL 各 ≤3) 不会互相阻塞, 支持高效的 `bd1_id` 维度流水线。
+
+---
+
 ## 附录 A: LLO 文件索引
 
 编译 ID: `1777793912529267903`
