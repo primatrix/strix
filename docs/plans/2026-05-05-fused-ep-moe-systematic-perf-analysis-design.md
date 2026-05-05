@@ -319,11 +319,11 @@ $$\text{FLOPs}_{FFN2}^{exec} = 2 \times bts \times I \times H$$
 
 当 $3HIB_w \gg 2 \times n_{bf} \times bts \times H \times B_a$ (decode 下成立):
 
-$$\text{AI}_{exec} \approx \frac{6 \times bts \times H \times I}{3 \times H \times I \times B_w} = \frac{2 \times bts}{B_w}$$
+$$\mathrm{AI}_{exec} \approx \frac{6 \times bts \times H \times I}{3 \times H \times I \times B_w} = \frac{2 \times bts}{B_w}$$
 
-$$\text{AI}_{useful} \approx \frac{2 \times \bar{n}_e}{B_w}$$
+$$\mathrm{AI}_{useful} \approx \frac{2 \times \bar{n}_e}{B_w}$$
 
-> **BF16** ($B_w = 2$): $\text{AI}_{useful} = \bar{n}_e$。当 $\bar{n}_e = 8$: AI = 8 FLOPs/byte，远低于 ridge point 313。
+> **BF16** ($B_w = 2$): $\mathrm{AI}_{useful} = \bar{n}_e$。当 $\bar{n}_e = 8$: AI = 8 FLOPs/byte，远低于 ridge point 313。
 
 ##### 全部 $E_L$ 专家汇总
 
@@ -490,7 +490,7 @@ $$T_{SE}^{compute} = \frac{6 \times bt \times H \times I_{SE}}{F_{MXU}}$$
 
 $$T_{SE} = \max(T_{SE}^{HBM}, T_{SE}^{compute})$$
 
-> 对于 $I_{SE} = I$: SE 权重量 = 单个路由专家权重量。SE 的 AI 与路由专家相同 ($\approx \bar{n}_e$ for useful)，但 SE 的有效 token 数是 $bt$ (全部本地 token)，因此 $\text{AI}_{SE}^{useful} = 2 \times bt / B_w$。
+> 对于 $I_{SE} = I$: SE 权重量 = 单个路由专家权重量。SE 的 AI 与路由专家相同 ($\approx \bar{n}_e$ for useful)，但 SE 的有效 token 数是 $bt$ (全部本地 token)，因此 $\mathrm{AI}_{SE}^{useful} = 2 \times bt / B_w$。
 
 #### 2.4.8 SE VMEM 占用
 
@@ -597,11 +597,11 @@ $$\frac{T_{S2b}^{\text{HBM}}}{T_{S2b}^{\text{compute}}} = \frac{B_w \times F_{MX
 
 **Useful vs Executed AI**:
 
-$$\text{AI}_{\text{exec}} = \frac{6 \times bts \times H \times I}{3 \times H \times I \times B_w} = \frac{2 \times bts}{B_w}$$
+$$\mathrm{AI_{exec}} = \frac{6 \times bts \times H \times I}{3 \times H \times I \times B_w} = \frac{2 \times bts}{B_w}$$
 
-$$\text{AI}_{\text{useful}} = \frac{6 \times \bar{n}_e \times H \times I}{3 \times H \times I \times B_w} = \frac{2 \times \bar{n}_e}{B_w}$$
+$$\mathrm{AI_{useful}} = \frac{6 \times \bar{n}_e \times H \times I}{3 \times H \times I \times B_w} = \frac{2 \times \bar{n}_e}{B_w}$$
 
-> Decode ($\bar{n}_e = 8$, BF16): $\text{AI}_{\text{useful}} = 8$, 远低于 $R = 313$。MXU 利用率 = $8/313 = 2.6\%$。
+> Decode ($\bar{n}_e = 8$, BF16): $\mathrm{AI_{useful}} = 8$, 远低于 $R = 313$。MXU 利用率 = $8/313 = 2.6\%$。
 
 #### Stage 2c: AllToAll Gather (Combine)
 
@@ -645,7 +645,7 @@ $$T_{S4} = \max(T_{S4}^{\text{HBM}}, T_{S4}^{\text{compute}})$$
 
 **Roofline 判定**:
 
-$$\text{AI}_{SE} = \frac{2 \times bt}{B_w}, \quad \text{瓶颈} = \begin{cases} \text{HBM-bound} & bt < R \\ \text{Compute-bound} & bt \geq R \end{cases}$$
+$$\mathrm{AI}_{SE} = \frac{2 \times bt}{B_w}, \quad \text{瓶颈} = \begin{cases} \text{HBM-bound} & bt < R \\ \text{Compute-bound} & bt \geq R \end{cases}$$
 
 > SE 的 AI 取决于 $bt$ 而非 $\bar{n}_e$——SE 处理全部本地 token，不受路由稀疏性影响。
 
@@ -669,12 +669,12 @@ $$f_{Si} = \frac{T_{Si}}{T_{\text{critical}}} \times 100\%$$
 
 | 阶段 | 主导资源 | 数据量/计算量 | 理论耗时 | 计算过程 | 占比 |
 |------|---------|-------------|---------|---------|------|
-| S1 | ICI + Barrier | ICI: 4 KB, $\lceil \log_2 4 \rceil = 2$ 轮 | **15 $\mu$s** | $2 \times (4 + 2) + 4\text{K}/200\text{G} + \text{VPU} \approx 15$ | 0.8% |
-| S2a | DMA setup | $64 \times 8 = 512$ 次 DMA, 8 MB | **40 $\mu$s** | $\max(8\text{M}/3690\text{G}, 6\text{M}/200\text{G}, 512 \times 0.5\mu s) \approx 40$ | 2.1% |
-| S2b | **HBM BW** | 权重: $64 \times 96 = 6{,}144$ MB | **1,665 $\mu$s** | $6{,}144\text{M} / 3{,}690\text{G/s} = 1{,}665$ | **89.2%** |
-| S2c | (overlapped) | ICI: 6 MB | **~0 $\mu$s** | $T_{\text{expert}} \gg T_{\text{gather}}$, 完全覆盖 | 0% |
-| S3 | HBM BW | 读: 8 MB, 写: 1 MB | **10 $\mu$s** | $(8+1)\text{M} / 3690\text{G} \approx 2.4 + \text{VPU/DMA}$ | 0.5% |
-| S4 | HBM BW (overlap) | 权重: 96 MB | **(138 $\mu$s)** | $96\text{M} / 3690\text{G} \times 5 = 130 + \text{overhead}$ | (被覆盖) |
+| S1 | ICI + Barrier | ICI: 4 KB, $\lceil \log_2 4 \rceil = 2$ 轮 | **15 μs** | $2 \times (4 + 2) + 4\text{K}/200\text{G} + \text{VPU} \approx 15$ | 0.8% |
+| S2a | DMA setup | $64 \times 8 = 512$ 次 DMA, 8 MB | **40 μs** | $\max(8\text{M}/3690\text{G}, 6\text{M}/200\text{G}, 512 \times 0.5 \mu s) \approx 40$ | 2.1% |
+| S2b | **HBM BW** | 权重: $64 \times 96 = 6{,}144$ MB | **1,665 μs** | $6{,}144\text{M} / 3{,}690\text{G/s} = 1{,}665$ | **89.2%** |
+| S2c | (overlapped) | ICI: 6 MB | **~0 μs** | $T_{\text{expert}} \gg T_{\text{gather}}$, 完全覆盖 | 0% |
+| S3 | HBM BW | 读: 8 MB, 写: 1 MB | **10 μs** | $(8+1)\text{M} / 3690\text{G} \approx 2.4 + \text{VPU/DMA}$ | 0.5% |
+| S4 | HBM BW (overlap) | 权重: 96 MB | **(138 μs)** | $96\text{M} / 3690\text{G} \times 5 = 130 + \text{overhead}$ | (被覆盖) |
 
 > S4 的 5 倍因子来自 $n_{bse}$ 次 token re-staging: $3 \times H \times I_{SE} \times B_w + n_{bse} \times bt \times H \times B_a = 96 + 8 \times 64 \times 8192 \times 2 / 10^6 \approx 96 + 8 \approx 104$ MB, 实际含 token 重复读取约 130-140 μs。
 
@@ -686,32 +686,63 @@ $$T_{S4} = 138 \; \mu s \ll T_{\text{critical}} \implies T_{\text{total}} \appro
 
 ### 2.5.4 Roofline 可视化
 
-```
-Attainable
-Perf (FLOPS)
-  │
-  │                                           ┌─────────── F_MXU = 1,154 TFLOPS
-  │                                           │
-  │                                     ╱─────┘
-  │                                ╱
-  │                           ╱
-  │                      ╱          ← slope = BW_HBM = 3,690 GB/s
-  │                 ╱
-  │            ╱
-  │       ╱  │
-  │  ╱   │   │
-  │╱     │   │
-  ├──────┼───┼──────────────────────────────→ AI (FLOPs/byte)
-  0      8  16                313
-       ↑    ↑                  ↑
-    S2b(useful) S2b(exec,bt=32) Ridge Point
-    AI=8       AI=32
+![Roofline Model — TPU v7x per TensorCore (BF16)](images/roofline_v7x.png)
 
-  S2b 工作点: AI_useful = 8, 达到峰值的 2.6%
-  SE 工作点: AI = 2×bt/B_w = 32 (bt=32), 达到峰值的 10.2%
-```
+- **S2b Expert FFN (useful, decode)**: AI = 8, 达到峰值的 2.6%，深度 HBM-bound
+- **S4 Shared Expert (bt=32)**: AI = 32, 达到峰值的 10.2%
+- **S2b Expert FFN (exec, bt=64)**: AI = 67, 达到峰值的 21.4%
+- **Ridge Point**: AI = 313 FLOPs/byte, 分隔 HBM-bound / Compute-bound 区域
 
-### 2.5.5 瓶颈分布总结
+### 2.5.5 EP 规模对理论耗时分布的影响
+
+固定 Ling 2.6 模型参数 ($N_E = 256, H = 8192, I = 2048, k = 8, T = 256$, BF16), 变化 $P_{EP}$:
+
+#### 各阶段耗时计算
+
+**S1**: $T_{S1} = \lceil \log_2 P_{EP} \rceil \times (t_{\text{barrier}} + t_{\text{ICI}}) + P_{EP} \times N_E \times 4 / BW_{ICI} + t_{\text{VPU}}$
+
+**S2a**: $T_{S2a} = T_L \times k \times t_{\text{DMA}}$, 其中 $T_L = T / P_{EP}$
+
+**S2b**: $T_{S2b} = E_L \times 3 H I B_w / BW_{HBM}$, 其中 $E_L = N_E / P_{EP}$
+
+**S3**: $T_{S3} \approx T_L \times (k + 1) \times H \times B_a / BW_{HBM} + t_{\text{VPU}}$
+
+**S4**: $T_{S4} = (3 H I_{SE} B_w + n_{bse} \times T_L \times H \times B_a) / BW_{HBM}$ (与 critical path 并行)
+
+#### EP = 4, 32, 64, 256 理论耗时对比
+
+| | EP = 4 | EP = 32 | EP = 64 | EP = 256 |
+|---|--------|---------|---------|----------|
+| $E_L$ | 64 | 8 | 4 | 1 |
+| $T_L$ | 64 | 8 | 4 | 1 |
+| **S1** (μs) | 15 | 35 | 45 | 70 |
+| 计算 | $2 \times 6 + 3 = 15$ | $5 \times 6 + 3 = 33$ | $6 \times 6 + 3 = 39$ | $8 \times 6 + 3 = 51$ (+多跳) |
+| **S2a** (μs) | 40 | 10 | 8 | 5 |
+| 计算 | $512 \times 0.5\mu s \approx 40$ 因为只能这样估 | $64 \times 0.5 \approx 10$ (远程占比高) | $32 \times 0.5 \approx 8$ | $8 \times 0.5 \approx 5$ |
+| **S2b** (μs) | **1,665** | **208** | **104** | **26** |
+| 计算 | $64 \times 96 / 3690 = 1665$ | $8 \times 96 / 3690 = 208$ | $4 \times 96 / 3690 = 104$ | $1 \times 96 / 3690 = 26$ |
+| **S3** (μs) | 10 | 5 | 3 | 2 |
+| **S4** (μs, overlap) | (138) | (35) | (30) | (28) |
+| | | | | |
+| **Critical Path** (μs) | **1,730** | **258** | **160** | **103** |
+| S2b 占比 | **96.2%** | **80.6%** | **65.0%** | **25.2%** |
+| S1 占比 | 0.9% | 13.6% | 28.1% | **68.0%** |
+| S2a 占比 | 2.3% | 3.9% | 5.0% | 4.9% |
+| S3 占比 | 0.6% | 1.9% | 1.9% | 1.9% |
+
+**关键观察**:
+
+1. **S2b 线性缩放**: 权重 HBM 与 $E_L$ 成正比，$E_L = N_E / P_{EP}$，因此 $T_{S2b} \propto 1 / P_{EP}$
+2. **S1 反向增长**: Barrier 轮数 $\propto \log_2 P_{EP}$，多跳 ICI 延迟增加。EP=256 时 S1 成为主导瓶颈 (68%)
+3. **Crossover 点**: 当 $T_{S1} \approx T_{S2b}$ 时，增加 EP 的边际收益为零:
+
+$$P_{EP}^{*}: \quad \frac{N_E \times 3HIB_w}{P_{EP}^{*} \times BW_{HBM}} = \lceil \log_2 P_{EP}^{*} \rceil \times t_{\text{barrier}}$$
+
+> 对 Ling 2.6: $P_{EP}^{*} \approx 256$, 此时 S2b 耗时 (26 μs) 已接近 S1 (70 μs)。进一步增加 EP 不再有效——瓶颈从 HBM BW 转移到 ICI barrier latency。
+
+4. **S4 overlap 安全性**: 在所有 EP 配置下，$T_{S4} < T_{S1} + T_{S2a} + T_{S2b}$，SE 始终可被 critical path 完全覆盖
+
+### 2.5.6 瓶颈分布总结
 
 | 阶段 | 瓶颈类型 | 占比 | 优化方向 |
 |------|---------|------|---------|
@@ -1014,7 +1045,7 @@ $$T_{RS} = \frac{(P_{TP} - 1)}{P_{TP}} \times \frac{T_L \times H_{out} \times B_
 
 per-expert 的 Arithmetic Intensity 决定了 regime:
 
-$$\text{AI}_{useful} = \frac{6 \times n_e \times H \times I}{3 \times H \times I \times B_w + 2 \times n_e \times H \times B_a} \approx \frac{2 \times n_e}{B_w} \quad \text{(when weights dominate)}$$
+$$\mathrm{AI}_{useful} = \frac{6 \times n_e \times H \times I}{3 \times H \times I \times B_w + 2 \times n_e \times H \times B_a} \approx \frac{2 \times n_e}{B_w} \quad \text{(when weights dominate)}$$
 
 #### Crossover 分析
 
