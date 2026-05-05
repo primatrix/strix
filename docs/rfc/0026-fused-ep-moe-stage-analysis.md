@@ -90,7 +90,6 @@ for ep_size in [8, 32, 64, 128, 256]:
 **功能**: 根据路由信息, 将本地 token 通过 DMA (本地) / ICI remote copy (远程) 分发到各专家设备.
 
 - **Batch Scatter**: buffer 充足时一次遍历完成
-- **Pipelined Scatter**: buffer 不足时逐专家分发
 
 ### Roofline
 
@@ -113,7 +112,6 @@ T_stage2 = max(bt×H×B_t/HBM_BW, Bytes_ICI/ICI_BW) + bt×K×T_per_token_routing
 | 实验 | 消融 Flag / 方法 | 验证目标 |
 |------|----------------|---------|
 | 禁用 A2A | `disable_a2a=True` | A2A 占 kernel 总时间比例 |
-| Batch vs Pipelined | 调整 `_A2A_HBM_FRACTION` | 两种路径延迟对比 |
 | 变化 D | 改变 ep_size | D 对 scatter 延迟的缩放 |
 | 逐 Expert vs 逐 Device DMA | kernel 修改: per_device batch | 合并 DMA 加速验证 (预期 4-16x) |
 | DMA launch overhead 标定 | 1 token × N experts 线性拟合 | 提取 T_dma_launch, T_ici_launch |
