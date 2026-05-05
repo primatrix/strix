@@ -10,7 +10,7 @@ reviewers: []
 
 > 基于 `kernels/_fused_moe_impl.py` 源码的逐阶段 Roofline 理论分析、LLO 验证与消融实验设计
 >
-> Target: TPU v7x (Trillium), Pallas kernel
+> Target: TPU v7x, Pallas kernel
 
 ---
 
