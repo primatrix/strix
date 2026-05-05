@@ -394,22 +394,12 @@ T_stage1 ≈ (H × E × 4) / HBM_BW
 
 ### 1.6 消融实验设计
 
-#### 1.6.1 Phase B (In-kernel) 消融
-
-| 实验 | 消融 Flag | 预期影响 | 验证目标 |
-|------|----------|---------|---------|
-| 禁用 AllReduce | `disable_all_reduce_metadata=True` | 消除 ICI 通信 | 量化 AllReduce 占比 |
-| 禁用 Barrier | `disable_sync_barrier=True` | 消除 barrier 同步 | 量化 barrier 开销 |
-| 变化 `bt` | 调整 block_config.bt | 改变每次 routing 的 token 数 | bt 对 metadata 阶段的影响 |
-
-#### 1.6.2 EP 缩放消融 (Stage 1 全阶段)
-
 固定 DeepSeek-V3-like 配置 (E=256, K=8, H=8192, I=2048), 扫描 EP 规模:
 
 ```python
 for ep_size in [8, 32, 64, 128, 256]:
     for scenario in ["decode", "prefill"]:
-        T = 2048 if scenario == "decode" else 8192
+        T = 512 if scenario == "decode" else 8192
         mesh = create_mesh(ep_size)
         # 分别测量: Gate GEMM, Permute (若实现), In-kernel metadata
         topk_weights, topk_ids = gate_and_topk(hidden_states, W_gate, ...)
@@ -418,18 +408,18 @@ for ep_size in [8, 32, 64, 128, 256]:
         profile(result)  # 采集各阶段延迟
 ```
 
-| 实验 | EP Size | 场景 | T_L | bt | 验证目标 |
-|------|---------|------|-----|-----|---------|
-| EP-8 Decode | D=8 | T=2048 | 256 | 256 | 基线: AllReduce 3 轮 |
-| EP-32 Decode | D=32 | T=2048 | 64 | 64 | AllReduce 5 轮 |
-| EP-64 Decode | D=64 | T=2048 | 32 | 32 | AllReduce 6 轮 |
-| EP-128 Decode | D=128 | T=2048 | 16 | 16 | AllReduce 7 轮 |
-| EP-256 Decode | D=256 | T=2048 | 8 | 8 | AllReduce 8 轮 |
-| EP-8 Prefill | D=8 | T=8192 | 1024 | 128 | 多 tile AllReduce (num_bt=8) |
-| EP-32 Prefill | D=32 | T=8192 | 256 | 128 | 中等 tile 数 (num_bt=2) |
-| EP-64 Prefill | D=64 | T=8192 | 128 | 128 | 单 tile |
-| EP-128 Prefill | D=128 | T=8192 | 64 | 64 | 单 tile, AllReduce 7 轮 |
-| EP-256 Prefill | D=256 | T=8192 | 32 | 32 | 单 tile, AllReduce 8 轮 |
+| 实验 | EP Size | 场景 | T_L | 验证目标 |
+|------|---------|------|-----|---------|
+| EP-8 Decode | D=8 | T=512 | 64 | 基线: AllReduce 3 轮 |
+| EP-32 Decode | D=32 | T=512 | 16 | AllReduce 5 轮 |
+| EP-64 Decode | D=64 | T=512 | 8 | AllReduce 6 轮 |
+| EP-128 Decode | D=128 | T=512 | 4 | AllReduce 7 轮 |
+| EP-256 Decode | D=256 | T=512 | 2 | AllReduce 8 轮 |
+| EP-8 Prefill | D=8 | T=8192 | 1024 | 多 tile AllReduce |
+| EP-32 Prefill | D=32 | T=8192 | 256 | 中等 tile 数 |
+| EP-64 Prefill | D=64 | T=8192 | 128 | 单 tile |
+| EP-128 Prefill | D=128 | T=8192 | 64 | AllReduce 7 轮 |
+| EP-256 Prefill | D=256 | T=8192 | 32 | AllReduce 8 轮 |
 
 ### 1.7 数值分析: EP 缩放对 Stage 1 耗时的影响
 
@@ -498,6 +488,7 @@ T_stage1 = T_gate + T_permute + num_bt × T_AR
    - **AllReduce 优化**: 减少 `T_ici_step` (更高效的 barrier protocol); 探索非阻塞 AllReduce 与 Gate GEMM 重叠
    - **减少 num_bt**: 增大 bt 以减少 AllReduce 调用次数 (Prefill 场景尤为关键)
    - **Permute → Batch Scatter**: 独立 Permute 可消除 Stage 2 串行 DMA, 但需验证净收益
+   - **TODO: 利用 Group 局部性降低跳数**: Grouped TopK 强制每个 token 的 K 个 expert 集中在 `topk_group` 个 group 内 (DeepSeek V3: 256 expert / 8 group, 每 token 仅选 4 group). 若将 group 与 EP 设备拓扑对齐 (同一 group 的 expert 放在 ICI 拓扑相邻的设备上), AllReduce 和 All2All 的通信跳数可从 O(log₂D) 降至 O(log₂(D × topk_group / num_group)), 显著减少 Stage 1 AllReduce 和 Stage 2 Dispatch 延迟
 
 ---
 
