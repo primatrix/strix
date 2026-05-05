@@ -713,6 +713,10 @@ $$T_{S4} = 138 \; \mu s \ll T_{\text{critical}} \implies T_{\text{total}} \appro
 
 **S2b**: $T_{S2b} = E_L \times 3 H I B_w / BW_{HBM}$, 其中 $E_L = N_E / P_{EP}$
 
+**S2c**: $T_{S2c}^{\text{total}} = \min(\bar{n}_e, P_{EP}) \times E_L \times t_{\text{DMA}} + E_L \times \bar{n}_e \times H \times B_a \times (1 - E_L/N_E) / BW_{ICI}$
+
+$T_{S2c}^{\text{visible}} = \max(0, T_{S2c}^{\text{total}} - (E_L - 1) \times T_{\text{expert}})$, 其中 $T_{\text{expert}} = 3HIB_w / BW_{HBM}$
+
 **S3**: $T_{S3} \approx T_L \times (k + 1) \times H \times B_a / BW_{HBM} + t_{\text{VPU}}$
 
 **S4**: $T_{S4} = (3 H I_{SE} B_w + n_{bse} \times T_L \times H \times B_a) / BW_{HBM}$ (与 critical path 并行)
@@ -729,13 +733,18 @@ $$T_{S4} = 138 \; \mu s \ll T_{\text{critical}} \implies T_{\text{total}} \appro
 | 计算 | $512 \times 0.5\mu s \approx 40$ 因为只能这样估 | $64 \times 0.5 \approx 10$ (远程占比高) | $32 \times 0.5 \approx 8$ | $8 \times 0.5 \approx 5$ |
 | **S2b** (μs) | **1,665** | **208** | **104** | **26** |
 | 计算 | $64 \times 96 / 3690 = 1665$ | $8 \times 96 / 3690 = 208$ | $4 \times 96 / 3690 = 104$ | $1 \times 96 / 3690 = 26$ |
+| **S2c** total (μs) | 77 | 19 | 10 | 2 |
+| 计算 | $4 \times 64 \times 0.3 = 77$ | $8 \times 8 \times 0.3 = 19$ | $8 \times 4 \times 0.3 = 10$ | $8 \times 1 \times 0.3 = 2$ |
+| S2c overlap (μs) | $63 \times 26 = 1638$ | $7 \times 26 = 182$ | $3 \times 26 = 78$ | $0 \times 26 = 0$ |
+| **S2c visible** (μs) | 0 | 0 | 0 | **2** |
 | **S3** (μs) | 10 | 5 | 3 | 2 |
 | **S4** (μs, overlap) | (138) | (35) | (30) | (28) |
 | | | | | |
-| **Critical Path** (μs) | **1,730** | **258** | **160** | **103** |
-| S2b 占比 | **96.2%** | **80.6%** | **65.0%** | **25.2%** |
-| S1 占比 | 0.9% | 13.6% | 28.1% | **68.0%** |
-| S2a 占比 | 2.3% | 3.9% | 5.0% | 4.9% |
+| **Critical Path** (μs) | **1,730** | **258** | **160** | **105** |
+| S2b 占比 | **96.2%** | **80.6%** | **65.0%** | **24.8%** |
+| S1 占比 | 0.9% | 13.6% | 28.1% | **66.7%** |
+| S2a 占比 | 2.3% | 3.9% | 5.0% | 4.8% |
+| S2c 占比 | 0% | 0% | 0% | 1.9% |
 | S3 占比 | 0.6% | 1.9% | 1.9% | 1.9% |
 
 **关键观察**:
@@ -748,7 +757,8 @@ $$P_{EP}^{\ast}: \quad \frac{N_E \times 3HIB_w}{P_{EP}^{\ast} \times BW_{HBM}} =
 
 > 对 Ling 2.6: $P_{EP}^{\ast} \approx 256$, 此时 S2b 耗时 (26 μs) 已接近 S1 (70 μs)。进一步增加 EP 不再有效——瓶颈从 HBM BW 转移到 ICI barrier latency。
 
-4. **S4 overlap 安全性**: 在所有 EP 配置下，$T_{S4} < T_{S1} + T_{S2a} + T_{S2b}$，SE 始终可被 critical path 完全覆盖
+4. **S2c 暴露风险**: EP 越大，$E_L$ 越少，gather 可用的 overlap 窗口 $(E_L - 1) \times T_{\text{expert}}$ 缩小。EP=256 时 $E_L = 1$，gather 完全暴露在 critical path 上
+5. **S4 overlap 安全性**: 在所有 EP 配置下，$T_{S4} < T_{S1} + T_{S2a} + T_{S2b}$，SE 始终可被 critical path 完全覆盖
 
 ### 2.5.6 瓶颈分布总结
 
