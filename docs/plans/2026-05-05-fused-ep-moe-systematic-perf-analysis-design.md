@@ -709,13 +709,21 @@ $$T_{S4} = 138 \; \mu s \ll T_{\text{critical}} \implies T_{\text{total}} \appro
 
 **S1**: $T_{S1} = \lceil \log_2 P_{EP} \rceil \times (t_{\text{barrier}} + t_{\text{ICI}}) + P_{EP} \times N_E \times 4 / BW_{ICI} + t_{\text{VPU}}$
 
-**S2a**: $T_{S2a} = T_L \times k \times t_{\text{DMA}}$, 其中 $T_L = T / P_{EP}$
+**S2a** (decode 延迟模型): 三项竞争——DMA 描述符提交 (随 EP 递减)、ICI 多跳延迟 (随 EP 递增)、同步开销 (随 EP 递增):
+
+$$T_{S2a} = \max\left(\underbrace{T_L \times k \times t_{\text{desc}}}_{\text{DMA 提交}}, \; \underbrace{d_{\max}(P_{EP}) \times t_{\text{hop}}}_{\text{ICI 多跳}}\right) + \underbrace{\lceil \log_2 P_{EP} \rceil \times t_{\text{sync}}}_{\text{同步}}$$
+
+其中 $d_{\max}(P_{EP})$ 为 3D torus 最大跳数 $\approx 3 \times \lfloor P_{EP}^{1/3} / 2 \rfloor$, $t_{\text{desc}} \approx 0.1$ μs, $t_{\text{hop}} \approx 1$ μs, $t_{\text{sync}} \approx 2$ μs
 
 **S2b**: $T_{S2b} = E_L \times 3 H I B_w / BW_{HBM}$, 其中 $E_L = N_E / P_{EP}$
 
-**S2c**: $T_{S2c}^{\text{total}} = \min(\bar{n}_e, P_{EP}) \times E_L \times t_{\text{DMA}} + E_L \times \bar{n}_e \times H \times B_a \times (1 - E_L/N_E) / BW_{ICI}$
+**S2c** (decode 延迟模型): 与 S2a 对称，gather DMA 数 $= E_L \times \min(\bar{n}_e, P_{EP})$:
 
-$T_{S2c}^{\text{visible}} = \max(0, T_{S2c}^{\text{total}} - (E_L - 1) \times T_{\text{expert}})$, 其中 $T_{\text{expert}} = 3HIB_w / BW_{HBM}$
+$$T_{S2c}^{\text{total}} = \max\left(E_L \times \min(\bar{n}_e, P_{EP}) \times t_{\text{desc}}, \; d_{\max}(P_{EP}) \times t_{\text{hop}}\right) + \lceil \log_2 P_{EP} \rceil \times t_{\text{sync}}$$
+
+$$T_{S2c}^{\text{visible}} = \max(0, T_{S2c}^{\text{total}} - (E_L - 1) \times T_{\text{expert}})$$
+
+> Decode A2A 为**延迟敏感型**而非带宽敏感型 (每 DMA 仅 16 KB)。EP 增大时，DMA 数量减少但 ICI 跳数和同步开销增加，形成 U 型曲线。
 
 **S3**: $T_{S3} \approx T_L \times (k + 1) \times H \times B_a / BW_{HBM} + t_{\text{VPU}}$
 
@@ -723,59 +731,65 @@ $T_{S2c}^{\text{visible}} = \max(0, T_{S2c}^{\text{total}} - (E_L - 1) \times T_
 
 #### EP = 4, 32, 64, 256 理论耗时对比
 
+$d_{\max}$ 估计 (3D torus, 按 chip 数 $= P_{EP}/2$): EP=4 → 1 hop, EP=32 → 4 hops, EP=64 → 5 hops, EP=256 → 8 hops
+
 | | EP = 4 | EP = 32 | EP = 64 | EP = 256 |
 |---|--------|---------|---------|----------|
 | $E_L$ | 64 | 8 | 4 | 1 |
 | $T_L$ | 64 | 8 | 4 | 1 |
+| $d_{\max}$ (hops) | 1 | 4 | 5 | 8 |
 | **S1** (μs) | 15 | 35 | 45 | 70 |
 | 计算 | $2 \times 6 + 3 = 15$ | $5 \times 6 + 3 = 33$ | $6 \times 6 + 3 = 39$ | $8 \times 6 + 3 = 51$ (+多跳) |
-| **S2a** (μs) | 40 | 10 | 8 | 5 |
-| 计算 | $512 \times 0.5\mu s \approx 40$ 因为只能这样估 | $64 \times 0.5 \approx 10$ (远程占比高) | $32 \times 0.5 \approx 8$ | $8 \times 0.5 \approx 5$ |
+| **S2a** (μs) | **55** | **16** | **17** | **24** |
+| 计算 | $\max(64 \times 8 \times 0.1,\; 1) + 2 \times 2$ | $\max(6.4,\; 4) + 5 \times 2$ | $\max(3.2,\; 5) + 6 \times 2$ | $\max(0.8,\; 8) + 8 \times 2$ |
+| 主导项 | DMA 描述符 (51.2) | 同步 (10) | ICI+同步 (5+12) | ICI+同步 (8+16) |
 | **S2b** (μs) | **1,665** | **208** | **104** | **26** |
 | 计算 | $64 \times 96 / 3690 = 1665$ | $8 \times 96 / 3690 = 208$ | $4 \times 96 / 3690 = 104$ | $1 \times 96 / 3690 = 26$ |
-| **S2c** total (μs) | 77 | 19 | 10 | 2 |
-| 计算 | $4 \times 64 \times 0.3 = 77$ | $8 \times 8 \times 0.3 = 19$ | $8 \times 4 \times 0.3 = 10$ | $8 \times 1 \times 0.3 = 2$ |
+| **S2c** total (μs) | **30** | **16** | **17** | **24** |
+| 计算 | $\max(64 \times 4 \times 0.1,\; 1) + 2 \times 2$ | $\max(8 \times 8 \times 0.1,\; 4) + 5 \times 2$ | $\max(4 \times 8 \times 0.1,\; 5) + 6 \times 2$ | $\max(1 \times 8 \times 0.1,\; 8) + 8 \times 2$ |
 | S2c overlap (μs) | $63 \times 26 = 1638$ | $7 \times 26 = 182$ | $3 \times 26 = 78$ | $0 \times 26 = 0$ |
-| **S2c visible** (μs) | 0 | 0 | 0 | **2** |
+| **S2c visible** (μs) | 0 | 0 | 0 | **24** |
 | **S3** (μs) | 10 | 5 | 3 | 2 |
 | **S4** (μs) | **28** | **27** | **27** | **26** |
 | 计算: 权重 | $96 \text{M} / 3690 = 26$ | 同左 | 同左 | 同左 |
 | 计算: token re-staging | $8 \times 64 \times 16\text{K} / 3690\text{G} = 2$ | $8 \times 8 \times 16\text{K} / 3690\text{G} \approx 0.3$ | $\approx 0.1$ | $\approx 0$ |
 | | | | | |
-| **各阶段合计** (μs) | **1,758** | **285** | **187** | **107** |
-| S2b 占比 | **94.7%** | **73.0%** | **55.6%** | **24.3%** |
-| S1 占比 | 0.9% | 12.3% | 24.1% | **65.4%** |
-| S2a 占比 | 2.3% | 3.5% | 4.3% | 4.7% |
-| S2c 占比 | 0% | 0% | 0% | 1.9% |
-| S3 占比 | 0.6% | 1.8% | 1.6% | 1.9% |
-| S4 占比 | 1.6% | 9.5% | 14.4% | 24.3% |
+| **各阶段合计** (μs) | **1,773** | **291** | **196** | **172** |
+| S2b 占比 | **93.9%** | **71.5%** | **53.1%** | **15.1%** |
+| S1 占比 | 0.8% | 12.0% | 23.0% | **40.7%** |
+| S2a 占比 | 3.1% | 5.5% | 8.7% | **14.0%** |
+| S2c 占比 | 0% | 0% | 0% | **14.0%** |
+| S3 占比 | 0.6% | 1.7% | 1.5% | 1.2% |
+| S4 占比 | 1.6% | 9.3% | 13.8% | 15.1% |
 
 **关键观察**:
 
 1. **S2b 线性缩放**: 权重 HBM 与 $E_L$ 成正比，$E_L = N_E / P_{EP}$，因此 $T_{S2b} \propto 1 / P_{EP}$
-2. **S1 反向增长**: Barrier 轮数 $\propto \log_2 P_{EP}$，多跳 ICI 延迟增加。EP=256 时 S1 成为主导瓶颈 (68%)
-3. **Crossover 点**: 当 $T_{S1} \approx T_{S2b}$ 时，增加 EP 的边际收益为零:
+2. **S1 反向增长**: Barrier 轮数 $\propto \log_2 P_{EP}$，多跳 ICI 延迟增加。EP=256 时 S1 成为主导瓶颈 (40.7%)
+3. **S2a/S2c U 型曲线**: EP 较小时 DMA 描述符数量多 (S2a=55 μs@EP=4)；EP 较大时 ICI 跳数和同步开销增加 (S2a=24 μs@EP=256)；中间 EP=32~64 为最优区间 (S2a≈16~17 μs)
+4. **Crossover 点**: 当 $T_{S1} \approx T_{S2b}$ 时，增加 EP 的边际收益为零:
 
 $$P_{EP}^{\ast}: \quad \frac{N_E \times 3HIB_w}{P_{EP}^{\ast} \times BW_{HBM}} = \lceil \log_2 P_{EP}^{\ast} \rceil \times t_{\text{barrier}}$$
 
-> 对 Ling 2.6: $P_{EP}^{\ast} \approx 256$, 此时 S2b 耗时 (26 μs) 已接近 S1 (70 μs)。进一步增加 EP 不再有效——瓶颈从 HBM BW 转移到 ICI barrier latency。
+> 对 Ling 2.6: $P_{EP}^{\ast} \approx 128\text{-}256$, 此时 S2b 耗时 (26~52 μs) 已接近 S1+S2a+S2c 之和。进一步增加 EP 不再有效——瓶颈从 HBM BW 转移到 ICI latency + barrier。
 
-4. **S2c 暴露风险**: EP 越大，$E_L$ 越少，gather 可用的 overlap 窗口 $(E_L - 1) \times T_{\text{expert}}$ 缩小。EP=256 时 $E_L = 1$，gather 完全暴露在 critical path 上
-5. **S4 近似常数**: SE 权重 96 MB 不随 EP 变化，$T_{S4} \approx 26\text{-}28$ μs。EP=4 时占比仅 1.6%，EP=256 时升至 24.3%，与 S2b 持平
-6. **Overlap 潜力**: S4 与 S1+S2a+S2b 数据独立，可完全并行。若成功 overlap，则不占 critical path；若无法 overlap (VMEM 竞争或调度限制)，则直接增加端到端延迟
+5. **S2c 暴露风险**: EP 越大，$E_L$ 越少，gather 可用的 overlap 窗口 $(E_L - 1) \times T_{\text{expert}}$ 缩小。EP=256 时 $E_L = 1$，gather 完全暴露在 critical path 上 (24 μs)，占比达 14.0%
+6. **通信总占比急剧上升**: EP=4 时通信 (S1+S2a+S2c) 仅占 3.9%；EP=256 时升至 **68.6%** (S1 40.7% + S2a 14.0% + S2c 14.0%)，成为绝对瓶颈
+7. **S4 近似常数**: SE 权重 96 MB 不随 EP 变化，$T_{S4} \approx 26\text{-}28$ μs。EP=4 时占比仅 1.6%，EP=256 时升至 15.1%
+8. **Overlap 潜力**: S4 与 S1+S2a+S2b 数据独立，可完全并行。若成功 overlap，则不占 critical path；若无法 overlap (VMEM 竞争或调度限制)，则直接增加端到端延迟
 
 ### 2.5.6 瓶颈分布总结
 
-| 阶段 | 瓶颈类型 | 占比 | 优化方向 |
-|------|---------|------|---------|
-| S1 | ICI latency + barrier | <1% | 不可压缩固定开销 |
-| S2a | DMA setup latency | ~2% | 减少 DMA 发起次数 (batch scatter) |
-| S2b | **HBM bandwidth** | **~89%** | 减少权重加载 (FP8, 更大 EP) |
-| S2c | (被 S2b 覆盖) | 0% | 已最优 |
-| S3 | HBM + VPU | <1% | 不是瓶颈 |
-| S4 | HBM (被 critical path 覆盖) | 0% | 确保在 S2b 结束前完成 |
+| 阶段 | 瓶颈类型 | EP=4 占比 | EP=256 占比 | 优化方向 |
+|------|---------|----------|-----------|---------|
+| S1 | ICI latency + barrier | 0.8% | **40.7%** | 不可压缩, 随 $\log_2 P_{EP}$ 增长 |
+| S2a | DMA desc / ICI 多跳 + 同步 | 3.1% | **14.0%** | U 型曲线, EP=32~64 最优 |
+| S2b | **HBM bandwidth** | **93.9%** | 15.1% | 减少权重加载 (FP8, 更大 EP) |
+| S2c | DMA desc / ICI 多跳 + 同步 | 0% (被 overlap) | **14.0%** | EP 大时 overlap 窗口消失 |
+| S3 | HBM + VPU | 0.6% | 1.2% | 不是瓶颈 |
+| S4 | HBM (可被 critical path 覆盖) | 1.6% | 15.1% | 确保在 S2b 结束前完成 |
 
-> **结论**: Decode 场景下 ~89% 的理论耗时集中在 S2b Expert FFN 的权重加载。唯一有效的优化是减少 $E_L \times 3HIB_w$ (更多 EP 分片、FP8 量化、或权重压缩)。
+> **结论**: Decode 场景下存在**两段式瓶颈迁移**。EP 较小时 (EP≤32)，~70-94% 耗时集中在 S2b 权重 HBM 加载，优化方向为增大 EP 或 FP8 量化。EP 较大时 (EP≥128)，瓶颈迁移至 ICI 通信 (S1+S2a+S2c 合计 ~69%)，此时增加 EP 反而增加总延迟。**最优 EP 在 S2b 与通信开销的交叉点附近 ($P_{EP}^{\ast} \approx 64\text{-}128$)**。
 
 ---
 
