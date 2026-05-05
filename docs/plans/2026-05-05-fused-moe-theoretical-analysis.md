@@ -44,7 +44,7 @@ Mesh: devices.reshape(1, ep_size) → axis_names=("data", "tensor")
 | 符号 | 公式 | 说明 |
 |--------|---------|-------------|
 | $DP$ | — | 数据并行副本数 (沿 "data" 轴) |
-| $EP$ | $\text{ep\_size}$ | 专家并行分片数 (沿 "tensor" 轴) |
+| $EP$ | `ep_size` | 专家并行分片数 (沿 "tensor" 轴) |
 | $TP$ | — | 专家内张量并行 (当前 kernel 未使用) |
 | $N_{\text{dev}}$ | $DP \times EP$ | Mesh 中总设备数 |
 
@@ -73,7 +73,7 @@ Mesh: devices.reshape(1, ep_size) → axis_names=("data", "tensor")
 
 | 符号 | 含义 | 典型范围 |
 |--------|---------|---------------|
-| `bt` | 外层 token tile（路由/输出维度） | $\min(\text{bt\_cfg}, T_{\text{local}})$，整除 $T_{\text{local}}$ |
+| `bt` | 外层 token tile（路由/输出维度） | $\min(bt_{\text{cfg}}, T_{\text{local}})$，整除 $T_{\text{local}}$ |
 | `bts` | `expert_ffn` 内的 token staging tile | $\leq bt \times EP$ |
 | `btc` | 计算 tile M 维度 | $\leq bts$，整除 $bts$ |
 | `bf` | 中间维度 tile (I/O dim) | 整除 $I$ |
@@ -354,7 +354,7 @@ Ling 2.6 decode (EP=8)：$T_{S2}^{\text{HBM}} \approx 3.0 \text{ GB} / 3690 \tex
 
 对每个 token $t$，加权求和 top-k 专家输出，再加上共享专家输出：
 
-$$y_t = \sum_{r=1}^{k} w_{t,r} \cdot \text{expert\_output}_{t,r} + y_t^{\text{se}}$$
+$$y_t = \sum_{r=1}^{k} w_{t,r} \cdot o_{t,r} + y_t^{\text{se}}$$
 
 **HBM 读取**：从 `a2a_g_hbm` 加载 top-k 专家输出。
 
