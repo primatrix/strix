@@ -183,9 +183,12 @@ $$\text{VMEM}_{S1} = 16 \times bt \times k + 4 \times P_{EP} \times N_E^{padded}
 
 #### 2.1.6 LLO Overhead 观测
 
-- Critical path length=201 (LLO region13)
-- 主要由 `vrot.slane`, `vbcast.lane`, `vpop` 组成——routing mask 的 VLIW 展开
+最新 LLO dump (bt=32, bf=512, bd1=1024, bd2=1024, bse=512):
+
+- Stage 1 (routing) 代码已内联到主 expert loop 中，不再有独立的 routing 区域
+- Routing 逻辑（`vrot.slane`, `vbcast.lane`, `vpop`）与 scatter DMA 交叠执行
 - Stage 1 在总 kernel 时间中占比极小 (<1%)，但其 barrier latency 是不可压缩的固定开销
+- 主 critical path 位于 FFN1 matmul 内层循环 (748 bundles, region4355/4377 vld→vmul→vst 链)，其次是 scatter 循环入口 (450 bundles, region4322)
 
 ---
 
@@ -948,6 +951,8 @@ $$\text{HBM}_{chunked}^{weight} = n_{chunks} \times E_{active} \times 3HIB_w$$
 
 ### 5.1 Ling 2.6 Decode 实例化
 
+#### bt=64 Config (旧分析参考)
+
 | 参数 | 值 |
 |------|------|
 | $N_E = 256$, $H = 8192$, $I = 2048$, $I_{SE} = 2048$ | |
@@ -958,6 +963,21 @@ $$\text{HBM}_{chunked}^{weight} = n_{chunks} \times E_{active} \times 3HIB_w$$
 | $n_{bt} = 1$, $n_{bf} = 2$, $n_{bd1} = 4$, $n_{bd2} = 4$, $n_{bse} = 8$ | |
 | $\bar{n}_e = 64 \times 8 / 64 = 8$ tokens/expert | |
 | $t_p = 2$, $h_{pt} = 4096$, $bd1_{pt} = 1024$, $bd2_{pt} = 1024$ | |
+
+#### bt=32 Config (最新 LLO dump 验证)
+
+| 参数 | 值 |
+|------|------|
+| $N_E = 256$, $H = 8192$, $I = 2048$, $I_{SE} = 2048$ | |
+| $k = 8$, $T = 256$, $B_w = 2$ (BF16), $B_a = 2$ | |
+| $P_{EP} = 4$ (2×2×1 mesh), $E_L = 64$, $T_L = 64$ | |
+| $bt = 32$, $bts = 32$, $btc = 32$, $bf = 512$ | |
+| $bd1 = 1024$, $bd2 = 1024$, $bse = 512$ | |
+| $n_{bt} = 2$, $n_{bf} = 4$, $n_{bd1} = 8$, $n_{bd2} = 8$, $n_{bse} = 4$ | |
+| $\bar{n}_e = 64 \times 8 / 64 = 8$ tokens/expert | |
+| $t_p = 2$, $h_{pt} = 4096$, $bd1_{pt} = 512$, $bd2_{pt} = 512$ | |
+
+> **LLO 验证**: bt=32 config 的 LLO 产出 24,106 post-delay bundles (详见附录 B)，相比 bt=64 config 有更小的 tile size 和更多的循环轮数 ($n_{bt}=2$ vs $1$, $n_{bf}=4$ vs $2$)，通过更小的 tile 换取更高的 MXU 与 DMA 并行度。
 
 #### Stage-by-Stage 代入
 
@@ -1022,17 +1042,18 @@ $$\text{HBM}_{chunked}^{weight} = n_{chunks} \times E_{active} \times 3HIB_w$$
 | **Gap** | **~83x** |
 | 有效 HBM BW | $6,249 \text{ MB} / 149 \text{ ms} = 42$ GB/s (峰值 1.1%) |
 
-**Gap 归因 (来自 LLO 分析)**:
+**Gap 归因 (来自 LLO 分析, bt=32 config)**:
 
-1. **Per-expert DMA setup overhead** (~60-70% of gap)
-   - 每专家 ~24 次 DMA 发起 × 64 专家 = 1,536 次 DMA
-   - 每次 ~500 ns setup → ~768 μs 固定开销
-   - 但更重要的是 DMA engine 无法充分流水线化小块传输
+1. **Per-expert DMA setup overhead** (~50-60% of gap)
+   - 每专家多次 DMA 发起 × 专家循环迭代
+   - 每次 ~500 ns setup → 固定开销累积
+   - DMA engine 无法充分流水线化小块传输
 
-2. **SALU 循环控制** (~15-20% of gap)
-   - 83%+ VLIW bundle 为 SALU-only
+2. **SALU 循环控制 + MEM/VPU 混合 overhead** (~25-35% of gap)
+   - 27.4% VLIW bundle 为 SALU-only (6,607/24,106)
+   - 32.8% 为 MEM+VPU 混合 bundle (7,900/24,106)
    - `lax.fori_loop` 的循环控制、地址计算、条件分支
-   - 36,121 bundles × ~1 ns/bundle ≈ 36 μs 纯控制开销
+   - 24,106 post-delay bundles (pre-delay: 31,876, delay converter 消除 7,770 空 bundle)
 
 3. **Sync barrier** (~5-10% of gap)
    - 每 bt-tile 至少 $\lceil \log_2 P_{EP} \rceil + 2$ 次 barrier
@@ -1040,7 +1061,7 @@ $$\text{HBM}_{chunked}^{weight} = n_{chunks} \times E_{active} \times 3HIB_w$$
    - Pipelined 路径更多 barrier
 
 4. **小 DMA 传输效率低** (~5-10% of gap)
-   - Token tile 256 KB, routing data 数 KB
+   - Token tile 较小, routing data 数 KB
    - DMA engine 对小块传输的效率远低于大块
 
 ---
@@ -1060,17 +1081,26 @@ $$\text{HBM}_{chunked}^{weight} = n_{chunks} \times E_{active} \times 3HIB_w$$
 
 ## 附录 B: LLO Overhead 观测汇总
 
-| 观测 | 数值 | 来源 |
-|------|------|------|
-| 总 VLIW bundle | 36,121 | LLO final dump |
-| SALU-only bundle 占比 | >83% | per-bundle utilization |
-| MXU active bundle | 3,005 (8.3%) | per-bundle utilization |
-| Dual MXU bundle | ~2,800 (7.8%) | per-bundle utilization |
-| VMEM 占用 | ~56 MB (87%) | allocation analysis |
-| Critical path (routing) | 201 | region13 |
-| Critical path (scatter) | 451 | region4609-4614 |
-| VPR 峰值 | 25,167 | register pressure analysis |
-| VPR spill | 0 | register pressure analysis |
-| Token tile load slots | 31,871 | bundle-source mapping |
-| W1 gate matmul slots | 14,336 | bundle-source mapping |
-| W2 down matmul slots | 7,686 | bundle-source mapping |
+> 最新 dump: `fused-moe-k_8-bt_32_32_32-bf_512_512-bd1_1024_1024-bd2_1024_1024-shared_expert_bse_512`, 2026-05
+
+| 观测 | 数值 | 来源 | 备注 |
+|------|------|------|------|
+| 总 VLIW bundle (post-delay) | 24,106 | LLO schedule analysis final | pre-delay: 31,876, delay converter 消除 7,770 |
+| 空 bundle | 868 (3.6%) | schedule analysis | |
+| SALU-only bundle | 6,607 (27.4%) | per-bundle utilization | 含 `sst`/`sld` 标量存储/加载 |
+| MXU active bundle | 3,005 (12.5%) | per-bundle utilization | 含 co-issue 与纯 MXU |
+| Dual MXU bundle | 2,659 (11.0%) | per-bundle utilization | 两路 MXU 均活跃 |
+| Single MXU bundle | 346 (1.4%) | per-bundle utilization | 仅一路 MXU 活跃 |
+| MXU + MEM co-issue | 2,245 (9.3%) | per-bundle utilization | 权重 DMA 与 matmul 并行 |
+| MXU + VPU co-issue | 1,897 (7.9%) | per-bundle utilization | activation 与 matmul 并行 |
+| MEM-only bundle | 2,779 (11.5%) | per-bundle utilization | 纯数据搬运 |
+| MEM+VPU mixed bundle | 7,900 (32.8%) | per-bundle utilization | DMA 与向量运算并行 |
+| MXU 槽位利用率 | 5,664 / 48,212 (11.7%) | per-bundle utilization | |
+| VLOAD:FILL (weight staging) | 2,576 slots | per-bundle utilization | 权重从 HBM staging 到 VMEM |
+| VSTORE:SPILL (result writeback) | 2,458 slots | per-bundle utilization | 结果从 VMEM 写回 |
+| VMEM 分配总量 | 20.7 MB (32.3%) | allocation analysis | allocation8: 4 MB scatter buffer; allocation12-21: 2 MB×7 weight tile buffers |
+| Critical path (FFN1 matmul) | 748 | region4355/4377 | vld→vmul→vst 链， members=2,848~2,976 |
+| Critical path (scatter) | 450 | region4322 | scatter DMA + barrier 链, members=854 |
+| Physical VPR 峰值 (post-RA) | 372 | register pressure dump | 物理寄存器并发数，predicate regs=17 |
+| VPR spill (physical) | 0 | register pressure analysis | 无物理寄存器溢出 |
+| TLP wrapper bundles | 356 (fused-moe=7) | TLP schedule analysis | TLP wrapper overhead 极小 |
