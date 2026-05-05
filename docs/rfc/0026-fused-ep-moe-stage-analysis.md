@@ -202,7 +202,7 @@ Bytes_output     = T_L × E × 4             # 写 logits (float32)
 Total_Bytes_gate = H × E × 4 + T_L × H × B_t + T_L × E × 4
 ```
 
-> 对于 Decode 场景 (`T_L` 小), `Bytes_W_gate` 项主导 (8.0 MB for DeepSeek-V3), 使 Gate GEMM 严格 HBM BW bound. AI ≈ `T_L / 2` FLOPs/byte, 远低于 ridge point 625.
+> 对于 Decode 场景 (`T_L` 小), `Bytes_W_gate` 项主导 (8.0 MB for DeepSeek-V3), 使 Gate GEMM 严格 HBM BW bound. AI ≈ `T_L / 2` FLOPs/byte, 远低于 ridge point 313.
 
 **Step 1.0.2: Score Function (VPU)**
 
