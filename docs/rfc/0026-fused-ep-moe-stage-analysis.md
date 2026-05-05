@@ -1776,6 +1776,229 @@ T_stage3_4_pipelined = sum_e(
 | 禁用 A2A | `disable_a2a=True` | 消除全部 scatter+gather | Stage 2+4 的合计占比 |
 | 单设备 | `ep_size=1` | 消除所有 ICI 通信 | 纯本地 DMA copy 的 gather 开销 |
 
+### 4.8 Gather 调度策略消融: Per-Expert Pipeline vs Deferred Batch
+
+#### 4.8.1 实验动机
+
+当前 kernel 在每个 expert FFN 完成后立即启动 `start_a2a_gather`, 利用 MXU (FFN) 与 DMA/ICI (Gather) 的资源独立性形成 compute-communication pipeline. 替代方案: 等所有 expert 计算完毕后, 将结果按目标设备合并为一次批量 ICI 传输 (与 §2.9 per-device batch DMA 分析对称).
+
+**核心权衡**: pipeline 重叠收益 vs `E_L × (D-1)` 次小 DMA 的 launch overhead 累积.
+
+#### 4.8.2 策略定义
+
+**Strategy A: Per-Expert Eager Gather (当前实现)**
+
+```text
+for local_e_id in 0..E_L-1:
+    expert_ffn(local_e_id)                    # MXU compute (T_ffn_e)
+    start_a2a_gather(local_e_id):             # 异步 DMA/ICI (T_gather_e)
+        for target_device in 0..D-1:
+            if has_tokens: async_remote_copy(per-device batch)
+    # gather(e) 与 ffn(e+1) 并行 (MXU vs DMA/ICI 独立资源)
+wait_a2a_gather_recv_all()
+```
+
+- Per-expert ICI ops: `min(D-1, M_avg)` (仅有 token 的远程设备)
+- Per-op 传输量: `max(1, M_avg/D) × H × B_t` bytes
+- 总 ICI ops: `E_L × min(D-1, M_avg)` (上界)
+
+**Strategy B: Deferred Per-Device Batched Gather**
+
+```text
+for local_e_id in 0..E_L-1:
+    expert_ffn(local_e_id)                    # 结果留在 a2a_s_acc_x2_hbm
+
+# 所有 expert 完成后, 按目标设备合并发送
+for target_device in 0..D-1:
+    batch = pack_results_for(target_device)   # 合并 E_L 个 expert 的数据
+    async_remote_copy(batch → target.a2a_g)
+wait_all()
+```
+
+- 总 ICI ops: `D-1` (每目标设备一次)
+- Per-op 传输量: `(bt × K / D) × H × B_t` bytes (E_L 个 expert 合并)
+
+> **Op 次数对比**: A = `E_L × min(D-1, M_avg)`, B = `min(D-1, bt×K)`. 每次传输量: B 是 A 的 E_L 倍. 总 ICI 数据量相同 = `bt × K × H × B_t × (D-1)/D`.
+
+#### 4.8.3 延迟模型
+
+**Per-expert FFN 延迟** (HBM BW bound, 对给定模型恒定):
+
+```text
+T_ffn_e = 3 × H × I × B_w / HBM_BW
+        = 96 MB / 3690 GB/s = 26.0 μs          # DeepSeek-V3-like
+```
+
+**Strategy A — Pipeline Model**:
+
+MXU (FFN chain) 与 DMA/ICI (Gather chain) 是独立资源, 可真正并行. Gather(e) 在 FFN(e) 完成后启动, 与 FFN(e+1) 重叠:
+
+```text
+Active_remotes_e = min(D-1, M_avg)              # 有数据的远程设备数
+per_op_data_e   = max(1, M_avg / D) × H × B_t   # 每次 ICI 传输量
+
+T_gather_e = Active_remotes_e × (T_ici_launch + per_op_data_e / ICI_BW)
+
+# 两条串行链 + 依赖关系 (gather(e) 须等 ffn(e) 完成):
+T_total_A = E_L × T_ffn_e + T_gather_e              if T_gather_e ≤ T_ffn_e   (pipeline 有效)
+          = T_ffn_e + E_L × T_gather_e               if T_gather_e > T_ffn_e   (pipeline 失效)
+
+T_exposed_A = T_gather_e                             if T_gather_e ≤ T_ffn_e   (仅 last-expert drain)
+            = E_L × (T_gather_e - T_ffn_e) + T_ffn_e if T_gather_e > T_ffn_e
+```
+
+**Strategy B — Sequential Model**:
+
+```text
+batch_data     = (bt × K / D) × H × B_t             # 每目标设备合并后数据量
+Active_targets = min(D-1, bt × K)                    # 有数据的目标设备数
+
+T_gather_B = Active_targets × (T_ici_launch + batch_data / ICI_BW)
+
+T_total_B  = E_L × T_ffn_e + T_gather_B              # 无重叠, 全部暴露
+T_exposed_B = T_gather_B
+```
+
+#### 4.8.4 Pipeline 失效临界条件
+
+Pipeline 有效要求 `T_gather_e ≤ T_ffn_e`. 对 DeepSeek-V3 (T_ffn_e = 26 μs):
+
+当 `M_avg ≤ D` (每设备 ≤ 1 token/expert, 典型 Decode):
+
+```text
+M_avg × (T_ici_launch + H × B_t / ICI_BW) ≤ T_ffn_e
+M_avg × (500 + 82) ns ≤ 26,000 ns
+M_avg ≤ 45                                  # Pipeline 有效条件
+```
+
+当 `M_avg > D` (所有 D-1 远程设备均活跃, 典型 Prefill):
+
+```text
+(D-1) × (T_ici_launch + M_avg/D × 82 ns) ≤ 26,000 ns
+```
+
+| D | 临界 M_avg | 对应 bt 临界 | 含义 |
+|---|-----------|------------|------|
+| 4 | 399 | bt ≈ 3192 | 所有实际 bt 均 pipeline 有效 |
+| 16 | 241 | bt ≈ 482 | 所有实际 bt 均 pipeline 有效 |
+| 64 | 45 (M<D 区间) | **bt ≈ 22** | Prefill (bt≥32) 时 pipeline 失效 |
+| 128 | 45 (M<D 区间) | **bt ≈ 11** | Prefill (bt≥16) 时 pipeline 失效 |
+
+> **根本原因**: D ≥ 64 时, D-1 次串行 ICI launch 的累积 `(D-1) × T_ici_launch ≥ 63 × 500 ns = 31.5 μs` 已超过 T_ffn_e (26 μs), 即使每次传输数据量极小, 纯 launch overhead 就足以打破 pipeline.
+
+#### 4.8.5 数值分析
+
+**配置**: DeepSeek-V3-like (E=256, K=8, H=8192, I=2048, B_w=B_t=2, T_ici_launch=500 ns)
+
+##### Decode 场景
+
+| D | bt | E_L | M_avg | T_gather_e (μs) | T_g/T_f | T_exposed_A (μs) | T_exposed_B (μs) | **Winner** |
+|---|-----|-----|-------|-----------------|---------|-----------------|-----------------|------------|
+| 4 | 64 | 64 | 8 | 2.0 | 0.08 | 2.0 | 31.5 | **A (15.8×)** |
+| 16 | 16 | 16 | 8 | 8.1 | 0.31 | 8.1 | 17.1 | **A (2.1×)** |
+| 64 | 4 | 4 | 8 | 4.6 | 0.18 | 4.6 | 16.8 | **A (3.7×)** |
+| 128 | 4 | 2 | 16 | 9.3 | 0.36 | 9.3 | 17.3 | **A (1.9×)** |
+| 256 | 2 | 1 | 16 | 9.3 | 0.36 | 9.3 | 9.3 | Tie |
+
+> **计算说明** (D=4 为例):
+>
+> - Active remotes = min(3, 8) = 3; per-op = 2 tokens × 16 KB = 32 KB
+> - T_gather_e = 3 × (500 + 32768/200e9) = 3 × 664 ns = 2.0 μs
+> - Pipeline 有效 (2.0 < 26), T_exposed_A = 2.0 μs (仅 drain)
+> - Strategy B: batch = 64×8/4 × 16384 = 2 MB, T_B = 3 × 11.0 μs = 33.0 μs
+>
+> Decode 下 **Strategy A 在所有配置中胜出或持平**. T_g/T_f < 0.4, pipeline 完全隐藏 gather 通信.
+
+##### Prefill 场景 (bt=128)
+
+| D | bt | E_L | M_avg | T_gather_e (μs) | T_g/T_f | T_exposed_A (μs) | T_exposed_B (μs) | **Winner** |
+|---|-----|-----|-------|-----------------|---------|-----------------|-----------------|------------|
+| 4 | 128 | 64 | 16 | 3.5 | 0.13 | 3.5 | 62.9 | **A (18.0×)** |
+| 16 | 128 | 16 | 64 | 12.4 | 0.48 | 12.4 | 82.5 | **A (6.7×)** |
+| 64 | 128 | 4 | 256 | 52.2 | **2.01** | **130.8** | **114.1** | **B (1.15×)** |
+| 128 | 128 | 2 | 512 | 105.2 | **4.05** | **184.4** | **144.8** | **B (1.27×)** |
+
+> **计算说明** (D=64, pipeline 失效):
+>
+> - M_avg=256, Active=63 (所有远程设备), per-op = 4 tokens × 16 KB = 64 KB
+> - T_gather_e = 63 × (500 + 65536/200e9) = 63 × 828 ns = 52.2 μs > T_ffn_e (26 μs)
+> - Pipeline 失效: T_total_A = 26 + 4 × 52.2 = 234.8 μs, T_exposed_A = 130.8 μs
+> - Strategy B: batch = 128×8/64 × 16384 = 256 KB, T_B = 63 × 1811 ns = 114.1 μs
+
+##### 决策矩阵
+
+```text
+                    D ≤ 16                    D ≥ 64
+              ┌──────────────────┬──────────────────┐
+  Decode      │   A 胜 (2-18×)    │   A 胜 (2-4×)    │
+  (bt 小)     │   pipeline 有效    │   M_avg 小 → ok  │
+              ├──────────────────┼──────────────────┤
+  Prefill     │   A 胜 (7-18×)    │   B 胜 (15-27%)  │
+  (bt=128)    │   E_L ≥ 16 深     │   pipeline 失效   │
+              └──────────────────┴──────────────────┘
+```
+
+#### 4.8.6 扩展分析: Local Pre-Combine (Stage 4+6 融合)
+
+> 评估将 Stage 6 加权求和提前到 expert 设备执行, 减少 gather 数据量的可行性.
+
+思路: 每个 expert 完成 FFN 后, 在本地计算 `topk_weight × result`, 按 token 累加为 partial sum. Gather 发送 partial sum (每 token 一个 H 向量, F32) 而非 K 个 expert 输出 (每 token K 个 H 向量, BF16).
+
+**ICI 数据量对比** (per bt tile):
+
+| D | Current: `K × H × B_t` | Pre-Combine (F32): `D_active × H × 4` | **变化** |
+|---|------------------------|---------------------------------------|---------|
+| 4 | 16H bytes | 14.4H bytes | 0.9× (微减) |
+| 16 | 16H bytes | 25.6H bytes | **1.6× (增大)** |
+| 64 | 16H bytes | 30.8H bytes | **1.9× (增大)** |
+
+> `D_active = D × (1 - (1 - 1/D)^K)`: 每 token 平均有 partial sum 要发送的设备数. D→∞ 时 D_active→K, 此时 pre-combine 的 F32 数据量 = K×H×4, 是 current BF16 的 **2×**. F32 精度要求完全抵消 K→1 的合并收益. **不推荐**, 除非接受 BF16 精度损失且 D ≤ 4.
+
+#### 4.8.7 实验方案
+
+```python
+# Exp G1: Baseline — per-expert eager gather (当前实现)
+# Exp G2: Deferred batched gather (需 kernel 修改)
+#   修改: 移除 expert 循环内的 start_a2a_gather,
+#         在所有 expert 完成后执行 batched_a2a_gather_all()
+for D in [4, 16, 64, 128]:
+    for scenario, T in [("decode", 512), ("prefill", 8192)]:
+        for mode in ["eager", "deferred_batch"]:
+            result = fused_ep_moe(
+                mesh, tokens, w1, w2, w3,
+                topk_weights, topk_ids, top_k=8,
+                ep_size=D,
+                gather_mode=mode,
+            )
+            profile(result, tag=f"{mode}_D{D}_{scenario}")
+
+# Exp G3: Hybrid — 运行时自动选择策略
+# 切换条件: min(D-1, M_avg) × T_ici_launch > T_ffn_e 时使用 deferred batch
+fused_ep_moe(..., gather_mode="auto")
+```
+
+| 实验 | 扫描变量 | 核心指标 | 预期结果 |
+|------|---------|---------|---------|
+| G1 vs G2 Decode | D ∈ {4,16,64,128} | gather 阶段延迟 | G1 (eager) 胜, 所有 D |
+| G1 vs G2 Prefill | D ∈ {4,16,64,128} | gather 阶段延迟 | D≤16: G1 胜; D≥64: G2 胜 15-27% |
+| G3 Hybrid | D × bt | 端到端延迟 | ≤ min(G1, G2) |
+| ICI 效率 | D | 有效 ICI 带宽 (GB/s) | Batched 利用率显著高于 per-expert |
+
+> **Implementation Note**: Strategy B 需要一个 reorg 步骤 — 将 expert-major 布局的 `a2a_s_acc` 按 target-device 重排为连续 buffer. 该 reorg 为本地 HBM shuffle: `bt × K × H × B_t / HBM_BW` ≈ 4.6 μs (D=64, bt=128), 需计入 Strategy B 总延迟.
+
+#### 4.8.8 关键结论
+
+1. **Decode (所有 D)**: Strategy A (当前 pipeline) 最优. T_gather_e / T_ffn_e < 0.4, gather 被 FFN compute 完全隐藏, 仅暴露 last-expert drain (2-9 μs).
+
+2. **Prefill + D ≤ 16**: Strategy A 仍最优. E_L ≥ 16 提供充足 pipeline 深度, 且每次 ICI 传输量适中 (32-64 KB, 有效带宽 55-110 GB/s).
+
+3. **Prefill + D ≥ 64**: Strategy B (deferred batch) 可降低 gather 开销 15-27%. 根本原因: D-1 ≥ 63 次串行 ICI launch 的累积开销 (≥ 31.5 μs) 超过 T_ffn_e (26 μs), 导致 pipeline 失效; cross-expert 合并将 ICI ops 从 E_L×(D-1) 降至 D-1, 每次传输量增大 E_L 倍, ICI 带宽利用率显著提升.
+
+4. **Local Pre-Combine 不可行**: F32 精度需求 (2× per element) 完全抵消 K→1 的合并收益, D ≥ 16 时反而增加 ICI 数据量.
+
+5. **Hybrid 推荐**: 运行时根据 `min(D-1, M_avg) × T_ici_launch` vs `T_ffn_e` 自动选择 gather 模式 — Decode 走 pipeline, Prefill + 大 EP 走 deferred batch.
+
+
 ---
 
 ## 5. Stage 5: Shared Expert Compute
