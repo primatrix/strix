@@ -28,11 +28,11 @@
 | 符号 | 含义 | v7x 值 |
 |------|------|--------|
 | $BW_{HBM}$ | HBM 带宽 | 3,690 GB/s |
-| $F_{MXU}$ | MXU 峰值算力 (BF16, dual MXU) | 2,307 TFLOPS |
+| $F_{MXU}$ | MXU 峰值算力 (BF16, per TensorCore) | 1,154 TFLOPS |
 | $BW_{ICI}$ | ICI 链路带宽 (per link) | ~200 GB/s (双向) |
 | $\text{VMEM}$ | VMEM 容量 | 64 MiB |
 | $\text{HBM}_{total}$ | HBM 总容量 | 96 GB |
-| $\text{Ridge}$ | Roofline 拐点 $= F_{MXU} / BW_{HBM}$ | 625 FLOPs/byte |
+| $\text{Ridge}$ | Roofline 拐点 $= F_{MXU} / BW_{HBM}$ | 313 FLOPs/byte |
 | $t_{packing}$ | BF16 打包因子 = `MXU_dim` / 128 | 2 (for BF16) |
 
 #### Block Config 参数
@@ -323,7 +323,7 @@ $$\text{AI}_{exec} \approx \frac{6 \times bts \times H \times I}{3 \times H \tim
 
 $$\text{AI}_{useful} \approx \frac{2 \times \bar{n}_e}{B_w}$$
 
-> **BF16** ($B_w = 2$): $\text{AI}_{useful} = \bar{n}_e$。当 $\bar{n}_e = 8$: AI = 8 FLOPs/byte，远低于 ridge point 625。
+> **BF16** ($B_w = 2$): $\text{AI}_{useful} = \bar{n}_e$。当 $\bar{n}_e = 8$: AI = 8 FLOPs/byte，远低于 ridge point 313。
 
 ##### 全部 $E_L$ 专家汇总
 
@@ -336,7 +336,7 @@ $$\text{AI}_{useful} \approx \frac{2 \times \bar{n}_e}{B_w}$$
 | **$T_{compute}$** | $E_L \times 6 \times bts \times HI / F_{MXU}$ |
 | **瓶颈判定** | $T_{HBM} / T_{compute} = 3HIB_w \times F_{MXU} / (6 \times bts \times HI \times BW_{HBM}) = B_w \times F_{MXU} / (2 \times bts \times BW_{HBM})$ |
 
-> 当此比值 > 1 时为 HBM-bound。对 v7x BF16: $2 \times 2307T / (2 \times bts \times 3690G) = 625 / bts$。当 $bts < 625$ (decode 常态) 时**深度 HBM-bound**。
+> 当此比值 > 1 时为 HBM-bound。对 v7x BF16: $2 \times 1154T / (2 \times bts \times 3690G) = 313 / bts$。当 $bts < 313$ (decode 常态) 时**深度 HBM-bound**。
 
 ##### DMA:Compute 比 (双缓冲分析)
 
@@ -837,8 +837,8 @@ $$\boxed{n_e^{*} = \frac{3 \times I \times B_w \times F_{MXU}}{6 \times I \times
 
 | 配置 | $B_w$ | $n_e^{*}$ | 对应全局 $T$ (EP=4, $E_L$=64) |
 |------|--------|---------|------|
-| v7x BF16 | 2 | $2 \times 625 / 2 = 625$ | $625 \times 64 / 8 \times 4 = 20,000$ |
-| v7x FP8 | 1 | $1 \times 625 / 2 = 313$ | $313 \times 64 / 8 \times 4 = 10,016$ |
+| v7x BF16 | 2 | $2 \times 313 / 2 = 313$ | $313 \times 64 / 8 \times 4 = 10,016$ |
+| v7x FP8 | 1 | $1 \times 313 / 2 = 157$ | $157 \times 64 / 8 \times 4 = 5,024$ |
 | v6e BF16 | 2 | $B_w \times 918T / (2 \times 1600G) = 574$ | ~18,400 |
 
 #### 最优策略矩阵
@@ -879,7 +879,7 @@ $$T_{expert}(n_e) = \max\left(\underbrace{\frac{3HIB_w}{BW_{HBM}}}_{\text{权重
   │  ╱               │
   │╱                 │
   ├──────────────────┼─────────────→ n_e
-  0               n_e* ≈ 625 (BF16, v7x)
+  0               n_e* ≈ 313 (BF16, v7x)
       ← HBM-bound →│← Compute-bound →
 ```
 
@@ -1001,7 +1001,7 @@ $$\text{HBM}_{chunked}^{weight} = n_{chunks} \times E_{active} \times 3HIB_w$$
 | 单专家 MXU FLOPs (exec) | $6 \times 64 \times 8192 \times 2048 = 6.44$ G | 6.44 GFLOPS | ✓ |
 | AI (exec) | $6.44G / 96M = 67.1$ | 67.1 | ✓ |
 | AI (useful) | $6.44G \times 8/64 / 96M = 8.4$ | 8.4 | ✓ |
-| Crossover $n_e^*$ | $2 \times 625 / 2 = 625$ | — (新分析) | — |
+| Crossover $n_e^*$ | $2 \times 313 / 2 = 313$ | — (新分析) | — |
 | $T_{max}^B$ | $(64M - 16M) / 24K = 2,048$ | 2,048 | ✓ |
 
 ### 5.2 参数敏感性
@@ -1027,8 +1027,8 @@ $$\text{HBM}_{chunked}^{weight} = n_{chunks} \times E_{active} \times 3HIB_w$$
 | 32 | 8 | 1 | 1 | 6,144 MB | 1 | 极度 HBM-bound |
 | 256 | 64 | 8 | 1 | 6,144 MB | 8 | 深度 HBM-bound |
 | 2,048 | 512 | 64 | 8 | 49,152 MB | 64 | HBM-bound |
-| 16,384 | 4,096 | 512 | 64 | 393,216 MB | 512 | 接近 crossover |
-| 20,000 | 5,000 | 625 | 79 | 483,840 MB | 625 | **Crossover** |
+| 10,016 | 2,504 | 313 | 40 | 245,760 MB | 313 | **Crossover** |
+| 16,384 | 4,096 | 512 | 64 | 393,216 MB | 512 | Compute-bound |
 | 65,536 | 16,384 | 2,048 | 256 | — | 2,048 | Compute-bound |
 
 > 注意: $T = 2,048$ 时使用方案 A 的 $n_{bt} = 8$，权重被加载 8 遍。方案 B 最多只需 $\lceil 512/2048 \rceil = 1$ chunk。
@@ -1072,11 +1072,11 @@ $$\text{HBM}_{chunked}^{weight} = n_{chunks} \times E_{active} \times 3HIB_w$$
 |------|---------|---------|
 | HBM 容量 | 96 GB | 32 GB |
 | HBM 带宽 | 3,690 GB/s | 1,600 GB/s |
-| MXU 峰值 (BF16) | 2,307 TFLOPS | 918 TFLOPS |
+| MXU 峰值 (BF16, per TensorCore) | 1,154 TFLOPS | 918 TFLOPS |
 | MXU 数量 | 2 (dual) | 1 |
 | MXU 维度 | 256×256 | 256×256 |
 | VMEM | 64 MiB | 64 MiB |
-| Ridge Point (BF16) | 625 FLOPs/byte | 574 FLOPs/byte |
+| Ridge Point (BF16) | 313 FLOPs/byte | 574 FLOPs/byte |
 | ICI 带宽 (per link) | ~200 GB/s | ~100 GB/s |
 
 ## 附录 B: LLO Overhead 观测汇总
