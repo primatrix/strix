@@ -92,9 +92,58 @@ reviewers: []
 
 ### 1.1 功能描述
 
-在每个 `bt` tile 的开头, 从 HBM 加载 top-k 路由结果, 计算 token-to-expert 映射, 并通过跨设备 AllReduce 交换路由元数据, 使每个设备知道每个专家将接收多少 token 以及从哪些设备接收.
+Stage 1 包含三个阶段:
+
+**Phase A — Gate + TopK 计算 (Kernel 外, XLA 编译)**:
+对每个设备的本地 token (`T_L` 个), 执行 Gate 线性投影 (`hidden_states @ W_gate`) 得到路由 logits, 经 score function (sigmoid/softmax) 和 grouped top-k 选择, 产生 `topk_weights` 和 `topk_ids`, 写入 HBM. 该步骤在 Pallas kernel 外部以普通 XLA 编译方式执行.
+
+**Phase A' — Permute: Token-major → Expert-major 重排 (理论分析)**:
+将 token 按 `topk_ids` 路由信息重排为 Expert:Tokens 连续布局, 使每个专家接收的 token 在内存中连续存储, 方便 AlltoAll 一次性批量发送. 当前 kernel 未单独实现此步骤 — permute 隐式融合在 Stage 2 的 `fori_loop` 串行 scatter 中.
+
+**Phase B — In-kernel Metadata (Pallas kernel 内)**:
+在每个 `bt` tile 的开头, 从 HBM 加载 Phase A 预计算的 top-k 路由结果, 计算 token-to-expert 映射, 并通过跨设备 AllReduce 交换路由元数据, 使每个设备知道每个专家将接收多少 token 以及从哪些设备接收.
 
 ### 1.2 对应源码
+
+**Phase A: Gate + TopK** (参考 `sgl_jax/srt/layers/gate.py`):
+
+```python
+# GateLogit.__call__: 线性投影 + Score Function
+logits = jnp.dot(hidden_states, W_gate,            # (T_L, H) × (H, E) → (T_L, E)
+                 precision=jax.lax.Precision.HIGHEST)
+scores = jax.nn.sigmoid(logits)                     # DeepSeek V3: sigmoid
+# 其他 score_func: softmax (Qwen3-MoE), tanh (预留)
+
+# TopK.__call__: Biased Grouped TopK (DeepSeek V3)
+scores_biased = scores + correction_bias[None, :]   # 加 expert bias (可选)
+scores_grouped = scores_biased.reshape(T_L, n_group, E // n_group)
+group_scores = sum(top_k(scores_grouped, k=2)[0], axis=-1)  # top-2 per group
+group_idx = top_k(group_scores, k=topk_group)[1]            # 选 top groups
+mask = build_group_mask(group_idx, n_group)
+topk_ids = top_k(where(mask, scores_biased, -inf), k=K)[1]
+topk_weights = take_along_axis(scores, topk_ids, axis=1)    # 用 unbiased scores
+
+# 重归一化 + 缩放
+topk_weights /= sum(topk_weights, axis=-1, keepdims=True)
+topk_weights *= routed_scaling_factor                        # DeepSeek V3: 2.5
+```
+
+> `W_gate` 为 `(H, E)` 的 float32 权重, 在每个 EP 设备上**全量复制** (不按 EP 切分). `correction_bias` 可选, 仅 DeepSeek V3 (`topk_method="noaux_tc"`) 启用. Score function 可选: `sigmoid` (DeepSeek V3), `softmax` (Qwen3-MoE).
+
+**Phase A': Permute** (理论操作, 当前 kernel 未独立实现):
+
+```text
+# 目标: token-major → expert-major 连续布局
+# 使 AlltoAll 可按 expert 批量发送, 消除 Stage 2 串行 DMA
+permute_indices = compute_scatter_indices(topk_ids, expert_starts)
+for t in 0..bt-1:
+    for k in 0..K-1:
+        expert_id = topk_ids[t, k]
+        offset = permute_indices[t, k]
+        permuted_tokens[expert_id, offset, :] = hidden_states[t, :]
+```
+
+**Phase B: In-kernel Metadata** (源码: `kernels/_fused_moe_impl.py`):
 
 ```text
 run_bt():
@@ -107,6 +156,30 @@ run_bt():
 
 ### 1.3 输入 / 输出
 
+**Phase A (Gate + TopK) 输入 / 输出:**
+
+| 方向 | 张量 | Shape | Dtype | 字节数 |
+|------|------|-------|-------|--------|
+| **Input** | `hidden_states` | `(T_L, H)` | BF16 | `T_L × H × 2` |
+| **Input** | `W_gate` | `(H, E)` | F32 | `H × E × 4` |
+| **Input** | `correction_bias` (可选) | `(E,)` | F32 | `E × 4` |
+| **Output→HBM** | `topk_weights` | `(T_L, K)` | F32 | `T_L × K × 4` |
+| **Output→HBM** | `topk_ids` | `(T_L, K)` | I32 | `T_L × K × 4` |
+
+> `W_gate` 在每个 EP 设备上全量复制 (不随 `D` 切分). DeepSeek-V3 配置: `W_gate` = 8192×256×4 = 8.0 MB.
+
+**Phase A' (Permute) 输入 / 输出 (理论):**
+
+| 方向 | 张量 | Shape | Dtype | 字节数 |
+|------|------|-------|-------|--------|
+| **Input** | `hidden_states` | `(bt, H)` | BF16 | `bt × H × 2` |
+| **Input** | `topk_ids` | `(bt, K)` | I32 | (已在 VMEM/HBM) |
+| **Output** | `permuted_tokens` | `(E, max_M, H)` | BF16 | `bt × K × H × 2` |
+
+> Permute 将每个 token 复制 K 次到对应 expert 位置, 总写入量 = `bt × K × H × B_t`.
+
+**Phase B (In-kernel Metadata) 输入 / 输出:**
+
 | 方向 | 张量 | Shape | Dtype | 字节数 |
 |------|------|-------|-------|--------|
 | **Input** | `topk_weights_hbm` | `(T_L, K)` | F32 | `T_L × K × 4` |
@@ -118,6 +191,96 @@ run_bt():
 | **Output** | `expert_offsets` | `(2, padded_E)` | I32 | `2 × pad128(E) × 4` |
 
 ### 1.4 计算步骤分解
+
+#### Step 1.0: Gate + TopK + Permute (Phase A, XLA 编译)
+
+**Step 1.0.1: Gate 线性投影 (MXU GEMM)**
+
+```text
+logits = hidden_states @ W_gate     # (T_L, H) × (H, E) → (T_L, E)
+
+FLOPs_gate = 2 × T_L × H × E
+```
+
+HBM 数据搬运:
+
+```text
+Bytes_W_gate     = H × E × 4               # 读 W_gate (float32, 全量复制)
+Bytes_input      = T_L × H × B_t           # 读 hidden_states
+Bytes_output     = T_L × E × 4             # 写 logits (float32)
+
+Total_Bytes_gate = H × E × 4 + T_L × H × B_t + T_L × E × 4
+```
+
+> 对于 Decode 场景 (`T_L` 小), `Bytes_W_gate` 项主导 (8.0 MB for DeepSeek-V3), 使 Gate GEMM 严格 HBM BW bound. AI ≈ `T_L / 2` FLOPs/byte, 远低于 ridge point 625.
+
+**Step 1.0.2: Score Function (VPU)**
+
+```text
+# DeepSeek V3: sigmoid(x) = 1/(1+exp(-x))
+FLOPs_score = 4 × T_L × E              # negate + exp + add + reciprocal
+
+# Qwen3-MoE: softmax
+FLOPs_score = 5 × T_L × E              # exp + sum + div (近似)
+```
+
+> 在 (T_L, E) 矩阵上的逐元素操作, 数据已在寄存器/VMEM, 无额外 HBM 访问.
+
+**Step 1.0.3: Grouped TopK 专家选择 (VPU)**
+
+```text
+# DeepSeek V3: biased grouped topk
+# 1. add bias:           T_L × E       additions
+# 2. reshape + top-2:    T_L × E       comparisons (per-group top-2)
+# 3. group score sum:    T_L × n_group additions
+# 4. select top groups:  T_L × n_group comparisons
+# 5. build mask:         T_L × E       conditionals
+# 6. masked top-K:       T_L × E       comparisons
+# 7. gather weights:     T_L × K       memory ops
+
+FLOPs_topk ≈ 6 × T_L × E + T_L × K
+```
+
+**Step 1.0.4: 重归一化 + 缩放 (VPU)**
+
+```text
+FLOPs_renorm = 3 × T_L × K             # sum + div + scale
+```
+
+**Step 1.0.5: Permute — Token-major → Expert-major 重排 (理论分析)**
+
+```text
+# 目标: 将 hidden_states 按 topk_ids 重排为 expert-major 连续布局
+# 效果: AlltoAll 可按 expert 批量 DMA, 消除 Stage 2 串行 fori_loop 开销
+#
+# 当前 kernel: permute 融合在 Stage 2 scatter 的 fori_loop 中
+# 理论优化: 独立 permute → batch scatter
+
+FLOPs_permute ≈ bt × K                  # 索引计算 (negligible)
+
+Bytes_permute_read  = bt × H × B_t      # 读源 token (每 token 读一次)
+Bytes_permute_write = bt × K × H × B_t  # 写到 K 个 expert 位置
+
+Total_Bytes_permute = bt × H × B_t × (1 + K)
+AI_permute ≈ 0                           # 纯 DMA scatter, 几乎无计算
+T_permute = Total_Bytes_permute / HBM_BW
+```
+
+> 对于 DeepSeek-V3 (K=8, H=8192, B_t=2): `T_permute = bt × 8192 × 2 × 9 / HBM_BW`.
+> bt=64 时 T_permute ≈ 2.4 μs, bt=128 时 ≈ 4.9 μs. 若实现独立 Permute, 可用向量化 scatter 替代 Stage 2 的串行 DMA, 但需额外 HBM buffer.
+
+**Phase A 总计:**
+
+```text
+FLOPs_phase_a_mxu = 2 × T_L × H × E                    # Gate GEMM (MXU, 主导)
+FLOPs_phase_a_vpu = 10 × T_L × E + 3 × T_L × K         # Score + TopK + Renorm (VPU)
+
+Bytes_HBM_phase_a = H × E × 4 + T_L × H × B_t          # 读 (W_gate + hidden_states)
+                  + 2 × T_L × K × 4                     # 写 (topk_weights + topk_ids)
+
+# Permute (理论, 若独立实现):
+Bytes_HBM_permute = bt × H × B_t × (1 + K)
+```
 
 #### Step 1.1: Fetch TopK (DMA)
 
@@ -173,31 +336,178 @@ FLOPs_prefix_sum = D × pad128(E) × 2    # reduce + conditional accumulate
 
 ### 1.5 Roofline 公式
 
+**Phase A (Gate + TopK):**
+
 ```text
-Bytes_HBM_stage1 = 2 × T_L × K × 4                    # topk weights + ids read
+FLOPs_gate        = 2 × T_L × H × E                    # MXU GEMM
 
-FLOPs_stage1     = 2 × bt × K × pad128(E)              # routing mask
-                 + D × pad128(E) × 2                    # prefix sum
+Bytes_HBM_gate    = H × E × 4                           # W_gate 读 (主导项)
+                  + T_L × H × B_t                        # hidden_states 读
+                  + T_L × E × 4                          # logits 写
 
-Bytes_ICI_stage1 = log2(D) × pad128(E) × 4             # allreduce (power-of-2)
-                   + D × 2 × sync_barrier_bytes          # barrier messages
+AI_gate           = 2 × T_L × H × E / Bytes_HBM_gate
+                  ≈ T_L / 2                              # W_gate 主导时 (Decode)
 
-T_compute_stage1 = FLOPs_stage1 / VPU_peak              # VPU-bound (无 MXU)
-T_hbm_stage1     = Bytes_HBM_stage1 / HBM_BW
-T_ici_stage1     = Bytes_ICI_stage1 / ICI_BW + log2(D) × T_barrier
-
-T_stage1 = max(T_compute_stage1, T_hbm_stage1) + T_ici_stage1
+T_gate            = max(FLOPs_gate / MXU_peak, Bytes_HBM_gate / HBM_BW)
+                  ≈ Bytes_HBM_gate / HBM_BW              # 严格 HBM BW bound
 ```
 
-> **瓶颈特征**: 该阶段以 **ICI 延迟 (AllReduce)** 为主要瓶颈, 计算量极小 (纯 VPU), HBM 数据量也很小. 对于 `D=1` (单设备), AllReduce 退化为 noop, 该阶段几乎可忽略.
+> Gate GEMM 的 AI 在 Decode 场景极低 (AI ≈ `T_L/2`), 因为每次需读取完整 `W_gate` (DeepSeek-V3: 8.0 MB), 而 FLOPs 与 `T_L` 成正比. Score function 和 TopK 的 VPU 计算量 (~10 × T_L × E FLOPs) 可忽略.
+
+**Phase A' (Permute, 理论):**
+
+```text
+Bytes_HBM_permute = bt × H × B_t × (1 + K)             # 读 tokens + 写 K 份副本
+
+T_permute         = Bytes_HBM_permute / HBM_BW
+                  = bt × H × B_t × (1 + K) / HBM_BW
+```
+
+> Permute 为纯 DMA 操作 (AI ≈ 0). 若独立实现, 其 HBM 开销与 Stage 2 scatter 部分重叠 — 即 Permute 预付的 HBM 搬运可减少 Stage 2 的串行 DMA 开销.
+
+**Phase B (In-kernel Metadata, per bt tile):**
+
+```text
+Bytes_HBM_phase_b = 2 × bt × padded_K × 4              # topk weights + ids 读 (DMA)
+
+FLOPs_phase_b     = 2 × bt × K × pad128(E)              # routing mask
+                  + D × pad128(E) × 2                    # prefix sum
+
+Bytes_ICI_phase_b = log2(D) × pad128(E) × 4             # allreduce (power-of-2)
+                  + D × 2 × sync_barrier_bytes            # barrier messages
+
+T_compute_phase_b = FLOPs_phase_b / VPU_peak             # VPU-bound (无 MXU)
+T_hbm_phase_b     = Bytes_HBM_phase_b / HBM_BW
+T_ici_phase_b     = Bytes_ICI_phase_b / ICI_BW + log2(D) × T_barrier
+
+T_phase_b_per_tile = max(T_compute_phase_b, T_hbm_phase_b) + T_ici_phase_b
+```
+
+**Stage 1 总延迟:**
+
+```text
+T_stage1 = T_gate + T_permute + num_bt × T_phase_b_per_tile
+
+# 简化 (T_gate 被 W_gate 读取主导, T_phase_b 被 ICI AllReduce 主导):
+T_stage1 ≈ (H × E × 4) / HBM_BW
+          + bt × H × B_t × (1 + K) / HBM_BW              # Permute (理论)
+          + num_bt × log2(D) × T_ici_step
+```
+
+> **瓶颈特征**:
+> - Phase A: **HBM BW bound** — 读取 W_gate (DeepSeek-V3: ~2.2 μs).
+> - Phase A': **HBM BW bound** — 纯 scatter DMA (bt=64 时 ~2.4 μs).
+> - Phase B: **ICI 延迟 bound** — AllReduce payload 极小 (1 KB/round), 延迟由 ICI 启动开销主导, 且随 `num_bt` 线性累积.
+> - 对于 `D=1` (单设备), AllReduce 退化为 noop, 仅剩 Gate + Permute 开销.
+>
+> **关键观察**: 随 EP 规模增大, Stage 3 延迟因 `E_L` 减小而下降 (O(1/D)), 但 Stage 1 AllReduce 延迟增长 (O(log₂D)). 在 EP ≥ 128 时, Stage 1 占端到端 MoE 延迟比例可达 30%–70% (见 §1.7).
 
 ### 1.6 消融实验设计
+
+#### 1.6.1 Phase B (In-kernel) 消融
 
 | 实验 | 消融 Flag | 预期影响 | 验证目标 |
 |------|----------|---------|---------|
 | 禁用 AllReduce | `disable_all_reduce_metadata=True` | 消除 ICI 通信 | 量化 AllReduce 占比 |
 | 禁用 Barrier | `disable_sync_barrier=True` | 消除 barrier 同步 | 量化 barrier 开销 |
 | 变化 `bt` | 调整 block_config.bt | 改变每次 routing 的 token 数 | bt 对 metadata 阶段的影响 |
+
+#### 1.6.2 EP 缩放消融 (Stage 1 全阶段)
+
+固定 DeepSeek-V3-like 配置 (E=256, K=8, H=8192, I=2048), 扫描 EP 规模:
+
+```python
+for ep_size in [8, 32, 64, 128, 256]:
+    for scenario in ["decode", "prefill"]:
+        T = 2048 if scenario == "decode" else 8192
+        mesh = create_mesh(ep_size)
+        # 分别测量: Gate GEMM, Permute (若实现), In-kernel metadata
+        topk_weights, topk_ids = gate_and_topk(hidden_states, W_gate, ...)
+        result = fused_ep_moe(mesh, tokens, w1, w2, w3,
+                              topk_weights, topk_ids, top_k=8, ...)
+        profile(result)  # 采集各阶段延迟
+```
+
+| 实验 | EP Size | 场景 | T_L | bt | 验证目标 |
+|------|---------|------|-----|-----|---------|
+| EP-8 Decode | D=8 | T=2048 | 256 | 256 | 基线: AllReduce 3 轮 |
+| EP-32 Decode | D=32 | T=2048 | 64 | 64 | AllReduce 5 轮 |
+| EP-64 Decode | D=64 | T=2048 | 32 | 32 | AllReduce 6 轮 |
+| EP-128 Decode | D=128 | T=2048 | 16 | 16 | AllReduce 7 轮 |
+| EP-256 Decode | D=256 | T=2048 | 8 | 8 | AllReduce 8 轮 |
+| EP-8 Prefill | D=8 | T=8192 | 1024 | 128 | 多 tile AllReduce (num_bt=8) |
+| EP-32 Prefill | D=32 | T=8192 | 256 | 128 | 中等 tile 数 (num_bt=2) |
+| EP-64 Prefill | D=64 | T=8192 | 128 | 128 | 单 tile |
+| EP-128 Prefill | D=128 | T=8192 | 64 | 64 | 单 tile, AllReduce 7 轮 |
+| EP-256 Prefill | D=256 | T=8192 | 32 | 32 | 单 tile, AllReduce 8 轮 |
+
+### 1.7 数值分析: EP 缩放对 Stage 1 耗时的影响
+
+基于 DeepSeek-V3-like 配置: E=256, K=8, H=8192, I=2048, `W_gate` = float32 (8.0 MB).
+
+> **假设**: `T_ici_step ≈ 2 μs` (ICI 单步延迟, 含 startup + barrier). 实际值需通过 §1.6 消融实验标定.
+
+#### 1.7.1 Decode 场景 (T=2048, bt=T_L, num_bt=1)
+
+| D | T_L=bt | T_gate (μs) | T_permute (μs) | T_AR (μs) | **T_stage1** (μs) | T_stage3 (μs) | **S1/S3** |
+|---|--------|------------|-----------------|-----------|-------------------|--------------|-----------|
+| 8 | 256 | 3.5 | 9.8 | 6 | **19.3** | 832 | 2.3% |
+| 32 | 64 | 2.6 | 2.4 | 10 | **15.0** | 208 | 7.2% |
+| 64 | 32 | 2.4 | 1.2 | 12 | **15.6** | 104 | 15.0% |
+| 128 | 16 | 2.4 | 0.6 | 14 | **17.0** | 52 | 32.7% |
+| 256 | 8 | 2.3 | 0.3 | 16 | **18.6** | 26 | **71.5%** |
+
+> **计算说明**:
+> - `T_gate = (H×E×4 + T_L×H×2 + T_L×E×4) / HBM_BW` — W_gate 读取 (8.0 MB) 主导.
+> - `T_permute = bt × H × B_t × (1+K) / HBM_BW` — 纯 DMA scatter.
+> - `T_AR = log₂(D) × T_ici_step` — AllReduce per-tile, Decode 仅 1 tile.
+> - `T_stage3 ≈ E_L × 3 × H × I × B_w / HBM_BW` — Expert FFN 权重读取主导.
+
+#### 1.7.2 Prefill 场景 (T=8192, bt=min(128, T_L))
+
+| D | T_L | bt | num_bt | T_gate (μs) | T_permute (μs) | T_AR (μs) | **T_stage1** (μs) | T_stage3 (μs) | **S1/S3** |
+|---|-----|-----|--------|------------|-----------------|-----------|-------------------|--------------|-----------|
+| 8 | 1024 | 128 | 8 | 7.1 | 4.9 | 48 | **60.0** | 6659 | 0.9% |
+| 32 | 256 | 128 | 2 | 3.5 | 4.9 | 20 | **28.4** | 416 | 6.8% |
+| 64 | 128 | 128 | 1 | 2.9 | 4.9 | 12 | **19.8** | 104 | 19.0% |
+| 128 | 64 | 64 | 1 | 2.6 | 2.4 | 14 | **19.0** | 52 | 36.5% |
+| 256 | 32 | 32 | 1 | 2.4 | 1.2 | 16 | **19.6** | 26 | **75.4%** |
+
+> Prefill EP=8 的 T_stage1 较高 (60.0 μs) 是因为 num_bt=8 导致 AllReduce 被执行 8 次.
+
+#### 1.7.3 各分项占比分析
+
+```text
+T_stage1 = T_gate + T_permute + num_bt × T_AR
+
+           ┌─────────────────────────────────────────────────────┐
+  EP=8     │███ Gate  │████ Perm │██████ AR                      │ ← AR 低
+  EP=32    │██ Gate │██ Perm │██████████ AR                      │
+  EP=64    │█ Gate │█ Perm │████████████ AR                      │
+  EP=128   │█ G │ P │██████████████ AR                           │
+  EP=256   │█ G │P│████████████████ AR                           │ ← AR 主导
+           └─────────────────────────────────────────────────────┘
+```
+
+#### 1.7.4 关键观察
+
+1. **Gate GEMM 延迟近乎恒定**: T_gate ≈ 2.3–7.1 μs, 由 `W_gate` 读取 (8.0 MB) 主导. 仅在 T_L > 256 时 hidden_states 读取才显著增加延迟.
+
+2. **Permute 延迟与 bt 成正比**: T_permute = `bt × 8192 × 2 × 9 / HBM_BW`. Prefill (bt=128) 约 4.9 μs; Decode (bt=8) 仅 0.3 μs. 若实现独立 Permute, 可用向量化 scatter 替代 Stage 2 的串行 DMA, 潜在净收益需结合 Stage 2 消融验证.
+
+3. **AllReduce 是 Stage 1 最大开销**: T_AR 从 6 μs (D=8) 增长到 16 μs (D=256), 且 Prefill 因 num_bt > 1 导致累积 (EP=8 Prefill: 48 μs). AllReduce 每轮 payload 仅 1 KB, 完全由 ICI startup 延迟主导.
+
+4. **Stage 1 在大 EP 下占比显著提升**:
+   - EP ≤ 32: Stage 1 < 7% 端到端, 可忽略
+   - EP = 64: Stage 1 ≈ 15–19%, 值得关注
+   - EP = 128: Stage 1 ≈ 33–37%, 成为重要优化目标
+   - EP = 256: Stage 1 ≈ **71–75%**, **成为主要瓶颈** (因 Stage 3 权重仅 96 MB / 26 μs)
+
+5. **优化方向**:
+   - **Gate 权重量化**: `W_gate` 从 float32 (8 MB) → BF16 (4 MB), T_gate 降低 ~40%
+   - **AllReduce 优化**: 减少 `T_ici_step` (更高效的 barrier protocol); 探索非阻塞 AllReduce 与 Gate GEMM 重叠
+   - **减少 num_bt**: 增大 bt 以减少 AllReduce 调用次数 (Prefill 场景尤为关键)
+   - **Permute → Batch Scatter**: 独立 Permute 可消除 Stage 2 串行 DMA, 但需验证净收益
 
 ---
 
@@ -768,7 +1078,7 @@ T_total ≈ T_stage1 + T_stage3 + T_stage6
 
 | Stage | FLOPs | Bytes (HBM) | AI | 瓶颈类型 | 计算单元 |
 |-------|-------|-------------|-----|---------|---------|
-| 1. Metadata | `2btK·pad(E)` + `2D·pad(E)` | `2T_LK×4` | 极低 | ICI 延迟 | VPU |
+| 1. Metadata | `2T_L·H·E` (Gate) + VPU | `H·E·4 + bt·H·B_t·(1+K)` | `T_L/2` (Gate) | HBM BW (Gate) + ICI 延迟 (AR) | MXU+VPU+DMA |
 | 2. Scatter | 0 (纯 DMA) | `btH·B_t` (read) | 0 | ICI BW / 串行 DMA | DMA+ICI |
 | 3. Expert FFN | `6btKHI` | `E_L·3HI·B_w` + `2btKH·B_t` | `2btK/(E_L·B_w)` | **HBM BW** | MXU |
 | 4. Gather | 0 (纯 DMA) | `btKH·B_t` (transfer) | 0 | ICI BW / 串行 DMA | DMA+ICI |
@@ -787,6 +1097,8 @@ T_total ≈ T_stage1 + T_stage3 + T_stage6
 
    - Decode: `bt` 小 → AI 低 → 严格 HBM BW bound, 但 A2A 数据量小
    - Prefill: `bt` 大 → AI 提高但仍 BW bound, A2A 数据量大可能成为 ICI 瓶颈
+
+5. **Stage 1 在大 EP 下成为瓶颈**: Stage 3 延迟随 `1/D` 下降 (更少的本地专家), 但 Stage 1 的 AllReduce 延迟随 `log₂(D)` 增长且按 `num_bt` 累积. 在 EP ≥ 128 时, Stage 1 占 MoE 端到端延迟可达 30%–75% (详见 §1.7). Gate GEMM (~2–7 μs, W_gate 读取主导) + Permute 重排 (~1–10 μs) + AllReduce 通信 (~6–48 μs) 三项累计, 使 Stage 1 从可忽略的开销变为首要优化目标.
 
 ---
 
