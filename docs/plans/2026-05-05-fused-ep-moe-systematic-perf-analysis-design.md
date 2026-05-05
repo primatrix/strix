@@ -998,7 +998,7 @@ $$\text{HBM}_{chunked}^{weight} = n_{chunks} \times E_{active} \times 3HIB_w$$
 | 32 | 8 | 8 | 8 | 768 MB | 0.2 ms | 8 |
 | 64 | 4 | 4 | 8 | 384 MB | 0.1 ms | 8 |
 
-> $\bar{n}_e$ 不随 $P_{EP}$ 变化（$= T \times k / N_E = 8$，与 EP 无关）。但每设备 HBM 线性减少，理论下界线性降低。
+> $\bar{n}_e$ 不随 $P_{EP}$ 变化 ($= T \times k / N_E = 8$, 与 EP 无关)。但每设备 HBM 线性减少，理论下界线性降低。
 
 #### 变化 $T$ (固定 $P_{EP} = 4$, 其他参数不变)
 
