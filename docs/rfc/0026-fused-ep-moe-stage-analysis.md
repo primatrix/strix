@@ -1008,6 +1008,173 @@ T_stage3_ideal = max(
 | 变化 bf/bd1/bd2 | 调整 block_config | 改变 tile 大小 | 找到 DMA/compute 平衡点 |
 | 变化 btc | 调整 block_config.btc | 改变 MXU M 维度 | btc 对 MXU 利用率的影响 |
 
+### 3.9 Compute Bound 临界 Token 数量推导
+
+> 本节忽略实现细节 (tiling, num_bt 权重重读, VMEM 约束, 双缓冲), 仅从 SwiGLU FFN 算法本身推导 Stage 3 进入 Compute Bound 所需的最小 token 数量.
+
+#### 3.9.1 算法定义
+
+SwiGLU FFN per-expert 计算:
+
+```text
+Y = (SiLU(X @ W1) ⊙ (X @ W3)) @ W2
+
+X ∈ [M, H],  W1 ∈ [H, I],  W3 ∈ [H, I],  W2 ∈ [I, H],  Y ∈ [M, H]
+```
+
+其中 `M` 为单个专家接收的 token 数.
+
+#### 3.9.2 Per-Expert FLOPs
+
+| 步骤 | 操作 | FLOPs |
+|------|------|-------|
+| FFN1 Gate | X @ W1 | 2MHI |
+| FFN1 Up | X @ W3 | 2MHI |
+| Activation | SiLU(gate) ⊙ up | 3MI |
+| FFN2 Down | act @ W2 | 2MIH |
+| **合计** | | **6MHI + 3MI ≈ 6MHI** |
+
+#### 3.9.3 Per-Expert HBM 最小数据搬运量 (算法理论下限)
+
+假设:
+- 所有中间结果 (gate, up, act) 完美 fusion, 保留在片上 (VMEM/VPR)
+- 每个专家的权重从 HBM 读取**恰好一次** (无 tiling 导致的重读)
+
+| 数据 | 方向 | 字节数 |
+|------|------|--------|
+| W1 | Read | H × I × B_w |
+| W3 | Read | H × I × B_w |
+| W2 | Read | I × H × B_w |
+| X (input tokens) | Read | M × H × B_t |
+| Y (output tokens) | Write | M × H × B_t |
+| **合计** | | **3HI·B_w + 2MH·B_t** |
+
+> 与 §3.5 实现公式的关键区别: 实现中 `num_bt > 1` 时权重被重读 `num_bt` 次, 此处算法下限假设权重仅读一次. 这给出了 AI 的**理论上限**, 即进入 Compute Bound 的**最低 token 门槛**.
+
+#### 3.9.4 Per-Expert Arithmetic Intensity
+
+```text
+AI = 6MHI / (3HI·B_w + 2MH·B_t)
+   = 6MI / (3I·B_w + 2M·B_t)
+```
+
+> **关键观察**: H (hidden_size) 在分子分母中**完全约掉**, AI 仅取决于 M, I, B_w, B_t.
+
+#### 3.9.5 Compute Bound 临界条件推导
+
+Compute Bound 要求 AI ≥ R, 其中 R = Ridge Point = MXU_peak / HBM_BW = 1154 / 3690 ≈ **313 FLOPs/byte**.
+
+```text
+6MI / (3I·B_w + 2M·B_t) ≥ R
+
+6MI ≥ R·(3I·B_w + 2M·B_t)
+
+M·(6I - 2R·B_t) ≥ 3R·I·B_w
+```
+
+求解 per-expert 临界 token 数 M_crit:
+
+```text
+┌─────────────────────────────────────────────┐
+│                 3R·I·B_w                     │
+│  M_crit = ─────────────────                  │
+│             6I - 2R·B_t                      │
+└─────────────────────────────────────────────┘
+```
+
+> **可行性条件**: 6I > 2R·B_t, 即 I > R·B_t/3. 对 BF16: I > 313×2/3 = 209. 实际模型 I ≥ 1024, 始终满足.
+
+#### 3.9.6 近似公式
+
+分母中 token I/O 项 `2R·B_t` 相对于权重项 `6I` 很小 (BF16 时 1252 vs 12288, 占 ~10%), 因此:
+
+```text
+┌─────────────────────────────────────────────┐
+│  M_crit ≈ R·B_w / 2                         │
+└─────────────────────────────────────────────┘
+```
+
+**含义**: 每个专家至少需要 **(Ridge Point × 权重字节数 / 2)** 个 token 才能进入 Compute Bound.
+
+近似公式的修正系数:
+
+```text
+M_crit_exact / M_crit_approx = 1 / (1 - R·B_t/(3I))
+```
+
+对 BF16, I=2048: 修正系数 = 1/(1 - 626/6144) = 1.11, 即近似值偏低 ~11%.
+
+> **关键性质**:
+> - **与 H (hidden_size) 无关**: H 在 FLOPs 和 HBM bytes 中同比例出现, 完全约掉.
+> - **与 I (intermediate_size) 弱相关**: 近似公式中 I 约掉, 仅在修正项中保留 (~11% 影响).
+> - **与 E_L (本地专家数) 无关**: M_crit 是 per-expert 阈值, 不依赖专家数.
+
+#### 3.9.7 全局 Token 数转换
+
+均匀路由假设下, 每专家平均 token 数:
+
+```text
+M_avg = T_L × K / E_L = T × K / E
+```
+
+由 M_avg ≥ M_crit 得全局临界 token 数:
+
+```text
+┌─────────────────────────────────────────────┐
+│  T_crit = M_crit × E / K                    │
+│                                              │
+│  近似: T_crit ≈ R·B_w·E / (2K)              │
+└─────────────────────────────────────────────┘
+```
+
+> T_crit 与 EP 并行度 D 无关 — 仅取决于全局专家数 E、激活专家数 K 和权重精度 B_w.
+
+#### 3.9.8 数值计算 (DeepSeek-V3-like: E=256, K=8, H=8192, I=2048)
+
+**精确计算 (BF16, B_w=B_t=2)**:
+
+```text
+M_crit = 3 × 313 × 2048 × 2 / (6 × 2048 - 2 × 313 × 2)
+       = 3,846,144 / 11,036
+       = 349 tokens/expert
+
+T_crit = 349 × 256 / 8 = 11,168 tokens (全局)
+```
+
+**不同权重精度对比**:
+
+| 权重精度 | B_w | M_crit (精确) | M_crit (近似 R·B_w/2) | T_L_crit (D=4) | **T_crit (全局)** |
+|---------|-----|--------------|----------------------|----------------|------------------|
+| BF16 | 2 | **349** | 313 | 2,792 | **11,168** |
+| INT8 | 1 | **175** | 157 | 1,400 | **5,600** |
+| INT4 | 0.5 | **87** | 78 | 698 | **2,792** |
+
+> INT8/INT4 权重量化时, 计算仍以 BF16 执行 (dequantization 为 VPU 操作, 与 MXU 重叠). 量化仅减少 HBM 搬运量, MXU 峰值不变.
+
+#### 3.9.9 与实际工作负载对比
+
+| 场景 | T | D | M_avg | vs M_crit (BF16) | AI (FLOPs/byte) | MXU 利用率 | 瓶颈 |
+|------|---|---|-------|-----------------|-----------------|-----------|------|
+| Decode 小 batch | 256 | 4 | 8 | **44× 不足** | 8.0 | 2.6% | 严重 HBM BW bound |
+| Decode 大 batch | 2,048 | 4 | 64 | **5.5× 不足** | 64.0 | 20.4% | HBM BW bound |
+| Prefill 中等 | 8,192 | 4 | 256 | **1.4× 不足** | 213 | 68.1% | HBM BW bound (接近临界) |
+| **临界点** | **11,168** | 4 | **349** | **= 1.0×** | **313** | **100%** | **平衡点** |
+| Prefill 大 batch | 16,384 | 4 | 512 | 1.5× 超过 | 410 | 76.3%† | Compute bound |
+
+> † Compute bound 时 MXU 利用率 = R / AI = 313 / 410 = 76.3%, 表示 HBM 有余量, MXU 成为瓶颈.
+
+#### 3.9.10 关键结论
+
+1. **简洁规则**: 每专家需 **~R·B_w/2 ≈ 313 (BF16) / 157 (INT8) / 78 (INT4)** 个 token 才能 Compute Bound.
+
+2. **Decode 永远 HBM bound**: 典型 Decode (T=64~2048) 距离 Compute Bound 差 5~44×, MXU 利用率 < 21%.
+
+3. **权重量化是最有效手段**: INT8 将 M_crit 减半, INT4 减为 1/4 — 直接线性降低进入 Compute Bound 的 token 门槛.
+
+4. **vs §3.6 实现公式的关系**: 实现公式 `AI ≈ 2·bt·K / (num_bt·E_L·B_w)` 包含 `num_bt` 权重重读约束. 本节给出的算法下限假设 `num_bt=1` (权重仅读一次), 是**理论最优** — 即使完美实现也至少需要 M_crit 个 token/expert.
+
+5. **与模型维度的依赖关系**: M_crit 与 H 无关, 与 I 弱相关 (~11% 修正). 主要由硬件 Ridge Point (R) 和权重精度 (B_w) 决定.
+
 ---
 
 ## 4. Stage 4: All2All Combine (Gather)
