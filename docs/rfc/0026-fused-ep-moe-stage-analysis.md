@@ -1058,6 +1058,7 @@ T_stage3_ideal = max(
 | FFN1+FFN2 同时禁 | 两个 flag 同时开 | 保留仅 DMA | 验证纯 DMA pipeline 延迟 |
 | 变化 bf/bd1/bd2 | 调整 block_config | 改变 tile 大小 | 找到 DMA/compute 平衡点 |
 | 变化 btc | 调整 block_config.btc | 改变 MXU M 维度 | btc 对 MXU 利用率的影响 |
+| **FFN1/FFN2 联合计算** | 见 §3.10.7 详细设计 | 消除 pipeline bubble | 达到 Memory Bound (η_mem → 100%) |
 
 ### 3.9 Compute Bound 临界 Token 数量推导
 
@@ -1225,6 +1226,482 @@ T_crit = 349 × 256 / 8 = 11,168 tokens (全局)
 4. **vs §3.6 实现公式的关系**: 实现公式 `AI ≈ 2·bt·K / (num_bt·E_L·B_w)` 包含 `num_bt` 权重重读约束. 本节给出的算法下限假设 `num_bt=1` (权重仅读一次), 是**理论最优** — 即使完美实现也至少需要 M_crit 个 token/expert.
 
 5. **与模型维度的依赖关系**: M_crit 与 H 无关, 与 I 弱相关 (~11% 修正). 主要由硬件 Ridge Point (R) 和权重精度 (B_w) 决定.
+
+### 3.10 达到 Memory Bound 的详细设计: FFN1/FFN2 联合计算
+
+> Stage 3 是 kernel 耗时最大的阶段 (典型配置下占端到端 >80%). 当前实现对每个专家按 FFN1 → FFN2 顺序执行. 本节分析顺序执行的 DMA pipeline 效率, 推导 pipeline bubble 来源, 设计 FFN1/FFN2 联合计算方案, 目标是使 Stage 3 达到 HBM 带宽理论上限 (η_mem → 100%).
+
+#### 3.10.1 Memory Bound 效率模型
+
+**理论下限** — 不可避免的 HBM 搬运量 (每个权重恰好读一次, token 读写各一次):
+
+```text
+Bytes_stage3_min = E_L × 3 × H × I × B_w            # 全部权重
+                 + 2 × bt × K × H × B_t              # token 读 + 写 (所有专家汇总)
+
+T_stage3_ideal = Bytes_stage3_min / HBM_BW
+```
+
+> 此为 **num_bt = 1** (权重不重读) 的理论下限. num_bt > 1 时权重被重读 num_bt 次, 理论下限相应增大.
+
+**Memory Bound 效率定义**:
+
+```text
+η_mem = T_stage3_ideal / T_stage3_actual
+
+η_mem = 1.0 表示 DMA 引擎 100% 利用, 达到 HBM 峰值带宽.
+η_mem < 1.0 的差距 = pipeline bubble 开销.
+```
+
+> Memory-bound 下 MXU 计算时间远小于 DMA 传输时间 (典型 Decode: MXU/DMA < 3%). 因此 **DMA 引擎持续满载是达到 Memory Bound 的充要条件**. 所有 bubble 分析围绕 DMA 连续性展开.
+
+#### 3.10.2 当前实现: FFN1 → FFN2 顺序执行 Pipeline 分析
+
+**Per-expert DMA-MXU 时间线** (per bf slice, memory-bound 稳态):
+
+```text
+DMA:  ┃W1₀ W3₀┃tok₀┃W1₁ W3₁┃tok₁┃...┃W1ₙ W3ₙ┃tokₙ┃ W2₀ ┃W2₁ ┃...┃W2ₘ ┃
+MXU:  ┃       ┃    ┃mm1₀mm3₀┃    ┃...┃       ┃    ┃mm1ₙ ┃FFN2₀┃...┃FFN2ₘ┃
+VPU:  ┃       ┃    ┃        ┃    ┃...┃       ┃    ┃     ┃act₀ ┃...┃     ┃
+       ↑ startup                              ↑ FFN1→FFN2 transition
+```
+
+> 双缓冲确保 DMA tile N+1 的加载与 MXU tile N 的计算重叠. Memory-bound 下 MXU 总是先于 DMA 完成, DMA 引擎是唯一瓶颈.
+
+**Pipeline Bubble 分类与量化**:
+
+| Bubble 类型 | 描述 | 持续时间估计 | 频率 (per bt tile) |
+|------------|------|------------|-------------------|
+| **Expert startup** | 首个 DMA tile 无 MXU 可重叠 | T_first_tile ≈ bd1c×bfc×B_w×2 / HBM_BW | E_L 次 |
+| **Expert drain** | 末尾 MXU 无后续 DMA | T_last_mxu ≈ 0 (MXU << DMA) | E_L 次, 可忽略 |
+| **FFN1→FFN2 transition** | Phase 切换 (W1/W3 → W2 加载) | ~0 (W2 prefetch 覆盖) | E_L × num_bf 次 |
+| **Expert boundary** | 专家间条件判断 + token 初始化 | T_cond + T_tok_init | E_L - 1 次 |
+| **Token staging contention** | token DMA 占用引擎, 阻塞权重 DMA | T_tok_per_tile | 每个 weight tile |
+
+> 当前代码在 FFN1 尾部预取 W2 首个 tile (源码注释: "prefetch W2 for FFN2"). 但 memory-bound 下 MXU 窗口极短 (<0.01 μs), 预取实际依赖 DMA pipeline 的连续性而非 MXU 空闲窗口.
+
+**Per-tile DMA 时间** (DeepSeek-V3-like: H=8192, I=2048, B_w=2, bf=256, bd1=1024, bd2=1024):
+
+```text
+FFN1 weight tile:   2 × bd1c × bfc × B_w = 2 × 1024 × 256 × 2 = 1.0 MB  → 0.271 μs
+FFN2 weight tile:   bfc × bd2c × B_w     = 256 × 1024 × 2     = 0.5 MB  → 0.135 μs
+Token staging tile: btc × bd1c × B_t     = 8 × 1024 × 2       = 16 KB   → 0.004 μs
+
+FFN1 MXU per tile:  4 × btc × bd1c × bfc / MXU_peak = 4×8×1024×256 / 1154e12 = 0.007 μs
+FFN2 MXU per tile:  2 × btc × bfc × bd2c / MXU_peak = 2×8×256×1024 / 1154e12 = 0.004 μs
+```
+
+> **DMA / MXU 比**: FFN1 tile = 0.271 / 0.007 = **39×**, FFN2 tile = 0.135 / 0.004 = **34×**. MXU 在每个 tile 中仅活跃 ~3%, 剩余 97% 时间等待 DMA.
+
+**Per-expert Bubble 量化** (M=8, Decode):
+
+```text
+B_startup         = T_first_tile                    = 0.271 μs
+B_expert_boundary = T_cond + T_tok_staging_init     ≈ 0.1 + 0.034 = 0.134 μs  # 估计值
+B_tok_contention  = num_bf × num_bd1 × T_tok_tile   = 8 × 8 × 0.004 = 0.256 μs
+B_ffn1_ffn2_trans = 0                                                          # W2 prefetch 覆盖
+
+B_per_expert     ≈ 0.271 + 0.134 + 0.256            = 0.661 μs
+```
+
+**全 Stage 3 效率** (E_L=64, D=4):
+
+```text
+T_ideal  = 64 × 100.7 MB / 3690 GB/s               = 1745 μs
+B_total  = 64 × 0.661                               = 42.3 μs
+T_actual = T_ideal + B_total                         = 1787 μs
+
+η_mem = 1745 / 1787 = 97.6%
+```
+
+**Bubble 分项占比**:
+
+```text
+┌──────────────────────────────────────────────────────────┐
+│  Expert startup       17.3 μs  ██████████████  41%       │
+│  Token staging        16.4 μs  █████████████   39%       │
+│  Expert boundary       8.4 μs  ██████          20%       │
+│  FFN1→FFN2 trans       0.0 μs                   0%       │
+│  ─────────────────────────────────────────────           │
+│  Total bubble         42.3 μs  (2.4% of T_actual)       │
+└──────────────────────────────────────────────────────────┘
+```
+
+> **关键发现**: 顺序执行已达 ~97.6% HBM BW 效率. 但此为理想估算 — 实际实现中编译器调度、DMA 对齐约束、VMEM bank conflict 可能进一步降低效率. 消融实验 (§3.10.7) 将标定实际 η_mem.
+
+#### 3.10.3 FFN1/FFN2 联合计算方案设计
+
+**核心思路**: 消除顺序执行中 DMA 流断裂的三个位置 — expert startup、expert boundary、token staging contention.
+
+##### Strategy A: Cross-bf Pipeline (bf 级 FFN1/FFN2 交错)
+
+当前 bf 循环内, FFN1 和 FFN2 按 phase 顺序执行. Cross-bf pipeline 将 FFN2(bf=i) 与 FFN1(bf=i+1) 的权重加载交错在同一 DMA stream 中:
+
+```text
+当前 (顺序, per expert, per bf):
+  bf=0: [FFN1₀ ─ all bd1 ─][FFN2₀ ─ all bd2 ─]
+  bf=1: [FFN1₁ ─ all bd1 ─][FFN2₁ ─ all bd2 ─]
+  ...
+
+Cross-bf pipeline:
+  bf=0:     [FFN1₀ ─ all bd1 ─]──────────────────────────┐
+  bf=0→1:   ← FFN2₀ DMA ∥ FFN1₁ DMA 交错 →              │
+            [W2₀₀ W1₁₀ W3₁₀ W2₀₁ W1₁₁ W3₁₁ ...]       │
+            MXU: [FFN2₀ tile₀][FFN1₁ tile₀][FFN2₀ tile₁]│
+  bf=1→2:   ← FFN2₁ DMA ∥ FFN1₂ DMA 交错 →              │
+  ...                                                     │
+  bf=N-1:   [FFN2_{N-1} ─ all bd2 ─]─────────────────────┘
+```
+
+**约束**: FFN2(bf=i) 依赖 FFN1(bf=i) 的全部 bd1 累积完成. 不同 bf slice 的 FFN1 和 FFN2 **互相独立**.
+
+**VMEM 额外需求**:
+
+```text
+Δ_VMEM = bfc × bd2c × B_w              # W2 双缓冲 (与 W1/W3 同时驻留)
+       + btc × bfc × 4 × 2             # 两个 bf slice 的中间激活 (gate_acc + up_acc, F32)
+       = 256 × 1024 × 2 + 8 × 256 × 4 × 2 × 2
+       = 512 KB + 32 KB ≈ 545 KB       # 对 64 MiB VMEM 可忽略 (<1%)
+```
+
+**收益**: 消除 FFN1→FFN2 transition bubble. 但如 §3.10.2 分析, 该 bubble 已被 W2 prefetch 基本消除 (~0 μs), 故 Strategy A **净收益可忽略**.
+
+##### Strategy B: Cross-expert Pipeline (专家级 FFN2/FFN1 交错)
+
+在 expert e 的 FFN2 尾部, 开始加载 expert e+1 的首个权重 tile 和 token 数据:
+
+```text
+当前 (顺序):
+  Expert e:    [...FFN1(e)...][...FFN2(e)...]
+                              ↕ expert boundary bubble
+  Expert e+1:                                [...FFN1(e+1)...][...FFN2(e+1)...]
+
+Cross-expert pipeline:
+  Expert e:    [...FFN1(e)...][...FFN2(e)...]
+                                            ↘ DMA 连续
+  Expert e+1:                           [tok(e+1)][W1(e+1)₀ W3(e+1)₀]...
+               MXU:                     [FFN2(e) last tiles] [FFN1(e+1)₀]...
+                                         ↑ expert e+1 startup 被 expert e FFN2 隐藏
+```
+
+**实现要点**:
+- `expert_ffn()` 接受 next expert 的元数据 (token 位置, expert size)
+- 在 `run_down_slices()` 最后 1-2 个 bd2 tile 时, 启动 next expert 的:
+  - Token staging DMA (从 a2a_s_hbm 预加载到 VMEM)
+  - W1 首个 tile DMA (双缓冲的第二个 buffer)
+
+**收益**: 消除 expert startup bubble (17.3 μs) 和 expert boundary bubble (8.4 μs), 合计 **~25.7 μs**.
+
+##### Strategy C: Token 全预加载 (消除 token staging contention)
+
+在 Stage 3 循环开始前, 一次性将所有专家的 token 从 `a2a_s_hbm` batch DMA 到 VMEM:
+
+```text
+当前:
+  权重 DMA stream: [W₀][tok₀][W₁][tok₁][W₂][tok₂]...
+                         ↑      ↑      ↑ token DMA 碎片穿插, 阻塞权重 DMA
+
+Token 全预加载:
+  预加载阶段: [tok_all ──────────── batch DMA ──]
+  权重 DMA:   [W₀][W₁][W₂][W₃][W₄]...  ← 连续, 无 token 碎片中断
+```
+
+**VMEM 需求** (H=8192, K=8, B_t=2):
+
+| D | E_L | M_avg (Decode) | VMEM_tok | VMEM 占比 |
+|---|-----|----------------|----------|----------|
+| 4 | 64 | 8 | 8 MB | 12.5% |
+| 16 | 16 | 8 | 2 MB | 3.1% |
+| 64 | 4 | 8 | 0.5 MB | 0.8% |
+| 128 | 2 | 8 | 0.25 MB | 0.4% |
+
+> Decode 场景 VMEM 需求适中 (D=4 时 12.5%), D≥16 时 < 4%. Prefill 场景 (M_avg=16) 需求翻倍, 可用分批预加载 (方案 C2).
+
+**实现方案**:
+
+```text
+方案 C1 — 全量预加载 (Decode):
+  Stage 3 开始前: batch DMA 所有 expert token → VMEM
+  Stage 3 内部: 跳过 per-bd1 token staging, 直接从 VMEM 读取
+
+方案 C2 — 分批预加载 (Prefill):
+  每次预加载 N_batch 个专家的 token (N_batch = VMEM_avail / (M_avg × H × B_t))
+  处理完一批后, 预加载下一批
+
+方案 C3 — 与 §2.8 VMEM 驻留联动 (最激进):
+  Stage 2 A2A Dispatch 直接将 token 写入 VMEM (不经 HBM)
+  Stage 3 直接消费 VMEM 中的 token, 完全消除 token HBM round-trip
+```
+
+**收益**: 消除 token staging contention (16.4 μs), 且将碎片化小 DMA 改为单次 batch DMA.
+
+##### Strategy B+C: 联合方案 (Cross-expert Pipeline + Token 预加载)
+
+组合 Strategy B 和 C, **同时消除**所有三类主要 bubble:
+
+```text
+T_fused = T_ideal + B_residual
+
+B_residual ≈ B_first_expert_startup + B_last_expert_drain
+           = 0.271 + ~0 = 0.271 μs                    # 仅第一个/最后一个专家
+
+η_mem_fused = T_ideal / (T_ideal + 0.271) ≈ 99.98%
+```
+
+#### 3.10.4 VMEM 预算分析
+
+> 64 MiB VMEM 总量. 以下分析 Strategy B+C 的 VMEM 布局.
+
+**当前顺序执行 VMEM 布局** (per expert 活跃):
+
+| 缓冲区 | 大小 (DeepSeek-V3) | 说明 |
+|--------|-------------------|------|
+| W1/W3 双缓冲 | 2 × 2 × bd1c × bfc × B_w = 2.0 MB | 2 buffer × (W1+W3) |
+| W2 双缓冲 | 2 × bfc × bd2c × B_w = 1.0 MB | FFN2 权重 |
+| gate_acc + up_acc | 2 × btc × bfc × 4 = 16 KB | FFN1 中间激活 (F32) |
+| act buffer | btc × bfc × B_t = 4 KB | activation 输出 |
+| result acc | btc × bd2c × 4 = 32 KB | FFN2 累加器 (F32) |
+| token staging | 2 × btc × bd1c × B_t = 32 KB | 双缓冲 token tile |
+| **合计** | **~3.1 MB** | **VMEM 占比 4.8%** |
+
+**Strategy B+C 额外 VMEM** (Decode, D=4):
+
+| 额外缓冲区 | 大小 | 说明 |
+|-----------|------|------|
+| Token 预加载 (C1) | 8 MB | E_L × M_avg × H × B_t |
+| Cross-expert prefetch (B) | ~1 MB | next expert W1/W3 首 tile |
+| **额外合计** | **~9 MB** | **VMEM 占比 14.1%** |
+
+```text
+Strategy B+C 总 VMEM = 3.1 + 9.0 = 12.1 MB  (18.9%)  ✓ 可行
+
+剩余 VMEM (51.9 MB) 供 SE 计算、A2A buffer、编译器临时使用.
+```
+
+#### 3.10.5 各方案收益对比
+
+##### Decode 场景 (T=2048, D=4, E_L=64, M_avg=8, BF16)
+
+| 指标 | 顺序 FFN1→FFN2 | Strategy B (跨专家) | Strategy C (token 预加载) | **B+C (联合)** |
+|------|---------------|-------------------|------------------------|---------------|
+| Expert startup bubble | 17.3 μs | **~0 μs** | 17.3 μs | **~0 μs** |
+| Expert boundary bubble | 8.4 μs | **~2 μs** | 8.4 μs | **~2 μs** |
+| Token staging contention | 16.4 μs | 16.4 μs | **~0 μs** | **~0 μs** |
+| FFN1→FFN2 transition | ~0 μs | ~0 μs | ~0 μs | ~0 μs |
+| **Total bubble** | **42.3 μs** | **18.4 μs** | **25.7 μs** | **~2 μs** |
+| **η_mem** | **97.6%** | **99.0%** | **98.5%** | **~99.9%** |
+| VMEM 额外需求 | 0 | 1 MB | 8 MB | 9 MB |
+| 实现复杂度 | 基线 | 中 | 低 | 中 |
+
+##### 各 EP 规模 Bubble 对比 (T=2048, BF16)
+
+| D | E_L | T_ideal (μs) | B_seq (μs) | η_seq | B_fused (μs) | η_fused | **Δ (μs)** |
+|---|-----|-------------|-----------|-------|-------------|---------|-----------|
+| 4 | 64 | 1745 | 42.3 | 97.6% | ~2 | 99.9% | **40.3** |
+| 16 | 16 | 436 | 10.6 | 97.6% | ~1 | 99.8% | **9.6** |
+| 64 | 4 | 109 | 2.6 | 97.7% | ~0.5 | 99.5% | **2.1** |
+| 128 | 2 | 54.5 | 1.3 | 97.7% | ~0.3 | 99.5% | **1.0** |
+
+> **关键发现**:
+>
+> 1. **顺序执行的 η_mem 已达 ~97.6%** — 理论分析显示优化空间有限 (~42 μs / 1745 μs for D=4). 但此为理想分析, 实际编译器/硬件开销可能使 η_mem 显著低于理论值.
+> 2. **Expert startup 是最大 bubble 来源 (41%)** — Cross-expert pipeline (Strategy B) 可有效消除.
+> 3. **Token staging contention 是第二大来源 (39%)** — Token 预加载 (Strategy C) 以少量 VMEM (<13%) 换取消除.
+> 4. **D 越大, 绝对收益越小** — D=64 时总 bubble 仅 2.6 μs, 优化必要性降低.
+> 5. **消融实验的核心价值**: 标定实际 η_mem 与理论值的差距, 判断优化优先级.
+
+##### Prefill 场景 (T=8192, bt=128, D=4, num_bt=4, BF16)
+
+| 指标 | 顺序 FFN1→FFN2 | **B+C (联合)** |
+|------|---------------|---------------|
+| 权重重读次数 | num_bt = 4 | num_bt = 4 (不变) |
+| Per bt-tile bubble | 42.3 μs | ~2 μs |
+| **Total bubble** | **169 μs** | **~8 μs** |
+| T_ideal | 6990 μs | 6990 μs |
+| **η_mem** | **97.6%** | **~99.9%** |
+| **绝对收益** | — | **~161 μs** |
+
+> Prefill 因 num_bt > 1 (权重重读), bubble 被放大 num_bt 倍. 联合计算在 Prefill 的**绝对收益更大** (161 μs vs 40 μs), 但 **权重重读本身不被联合计算解决** — 降低 num_bt 需要增大 bt (需要更多 VMEM) 或减少 E_L (增大 EP degree).
+
+#### 3.10.6 达到 Memory Bound 的瓶颈层次
+
+```text
+优先级排序 (对 η_mem 的影响从大到小):
+
+ ┌─────────────────────────────────────────────────────────────┐
+ │ P0: 验证实际 η_mem (消融实验 §3.10.7 Exp S3-A)              │
+ │     → 若实际 η_mem ≪ 97.6%, 存在未建模开销, 需先诊断         │
+ │     → 若实际 η_mem ≈ 97.6%, 理论分析成立, 按下列优先级优化    │
+ ├─────────────────────────────────────────────────────────────┤
+ │ P1: Token 预加载 (Strategy C)                               │
+ │     收益: 消除 39% bubble; 实现复杂度: 低; VMEM 开销: 适中     │
+ ├─────────────────────────────────────────────────────────────┤
+ │ P2: Cross-expert pipeline (Strategy B)                      │
+ │     收益: 消除 61% bubble; 实现复杂度: 中; VMEM 开销: 低       │
+ ├─────────────────────────────────────────────────────────────┤
+ │ P3: 降低 num_bt (Prefill 权重重读优化)                       │
+ │     正交于联合计算; 需增大 bt 或 VMEM 容量                    │
+ └─────────────────────────────────────────────────────────────┘
+```
+
+#### 3.10.7 消融实验设计
+
+##### Exp S3-A: Pipeline 效率基线
+
+```python
+# 完整 Stage 3, 测量实际 HBM 带宽利用率
+result = fused_ep_moe(
+    tokens, w1, w2, w3, topk_weights, topk_ids, top_k=8,
+    ep_size=4,
+    # 隔离 Stage 3: 禁用 A2A + SE + metadata
+    disable_a2a=True, disable_shared_expert=True,
+    disable_all_reduce_metadata=True, disable_sync_barrier=True,
+)
+
+# 计算 η_mem
+T_actual = measure_latency(result)
+Bytes_total = E_L * 3 * H * I * B_w + 2 * bt * K * H * B_t
+η_mem = Bytes_total / (T_actual * HBM_BW)
+```
+
+验证目标: η_mem 是否接近理论值 97.6%. 若显著低于 (如 <90%), 存在未建模开销.
+
+##### Exp S3-B: 纯 DMA Pipeline 延迟
+
+```python
+# 禁用全部 MXU 计算, 保留 DMA pipeline
+result = fused_ep_moe(
+    ...,
+    disable_dynamic_ffn1=True, disable_dynamic_ffn2=True,
+    disable_a2a=True, disable_shared_expert=True,
+    disable_all_reduce_metadata=True, disable_sync_barrier=True,
+)
+
+T_dma_only = measure_latency(result)
+# T_dma_only ≈ T_ideal + B_total (纯 DMA 时间 + 所有 bubble)
+```
+
+验证目标: T_dma_only 是否接近 Bytes_total / HBM_BW. 差异 = DMA pipeline bubble 总量.
+
+##### Exp S3-C: Expert Boundary 开销标定
+
+```python
+# 对比: 单专家 (所有 token 集中) vs 多专家
+for e_l in [1, 4, 16, 64]:
+    # 固定总权重量: 调整 E 使 E_L = e_l, M = bt × K / e_l
+    result = fused_ep_moe(
+        ..., num_experts=e_l * D,
+        disable_a2a=True, disable_shared_expert=True,
+        disable_all_reduce_metadata=True, disable_sync_barrier=True,
+    )
+
+T_per_expert_boundary = (T_multi - T_single_equiv) / (E_L - 1)
+```
+
+验证目标: B_expert_boundary 估计值 (0.134 μs) 的准确性.
+
+##### Exp S3-D: Token Staging Contention 标定
+
+```python
+# 对比: 有 token staging vs 禁用 token staging
+result_baseline = fused_ep_moe(
+    ...,
+    disable_a2a=True, disable_shared_expert=True,
+    disable_all_reduce_metadata=True, disable_sync_barrier=True,
+)
+result_no_tok = fused_ep_moe(
+    ...,
+    disable_a2a_s_tile_read=True,   # 禁用 token staging DMA
+    disable_a2a=True, disable_shared_expert=True,
+    disable_all_reduce_metadata=True, disable_sync_barrier=True,
+)
+
+Δ_tok = T_baseline - T_no_tok
+# Δ_tok ≈ B_tok_contention (token staging 对权重 DMA 的干扰)
+```
+
+验证目标: B_tok_contention 估计值 (16.4 μs for D=4, E_L=64) 的准确性.
+
+##### Exp S3-E: FFN1/FFN2 联合计算分解实验 (核心实验)
+
+```python
+for ep_size in [4, 16, 64]:
+    for scenario in ["decode", "prefill"]:
+        T = 2048 if scenario == "decode" else 8192
+
+        # E1: Baseline — 当前顺序执行
+        T_seq = run(disable_a2a=True, disable_shared_expert=True,
+                     disable_all_reduce_metadata=True, disable_sync_barrier=True)
+
+        # E2: 纯 DMA (无 MXU) — 量化 DMA pipeline 效率
+        T_dma = run(disable_dynamic_ffn1=True, disable_dynamic_ffn2=True,
+                     disable_a2a=True, disable_shared_expert=True,
+                     disable_all_reduce_metadata=True, disable_sync_barrier=True)
+
+        # E3: 禁 token staging — 消除 token contention
+        T_no_tok = run(disable_a2a_s_tile_read=True,
+                       disable_a2a=True, disable_shared_expert=True,
+                       disable_all_reduce_metadata=True, disable_sync_barrier=True)
+
+        # E4: 禁 token staging + 禁 MXU — 纯权重 DMA (无 token 干扰)
+        T_pure_w = run(disable_dynamic_ffn1=True, disable_dynamic_ffn2=True,
+                       disable_a2a_s_tile_read=True,
+                       disable_a2a=True, disable_shared_expert=True,
+                       disable_all_reduce_metadata=True, disable_sync_barrier=True)
+```
+
+**分解验证框架**:
+
+```text
+T_seq = T_ideal + B_expert + B_tok + B_compute
+
+其中:
+  B_expert    = T_pure_w - T_ideal          # expert startup + boundary 开销
+  B_tok       = T_dma - T_pure_w            # token staging contention
+  B_compute   = T_seq - T_dma              # MXU 干扰 (memory-bound 下 ≈ 0)
+
+完备性验证: B_expert + B_tok + B_compute ≈ T_seq - T_ideal
+  → 若成立: bubble 分析无遗漏
+  → 若失败: 存在未建模开销 (DMA 对齐, VMEM conflict, 编译器 overhead 等)
+```
+
+**扫描矩阵与预期值** (Decode, T=2048, BF16):
+
+| D | E_L | T_ideal (μs) | B_expert 预期 (μs) | B_tok 预期 (μs) | η_seq 预期 | 验证重点 |
+|---|-----|-------------|-------------------|----------------|----------|---------|
+| 4 | 64 | 1745 | 25.7 | 16.4 | 97.6% | 最多 expert → B_expert 最大 |
+| 16 | 16 | 436 | 6.3 | 4.1 | 97.6% | 中等规模 |
+| 64 | 4 | 109 | 1.5 | 1.0 | 97.7% | 最少 expert → B_expert 最小 |
+
+**扫描矩阵与预期值** (Prefill, T=8192, bt=128, BF16):
+
+| D | E_L | num_bt | T_ideal (μs) | B_total 预期 (μs) | η_seq 预期 |
+|---|-----|--------|-------------|------------------|----------|
+| 4 | 64 | 4 | 6990 | 169 | 97.6% |
+| 16 | 16 | 1 | 436 | 10.6 | 97.6% |
+| 64 | 4 | 1 | 109 | 2.6 | 97.7% |
+
+##### Exp S3-F: 联合计算实现验证 (需 kernel 修改)
+
+```python
+# 需要 kernel 新增参数 ffn_pipeline_mode
+for mode in ["sequential", "cross_expert", "preload_tokens", "fused"]:
+    result = fused_ep_moe(
+        ..., ep_size=4,
+        ffn_pipeline_mode=mode,    # 新参数
+        disable_a2a=True, disable_shared_expert=True,
+        disable_all_reduce_metadata=True, disable_sync_barrier=True,
+    )
+```
+
+| 模式 | 消除的 bubble | 预期收益 (D=4 Decode) | kernel 改动 |
+|------|-------------|--------------------|-----------:|
+| `sequential` (baseline) | — | 0 μs | 无 |
+| `cross_expert` (Strategy B) | expert startup + boundary | ~25.7 μs | 中 |
+| `preload_tokens` (Strategy C) | token staging contention | ~16.4 μs | 低 |
+| `fused` (Strategy B+C) | 全部 | ~42 μs | 中 |
+
+> **实验优先级**: Exp S3-A (基线 η_mem) 必须先执行. 若实际 η_mem 显著低于理论值 (~97.6%), 优先诊断根因 (Exp S3-B/C/D), 再考虑联合计算实现 (Exp S3-F).
 
 ---
 
@@ -1509,7 +1986,7 @@ T_total ≈ T_stage1 + T_stage3 + T_stage6
 
 ### 7.3 关键观察
 
-1. **Stage 3 (Expert FFN) 主导**: 占总计算量 >95%, 占总 HBM 搬运 >80%. 权重读取是主要瓶颈.
+1. **Stage 3 (Expert FFN) 主导**: 占总计算量 >95%, 占总 HBM 搬运 >80%. 权重读取是主要瓶颈. 顺序 FFN1→FFN2 的 DMA pipeline 理论效率 ~97.6%, 联合计算 (§3.10) 可将 η_mem 提升至 ~99.9%.
 
 2. **AI 随 `bt × K / E_L` 增长**: 增大 `bt` 或 `K` 提高计算密度; 减少 `E_L` (通过增大 `D`) 同样有效, 但会增加 ICI 通信.
 
