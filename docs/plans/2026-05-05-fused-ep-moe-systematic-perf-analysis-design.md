@@ -736,9 +736,9 @@ $$T_{S4} = 138 \; \mu s \ll T_{\text{critical}} \implies T_{\text{total}} \appro
 2. **S1 反向增长**: Barrier 轮数 $\propto \log_2 P_{EP}$，多跳 ICI 延迟增加。EP=256 时 S1 成为主导瓶颈 (68%)
 3. **Crossover 点**: 当 $T_{S1} \approx T_{S2b}$ 时，增加 EP 的边际收益为零:
 
-$$P_{EP}^{*}: \quad \frac{N_E \times 3HIB_w}{P_{EP}^{*} \times BW_{HBM}} = \lceil \log_2 P_{EP}^{*} \rceil \times t_{\text{barrier}}$$
+$$P_{EP}^{\ast}: \quad \frac{N_E \times 3HIB_w}{P_{EP}^{\ast} \times BW_{HBM}} = \lceil \log_2 P_{EP}^{\ast} \rceil \times t_{\text{barrier}}$$
 
-> 对 Ling 2.6: $P_{EP}^{*} \approx 256$, 此时 S2b 耗时 (26 μs) 已接近 S1 (70 μs)。进一步增加 EP 不再有效——瓶颈从 HBM BW 转移到 ICI barrier latency。
+> 对 Ling 2.6: $P_{EP}^{\ast} \approx 256$, 此时 S2b 耗时 (26 μs) 已接近 S1 (70 μs)。进一步增加 EP 不再有效——瓶颈从 HBM BW 转移到 ICI barrier latency。
 
 4. **S4 overlap 安全性**: 在所有 EP 配置下，$T_{S4} < T_{S1} + T_{S2a} + T_{S2b}$，SE 始终可被 critical path 完全覆盖
 
@@ -1057,14 +1057,14 @@ $$3HIB_w \times F_{MXU} + 2 \times n_e \times H \times B_a \times F_{MXU} = 6 \t
 
 $$3IB_w \times F_{MXU} = n_e \times (6I \times BW_{HBM} - 2B_a \times F_{MXU})$$
 
-$$\boxed{n_e^{*} = \frac{3 \times I \times B_w \times F_{MXU}}{6 \times I \times BW_{HBM} - 2 \times B_a \times F_{MXU}}}$$
+$$\boxed{n_e^{\ast} = \frac{3 \times I \times B_w \times F_{MXU}}{6 \times I \times BW_{HBM} - 2 \times B_a \times F_{MXU}}}$$
 
 > 当 $2 \times B_a \times F_{MXU} \ll 6 \times I \times BW_{HBM}$ (通常成立):
-> $$n_e^{*} \approx \frac{B_w \times F_{MXU}}{2 \times BW_{HBM}} = \frac{B_w \times \text{Ridge}}{2}$$
+> $$n_e^{\ast} \approx \frac{B_w \times F_{MXU}}{2 \times BW_{HBM}} = \frac{B_w \times \text{Ridge}}{2}$$
 
 #### 各配置 Crossover 值
 
-| 配置 | $B_w$ | $n_e^{*}$ | 对应全局 $T$ (EP=4, $E_L$=64) |
+| 配置 | $B_w$ | $n_e^{\ast}$ | 对应全局 $T$ (EP=4, $E_L$=64) |
 |------|--------|---------|------|
 | v7x BF16 | 2 | $2 \times 313 / 2 = 313$ | $313 \times 64 / 8 \times 4 = 10,016$ |
 | v7x FP8 | 1 | $1 \times 313 / 2 = 157$ | $157 \times 64 / 8 \times 4 = 5,024$ |
