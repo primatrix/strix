@@ -587,6 +587,229 @@ T_stage2 = max(T_scatter_dma, T_scatter_ici) + T_scatter_serial
 | Batch vs Pipelined | 调整 `_A2A_HBM_FRACTION` | 切换 scatter 路径 | 两种路径的延迟对比 |
 | 变化 D | 改变 ep_size | 改变远程/本地比例 | D 对 scatter 延迟的缩放关系 |
 
+### 2.7 DMA 启动开销估计值
+
+以下分析使用的 DMA / ICI 启动开销为估计值, 需通过消融实验标定 (见 2.12 Exp D):
+
+| 参数 | 估计值 | 说明 |
+|------|--------|------|
+| `T_dma_launch` | ~200 ns | 单次 HBM ↔ VMEM DMA 操作启动开销 |
+| `T_ici_launch` | ~500 ns | 单次 ICI remote_copy 操作启动开销 (含两端 setup) |
+
+### 2.8 Decode 场景 VMEM 可行性分析
+
+**问题**: 大 EP 并行下, token 数据能否一次性驻留 VMEM, 避免 HBM scratch buffer 中转?
+
+发送侧 VMEM 需求 = `T_L × H × B_t`, 接收侧 VMEM 需求 = `E_L × M_avg × H × B_t` (其中 `M_avg = T×K/E`).
+
+**DeepSeek-V3-like 配置**: E=256, K=8, T=256, M_avg = 256×8/256 = 8 tokens/expert:
+
+| D | T_L | E_L | 发送缓冲 (H=4096) | 发送缓冲 (H=8192) | 接收缓冲 (H=4096) | 接收缓冲 (H=8192) | 总计 (H=8192) | VMEM 占比 |
+|---|-----|-----|-------------------|-------------------|-------------------|-------------------|--------------|----------|
+| 4 | 64 | 64 | 512 KB | 1 MB | 4 MB | 8 MB | **9 MB** | 13.4% |
+| 16 | 16 | 16 | 128 KB | 256 KB | 1 MB | 2 MB | **2.25 MB** | 3.4% |
+| 64 | 4 | 4 | 32 KB | 64 KB | 256 KB | 512 KB | **576 KB** | 0.86% |
+
+> **结论**: Decode 场景下, 即使 H=8192 + D=4 的最大 VMEM 需求也仅占 13.4%, **A2A 缓冲完全可放入 VMEM**. D≥16 时 VMEM 占用不到 4%.
+
+#### VMEM 驻留的性能收益
+
+当前数据流: `HBM → DMA → VMEM → ICI → 目标 HBM (a2a_s) → DMA → VMEM → MXU`
+
+优化数据流: `HBM → DMA → VMEM → ICI → 目标 VMEM → MXU` (省去一次 HBM round-trip)
+
+| D | 省去的 HBM 搬运量 | 节省时间 | Stage 3 耗时 | 相对收益 |
+|---|------------------|---------|-------------|---------|
+| 4 | 2×8 MB = 16 MB | 4.3 μs | 1745 μs | 0.25% |
+| 16 | 2×2 MB = 4 MB | 1.1 μs | ~407 μs | 0.27% |
+| 64 | 2×512 KB = 1 MB | 0.27 μs | ~109 μs | 0.25% |
+
+> VMEM 驻留节省的 HBM round-trip 本身收益极小 (<0.3%). 真正价值在于**使 per-device 合并 DMA 成为可能** (见 2.9 节), 以及**消除 Stage 3 token staging 的小 DMA 串行开销**.
+
+### 2.9 合并 DMA 收益分析 (Per-device Batch vs Per-expert Sequential)
+
+#### 当前实现的开销结构
+
+当前 `fori_loop` 实现中, 每个 token-expert 对发起一次独立的 DMA/remote_copy:
+
+```text
+total_ops = T_L × K
+T_per_expert_seq = total_ops × (T_ici_launch + tok_bytes / ICI_BW)
+```
+
+每个 op 传输 `H × B_t` bytes, 启动开销固定 500 ns:
+
+| H | tok_bytes | ICI 传输时间 | 总耗时/op | **启动开销占比** |
+|------|-----------|------------|----------|----------------|
+| 4096 | 8 KB | 41 ns | 541 ns | **92.4%** |
+| 8192 | 16 KB | 82 ns | 582 ns | **85.9%** |
+
+> **核心问题**: 逐 expert 的小 DMA 模式下, **85-92% 的时间浪费在 ICI launch overhead**, 实际数据传输仅占 8-15%.
+
+#### 小 DMA 的有效 ICI 带宽
+
+| 传输粒度 | 有效 ICI 带宽 | 峰值利用率 |
+|---------|-------------|----------|
+| 8 KB (H=4096, 单 token) | 14.8 GB/s | 7.4% |
+| 16 KB (H=8192, 单 token) | 27.5 GB/s | 13.7% |
+| 128 KB (8 tokens batch) | 110 GB/s | 55% |
+| 1 MB (64 tokens batch) | 183 GB/s | 91.3% |
+| 2 MB (128 tokens batch) | 191 GB/s | 95.4% |
+
+#### Per-device 合并 DMA 方案
+
+将同一目标设备的所有 expert 数据打包为一次 remote_copy:
+
+```text
+ops = D - 1 (remote) + 1 (local)
+bytes_per_device = T_L × K / D × H × B_t    # 均匀路由假设
+T_per_device_batch = (D-1) × (T_ici_launch + bytes_per_device / ICI_BW)
+```
+
+实现前提: token 已在 VMEM (见 2.8), 按目标 device 重排后发起单次 remote_copy.
+
+#### H=8192 消融对比
+
+| D | T_L | Pairs | Per-expert seq (μs) | Per-device batch (μs) | **Speedup** | A2A 占 Stage3 (before→after) |
+|---|-----|-------|--------------------|--------------------|-------------|--------------------------|
+| 4 | 64 | 512 | 298 | 33 | **9.0×** | 17% → 1.9% |
+| 16 | 16 | 128 | 74.5 | 17.4 | **4.3×** | 18% → 4.3% |
+| 64 | 4 | 32 | 18.6 | ~18.6 | **~1×** | 17% → 17% |
+
+#### H=4096 消融对比
+
+| D | T_L | Pairs | Per-expert seq (μs) | Per-device batch (μs) | **Speedup** | A2A 占 Stage3 (before→after) |
+|---|-----|-------|--------------------|--------------------|-------------|--------------------------|
+| 4 | 64 | 512 | 277 | 17.2 | **16.1×** | 16% → 1.0% |
+| 16 | 16 | 128 | 69.3 | 12.4 | **5.6×** | 17% → 3.0% |
+| 64 | 4 | 32 | 17.3 | ~17.3 | **~1×** | 16% → 16% |
+
+> **关键发现**:
+>
+> 1. D=4~16 时, per-device 合并 DMA 带来 **4-16× A2A 加速**, 将 A2A dispatch 从 Stage 3 的 17% 降到 1-4%
+> 2. D=64 时由于 token 极度稀疏 (每设备平均 0.5 个 pair), 每个 "batch" 已退化为单 token, 无合并收益
+> 3. H 越小, 合并收益越大 (小传输的 launch 开销占比更高)
+
+### 2.10 Prefill vs Decode 逐 Expert 发送耗时对比
+
+**配置**: E=256, K=8, H=8192
+
+#### Decode (bt = T_L, 全量一次)
+
+| D | T_L=bt | Pairs/tile | Per-expert seq (μs) | Per-device batch (μs) | Stage 3 (μs) | A2A 占 Stage3 (before→after) |
+|---|--------|-----------|--------------------|--------------------|-------------|--------------------------|
+| 4 | 64 | 512 | 298 | 33 | 1745 | 17% → 1.9% |
+| 16 | 16 | 128 | 74.5 | 17.4 | 407 | 18% → 4.3% |
+| 64 | 4 | 32 | 18.6 | 18.6 | 109 | 17% → 17% |
+
+#### Prefill (bt=128, num_bt=T_L/128)
+
+| D | T_L | bt | Pairs/tile | Per-expert seq (μs) | Per-device batch (μs) | Stage 3/tile (μs) | A2A 占 Stage3 (before→after) |
+|---|-----|-----|-----------|--------------------|--------------------|------------------|--------------------------|
+| 4 | 512 | 128 | 1024 | 596 | 64.4 | 6990 | 8.5% → 0.9% |
+| 16 | 128 | 128 | 1024 | 596 | 64.4 | 6990 | 8.5% → 0.9% |
+| 64 | 32 | 32 | 256 | 149 | 34.8 | ~1745 | 8.5% → 2.0% |
+
+> **观察**:
+>
+> 1. Decode 场景 A2A dispatch 占 Stage 3 比例 (~17%) 约为 Prefill (~8.5%) 的 2×, 因为 Decode 的 bt 小导致 Stage 3 权重加载时间短, A2A 相对占比更高
+> 2. Per-device batching 在 Prefill 场景同样有效, 可将 A2A 从 8.5% 降到 <1%
+> 3. D=64 Decode 是最不利场景: token 极度稀疏且 batching 无效, 同时 A2A 占比最高
+
+### 2.11 单 Expert All2All 延迟扫描
+
+**场景**: 一个 expert 从单个源设备接收 N 个 token, 对比逐 token DMA vs 单次批量 DMA.
+
+#### H = 4096 (per_token = 8 KB)
+
+| N tokens | 数据量 | 逐 token ICI (μs) | 批量 ICI (μs) | Speedup | 逐 token HBM (μs) | 批量 HBM (μs) |
+|----------|-------|-------------------|-------------|---------|-------------------|-------------|
+| 16 | 128 KB | 8.66 | 1.14 | 7.6× | 3.23 | 0.24 |
+| 64 | 512 KB | 34.6 | 3.06 | 11.3× | 12.9 | 0.34 |
+| 128 | 1 MB | 69.2 | 5.72 | 12.1× | 25.9 | 0.48 |
+| 512 | 4 MB | 277 | 20.5 | 13.5× | 103 | 1.28 |
+| 1024 | 8 MB | 554 | 40.4 | 13.7× | 206 | 2.37 |
+
+#### H = 8192 (per_token = 16 KB)
+
+| N tokens | 数据量 | 逐 token ICI (μs) | 批量 ICI (μs) | Speedup | 逐 token HBM (μs) | 批量 HBM (μs) |
+|----------|-------|-------------------|-------------|---------|-------------------|-------------|
+| 16 | 256 KB | 9.31 | 1.78 | 5.2× | 3.26 | 0.27 |
+| 64 | 1 MB | 37.2 | 5.72 | 6.5× | 13.1 | 0.47 |
+| 128 | 2 MB | 74.5 | 10.99 | 6.8× | 26.1 | 0.74 |
+| 512 | 8 MB | 298 | 41.4 | 7.2× | 104 | 2.37 |
+| 1024 | 16 MB | 596 | 82.4 | 7.2× | 207 | 4.55 |
+
+> **收敛行为**: Speedup 随 N 增大收敛至 `T_ici_launch / T_transfer_per_token + 1`:
+>
+> - H=4096: 收敛至 500/41 + 1 ≈ **13.2×**
+> - H=8192: 收敛至 500/82 + 1 ≈ **7.1×**
+>
+> 收敛值与 H 成反比 — H 越大, 每 token 传输时间越长, launch 开销相对占比越低, 合并收益越小.
+
+### 2.12 Stage 2 消融实验详细方案
+
+基于 2.8-2.11 理论分析, 设计以下消融实验:
+
+#### Exp A: 逐 Expert vs 逐 Device DMA (核心实验)
+
+```python
+# A1: Baseline - 逐 expert sequential DMA (当前实现)
+fused_ep_moe(..., ep_size=D)
+
+# A2: Per-device batch DMA (需 kernel 修改)
+# Stage 1 完成后, 按目标 device 重排 token, 每 device 一次 remote_copy
+fused_ep_moe(..., ep_size=D, a2a_batch_mode="per_device")
+```
+
+预期: D=4~16 时 A2A dispatch 阶段 4-16× 加速.
+
+#### Exp B: VMEM 直接缓冲 (仅 Decode)
+
+```python
+# B1: 当前 - A2A 通过 HBM scratch buffer (a2a_s_x2_hbm)
+# B2: VMEM 驻留 - token 预加载到 VMEM, ICI 直接写入目标 VMEM
+```
+
+预期: 绝对收益较小 (<5 μs), 但消除了 Stage 3 的 token staging DMA 启动延迟.
+
+#### Exp C: 单 Expert All2All 延迟扫描
+
+```python
+# 固定 ep_size=2 (最简单的跨设备场景), 扫描 token 数量
+for n_tokens in [16, 64, 128, 512, 1024]:
+    for H in [4096, 8192]:
+        # 仅启用 Stage 2, 禁用 FFN + SE
+        fused_ep_moe(
+            tokens=randn(n_tokens, H),
+            disable_dynamic_ffn1=True,
+            disable_dynamic_ffn2=True,
+            disable_shared_expert=True,
+        )
+```
+
+关键指标: 每次 DMA 的有效 ICI 带宽, 验证 `T_ici_launch` 估计值 (500 ns).
+
+#### Exp D: DMA / ICI Launch Overhead 标定
+
+```python
+# D1: 1 token × 1 expert (单次 DMA, 测最小延迟)
+# D2: 1 token × N experts, N = 1,2,4,8,16 (N 次串行 DMA, 斜率 = per-DMA overhead)
+# 线性拟合: T(N) = N × T_launch + N × tok_bytes / BW
+# 从截距和斜率分别提取 T_launch 和有效 BW
+```
+
+> **Exp D 是所有后续分析的基础**: 上述理论分析使用 `T_dma_launch=200 ns`, `T_ici_launch=500 ns` 为估计值. 标定后可修正所有模型预测.
+
+#### Stage 2 消融实验汇总
+
+| 优化方向 | 理论收益 | 适用场景 | 优先级 |
+|---------|---------|---------|-------|
+| Per-device batch DMA | 4-16× A2A 加速, Stage3 占比 17%→1-4% | D=4~16, Decode+Prefill | **P0** |
+| VMEM 直接缓冲 | <5 μs 绝对收益, 消除 staging 串行开销 | D≥4, Decode | P1 |
+| D=64 稀疏优化 | 需替代方案 (路由策略/异步 DMA) | D≥64, Decode | P2 |
+| Launch overhead 标定 | 修正所有理论预测 | 全场景 | **P0** |
+
 ---
 
 ## 3. Stage 3: Expert Compute (FFN1 + Activation + FFN2)
