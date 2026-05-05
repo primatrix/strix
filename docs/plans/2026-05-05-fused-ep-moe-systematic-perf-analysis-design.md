@@ -15,11 +15,11 @@
 | 符号 | 含义 | 说明 |
 |------|------|------|
 | $N_E$ | 路由专家总数 | 例: 128, 256, 384 |
-| $H$ | 隐藏层维度 (hidden_size) | 例: 2048, 4096, 8192 |
-| $I$ | 专家 FFN 中间维度 (intermediate_size) | 例: 512, 768, 2048 |
+| $H$ | 隐藏层维度 (`hidden_size`) | 例: 2048, 4096, 8192 |
+| $I$ | 专家 FFN 中间维度 (`intermediate_size`) | 例: 512, 768, 2048 |
 | $I_{SE}$ | 共享专家 (SE) 中间维度 | 通常 = $I$ |
 | $k$ | Top-K 路由 (每 token 激活专家数) | 例: 2, 4, 8 |
-| $T$ | 全局 token 数 (batch size × seq_len 或 decode batch) | |
+| $T$ | 全局 token 数 (`batch_size` × `seq_len` 或 decode batch) | |
 | $B_w$ | 权重元素字节数 | BF16: 2, FP8: 1 |
 | $B_a$ | 激活元素字节数 | BF16: 2 |
 
@@ -102,7 +102,7 @@ $$N_{buf} = \min\left(E_L, \max\left(2, \left\lfloor \frac{0.03 \times \text{HBM
 | 条件 | 路径 | 特征 |
 |------|------|------|
 | $N_{buf} \geq E_L$ | **Batch Scatter** | 一次性发射所有 scatter DMA，无 buffer 复用 barrier |
-| $N_{buf} < E_L$ | **Pipelined** | 逐专家 scatter，buffer 复用需 sync_barrier |
+| $N_{buf} < E_L$ | **Pipelined** | 逐专家 scatter，buffer 复用需 `sync_barrier` |
 
 > **Decode 场景**: 通常 $N_{buf} = E_L$（token 少，buffer 需求小），走 Batch Scatter 路径。
 >
@@ -118,7 +118,7 @@ $$N_{buf} = \min\left(E_L, \max\left(2, \left\lfloor \frac{0.03 \times \text{HBM
 
 对于方案 A (weight-streaming): $n_{bt}^{(d)} = T_L^{(d)} / bt$，权重加载次数与 $n_{bt}$ 成正比。
 
-**整个 kernel 延迟由最慢设备决定** ($\max_d T_L^{(d)}$)，因为设备间有 sync_barrier。
+**整个 kernel 延迟由最慢设备决定** ($\max_d T_L^{(d)}$)，因为设备间有 `sync_barrier`。
 
 ---
 
@@ -160,7 +160,7 @@ AllReduce metadata 使用递归倍增 (power-of-2) 或逐步轮转 (non-power-of
 |------|-------------------|------|
 | 轮数 | $\lceil \log_2 P_{EP} \rceil$ | 递归倍增 |
 | 每轮数据量 | $\text{chunk} \times N_E^{padded} \times 4$ bytes | chunk = $2^{round}$ |
-| 每轮操作 | 1× remote_copy send + 1× recv wait + 1× send wait | |
+| 每轮操作 | 1× `remote_copy` send + 1× recv wait + 1× send wait | |
 | 同步 barrier | 每轮 1 次 + 最终 1 次 | $\lceil \log_2 P_{EP} \rceil + 1$ 次 barrier |
 | **总 ICI 通信** | $P_{EP} \times N_E^{padded} \times 4$ bytes | 最终每设备拥有完整路由表 |
 
@@ -174,8 +174,8 @@ $$T_{S1} = \lceil \log_2 P_{EP} \rceil \times (t_{barrier} + t_{ICI\_latency}) +
 
 | 分配 | Shape | 大小 | 用途 |
 |------|-------|------|------|
-| `topk_ids_x2_vmem` | $(2, bt, k)$ S32 | $8 \times bt \times k$ | 双缓冲 topk_ids |
-| `topk_weights_x2_vmem` | $(2, bt, k)$ F32 | $8 \times bt \times k$ | 双缓冲 topk_weights |
+| `topk_ids_x2_vmem` | $(2, bt, k)$ S32 | $8 \times bt \times k$ | 双缓冲 `topk_ids` |
+| `topk_weights_x2_vmem` | $(2, bt, k)$ F32 | $8 \times bt \times k$ | 双缓冲 `topk_weights` |
 | `d2e_count_vmem` | $(P_{EP}, 1, N_E^{padded})$ S32 | $4 \times P_{EP} \times N_E^{padded}$ | allgather 工作区 |
 | `t2e_routing_smem` | $(bt, k)$ | 已在 SMEM | 路由矩阵 |
 
@@ -257,7 +257,7 @@ token[btc, bd1c/t_p] × W3[bd1c/t_p, bfc] → up_acc[btc, bfc]     (MXU)
 
 $$\text{HBM}_{FFN1}^{weight} = 2 \times H \times I \times B_w$$
 
-**Token HBM 读取 (per expert, per bf_id)**:
+**Token HBM 读取 (per expert, per `bf_id`)**:
 
 $$\text{HBM}_{FFN1}^{token} = n_{bf} \times bts \times H \times B_a$$
 
@@ -384,7 +384,7 @@ $$T_{2c}^{visible} = \max(0, T_{2c}^{total} - (E_L - 1) \times T_{expert})$$
 | FFN1 累加器 | $2 \times bts \times bf \times 4$ | Gate + Up, F32 |
 | FFN2 result 三缓冲 | $3 \times bts \times t_p \times bd2_{pt} \times B_a$ | Load/Compute/Store |
 | **SE 权重双缓冲** | $3 \times 2 \times t_p \times bd1_{pt} \times bse \times B_w$ | 如果 SE 与 expert loop 交错 |
-| **SE 累加器** | $2 \times bt \times H \times 4$ | F32, 2 个 buf (bt_id 双缓冲) |
+| **SE 累加器** | $2 \times bt \times H \times 4$ | F32, 2 个 buf (`bt_id` 双缓冲) |
 
 $$\boxed{\text{VMEM}_{S2} = 6 \times t_p \times bd_{w\_max} \times bf \times B_w + 2 \times bts \times t_p \times bd1_{pt} \times B_a + 8 \times bts \times bf + 3 \times bts \times t_p \times bd2_{pt} \times B_a + 6 \times t_p \times bd1_{pt} \times bse \times B_w + 8 \times bt \times H}$$
 
@@ -407,7 +407,7 @@ $$\boxed{\text{VMEM}_{S2} = 6 \times t_p \times bd_{w\_max} \times bf \times B_w
 | 指标 | 公式 | 说明 |
 |------|------|------|
 | HBM 读取 (expert outputs) | $bt \times k \times H \times B_a$ | 从 gather buffer |
-| HBM 读取 (topk_weights) | 0 | 已在 VMEM |
+| HBM 读取 (`topk_weights`) | 0 | 已在 VMEM |
 | VMEM 读取 (SE output) | $bt \times H \times 4$ | F32 累加器，已在 VMEM |
 | HBM 写入 (final output) | $bt \times H \times B_a$ | 最终输出 |
 | **总 HBM** | $bt \times (k + 1) \times H \times B_a + bt \times H \times 4$ | 读+写 |
@@ -445,17 +445,17 @@ $$T_{S3} = \frac{bt \times k \times H \times B_a}{BW_{HBM}} + t_{VPU} + t_{DMA\_
 #### 2.4.2 操作描述
 
 $n_{bse} = \lceil I_{SE} / bse \rceil$ 个 SE block，每个 block 执行完整的 SwiGLU FFN:
-- FFN1: Gate(W1_SE) + Up(W3_SE)，遍历 $(n_{bd1}, t_p)$
+- FFN1: Gate(`W1_SE`) + Up(`W3_SE`)，遍历 $(n_{bd1}, t_p)$
 - Activation: SiLU(gate) × up
-- FFN2: Down(W2_SE)，遍历 $(n_{bd2}, t_p)$
+- FFN2: Down(`W2_SE`)，遍历 $(n_{bd2}, t_p)$
 
 #### 2.4.3 每 SE Block 访存
 
 | 指标 | 公式 |
 |------|------|
-| W1_SE 读取 | $n_{bd1} \times t_p \times bd1_{pt} \times bse \times B_w$ |
-| W3_SE 读取 | 同上 |
-| W2_SE 读取 | $n_{bd2} \times t_p \times bse \times bd2_{pt} \times B_w$ |
+| `W1_SE` 读取 | $n_{bd1} \times t_p \times bd1_{pt} \times bse \times B_w$ |
+| `W3_SE` 读取 | 同上 |
+| `W2_SE` 读取 | $n_{bd2} \times t_p \times bse \times bd2_{pt} \times B_w$ |
 | Token 读取 | $n_{bd1} \times bt \times H \times B_a$ (跨 bd1 复用) |
 | **Per block 权重** | $(2 \times H + H) \times bse \times B_w = 3 \times H \times bse \times B_w$ |
 
@@ -493,9 +493,9 @@ $$T_{SE} = \max(T_{SE}^{HBM}, T_{SE}^{compute})$$
 
 | 分配 | 公式 |
 |------|------|
-| W1_SE 双缓冲 | $2 \times t_p \times bd1_{pt} \times bse \times B_w$ |
-| W3_SE 双缓冲 | 同上 |
-| W2_SE 双缓冲 | $2 \times t_p \times bse \times bd2_{pt} \times B_w$ |
+| `W1_SE` 双缓冲 | $2 \times t_p \times bd1_{pt} \times bse \times B_w$ |
+| `W3_SE` 双缓冲 | 同上 |
+| `W2_SE` 双缓冲 | $2 \times t_p \times bse \times bd2_{pt} \times B_w$ |
 | SE 累加器 (F32) | $2 \times bt \times H \times 4$ |
 
 $$\text{VMEM}_{SE} = 6 \times t_p \times bd_{pt} \times bse \times B_w + 8 \times bt \times H$$
@@ -571,8 +571,8 @@ $$\text{tokens} \to S1 \to S2a \to S2b \to S2c \to S3 \to \text{output}$$
 | 2 | SE ↔ S2a (scatter) | 无 | **合法** | HBM BW, DMA engine |
 | 3 | SE ↔ S2b (expert FFN) | 无 | **合法** | HBM BW (SE权重 vs expert权重), MXU, VMEM |
 | 4 | SE ↔ S2c (gather) | 无 | **合法** | DMA engine, ICI BW |
-| 5 | S2c[e_i] ↔ S2a[e_{i+1}] | scatter 不依赖前一 gather | **合法** | DMA engine |
-| 6 | S2b[e_{i+1}] ↔ S2c[e_i] | expert FFN 仅依赖自身 scatter recv | **合法** | DMA engine |
+| 5 | S2c[$e_i$] ↔ S2a[$e_{i+1}$] | scatter 不依赖前一 gather | **合法** | DMA engine |
+| 6 | S2b[$e_{i+1}$] ↔ S2c[$e_i$] | expert FFN 仅依赖自身 scatter recv | **合法** | DMA engine |
 | 7 | S3 ↔ S2b/S2c | S3 需要全部 gather 和 SE 完成 | **不合法** | — |
 
 ### 3.3 Tradeoff 1: SE Compute 与 Stage 1 的 Overlap
@@ -765,7 +765,7 @@ $$I_{SE} > \frac{2 \times bt \times 2 \times 3690}{3 \times 2 \times 200} = \fra
 > 1. AllReduce 增加的延迟是否在关键路径上（如果 SE 与其他阶段 overlap，AllReduce 可能不在关键路径）
 > 2. 实现复杂度增加
 
-### 3.7 Tradeoff 5: o_proj 与 DP Attention 的 Overlap
+### 3.7 Tradeoff 5: `o_proj` 与 DP Attention 的 Overlap
 
 #### 上下文
 
@@ -775,25 +775,25 @@ MoE block 输出后的数据流:
 MoE output (EP sharded) → o_proj → 重新组合为 DP sharding → Attention
 ```
 
-o_proj 是 output projection: $[T_L, H] \times [H, H_{out}]$
+`o_proj` 是 output projection: $[T_L, H] \times [H, H_{out}]$
 
 #### 依赖分析
 
 | 阶段 | 输入 sharding | 输出 sharding | 操作 |
 |------|-------------|-------------|------|
 | MoE output | EP (=DP×TP) | EP | 本文分析的 kernel |
-| o_proj | EP → TP | TP | matmul, 可能需要 TP reduce |
+| `o_proj` | EP → TP | TP | matmul, 可能需要 TP reduce |
 | DP 重组 | TP → DP | DP | AllGather 或 ReduceScatter |
 | Attention | DP | DP | 后续 layer |
 
 #### Overlap 机会
 
-**如果 o_proj 按 TP 切分** ($H_{out}$ 维分片):
-1. 每设备计算部分 o_proj: $[T_L, H] \times [H, H_{out}/P_{TP}]$
+**如果 `o_proj` 按 TP 切分** ($H_{out}$ 维分片):
+1. 每设备计算部分 `o_proj`: $[T_L, H] \times [H, H_{out}/P_{TP}]$
 2. ReduceScatter over TP: 聚合部分和并分布到 DP 维度
 3. AllGather over DP: 收集完整 DP batch
 
-**Pipeline**: o_proj 的 tile 级别 compute 可与 ReduceScatter 的 DMA overlap:
+**Pipeline**: `o_proj` 的 tile 级别 compute 可与 ReduceScatter 的 DMA overlap:
 
 $$T_{o\_proj+reorg} = \max(T_{o\_proj}^{compute}, T_{ReduceScatter}, T_{AllGather})$$
 
@@ -805,7 +805,7 @@ $$T_{o\_proj}^{compute} = \frac{2 \times T_L \times H \times H_{out}}{F_{MXU}}$$
 
 $$T_{RS} = \frac{(P_{TP} - 1)}{P_{TP}} \times \frac{T_L \times H_{out} \times B_a}{BW_{ICI}^{ring}}$$
 
-> **注意**: 这超出了 fused MoE kernel 的边界。分析给出接口约束: kernel 输出 shape 和 sharding 需与 o_proj 的 pipeline 策略对齐。
+> **注意**: 这超出了 fused MoE kernel 的边界。分析给出接口约束: kernel 输出 shape 和 sharding 需与 `o_proj` 的 pipeline 策略对齐。
 
 ### 3.8 Tradeoff 6: Prefill vs Decode 最优 Expert 写法
 
@@ -1018,7 +1018,7 @@ $$\text{HBM}_{chunked}^{weight} = n_{chunks} \times E_{active} \times 3HIB_w$$
 | 指标 | 值 |
 |------|------|
 | 理论下界 | ~1.8 ms |
-| 实测时间 | 149 ms (ep_size=8) / 150 ms (ep_size=8, benchmark) |
+| 实测时间 | 149 ms (`ep_size`=8) / 150 ms (`ep_size`=8, benchmark) |
 | **Gap** | **~83x** |
 | 有效 HBM BW | $6,249 \text{ MB} / 149 \text{ ms} = 42$ GB/s (峰值 1.1%) |
 
