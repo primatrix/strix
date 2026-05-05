@@ -16,27 +16,29 @@ reviewers: []
 
 ## 0. TPU v7x 硬件规格
 
-### 0.1 单芯片硬件参数
+### 0.1 单 TensorCore (Chiplet) 硬件参数
+
+> TPU v7x 每颗芯片由 2 个 chiplet 组成, 每个 chiplet 包含 1 个 TensorCore + 2 个 SparseCore + 96 GB HBM. JAX 将每个 chiplet 视为独立设备. 以下参数为 **单 TensorCore (chiplet)** 规格, 即 Pallas kernel 可用资源.
 
 | 组件 | 规格 | 说明 |
 |------|------|------|
-| **HBM 容量** | 192 GB | 片外高带宽存储 |
-| **HBM 带宽** | 3690 GB/s | 双向聚合带宽 |
+| **HBM 容量** | 96 GB | 每 chiplet 独立 HBM (芯片级 192 GB) |
+| **HBM 带宽** | 3690 GB/s | 每 chiplet 双向聚合带宽 (芯片级 7380 GB/s) |
 | **VMEM 容量** | 64 MiB | 片上 Scratchpad (软件管理) |
 | **SPR** | 4096 个 | 32-bit 标量寄存器 |
 | **VPR** | 32 个 × 4 KB | 向量寄存器, 每个 8×128×32bit |
 | **MXU** | 2 × MXU | 矩阵乘法单元 (Dual MXU) |
-| **MXU 峰值算力** | 2307 TFLOPS (BF16) | 包含 multiply + accumulate |
+| **MXU 峰值算力** | 1154 TFLOPS (BF16) | 单 TC; 芯片级 2307 TFLOPS |
 | **VPU** | 1 个 | 向量处理单元 (elementwise/reduce) |
 | **DMA 引擎** | 1 个 | HBM ↔ VMEM 数据搬运 |
 | **对齐要求** | 128 元素 | Block 维度必须被 128 整除 |
-| **Ridge Point** | ~625 FLOPs/byte | MXU_peak / HBM_BW |
+| **Ridge Point** | ~313 FLOPs/byte | MXU_peak / HBM_BW |
 
 ### 0.2 数据流层次
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
-│                        HBM (192 GB)                       │
+│                        HBM (96 GB / chiplet)                │
 │   权重 (W1, W2, W3), tokens, A2A scratch buffers          │
 │                     ↕ 3690 GB/s (DMA)                     │
 ├──────────────────────────────────────────────────────────┤
@@ -48,16 +50,17 @@ reviewers: []
 │   MXU 累加器, VPU 计算临时值                              │
 │                     ↕ 1 cycle                             │
 ├──────────────────────────────────────────────────────────┤
-│           MXU (2307 TFLOPS)  │  VPU (elementwise)        │
+│           MXU (1154 TFLOPS)  │  VPU (elementwise)        │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### 0.3 ICI 互联参数 (多芯片)
+### 0.3 互联参数 (芯片内 + 芯片间)
 
-| 拓扑 | 单链路带宽 | 说明 |
-|------|-----------|------|
-| v7x 2D Torus | ~200 GB/s per link | 用于 All2All scatter/gather |
-| 全双工 | 双向同时传输 | A2A 可与计算重叠 |
+| 互联类型 | 拓扑 | 带宽 | 说明 |
+|----------|------|------|------|
+| **D2D** (chiplet 间) | 片内直连 | 1200 GB/s | 6× ICI 单轴, chiplet 间 collective |
+| **ICI** (芯片间) | 3D Torus | 200 GB/s/axis/方向 | 总双向 1200 GB/s/chip, 全双工 |
+| **DCN** (机架间) | 数据中心网络 | 100 Gbps | Pod 间通信 |
 
 ### 0.4 关键符号定义
 
@@ -705,7 +708,7 @@ AI_decode ≈ (2 × T_L × K) / (E_L × B_w)
 ```
 
 - 例: T_L=64, K=8, E_L=64, B_w=2 → AI = 2×64×8 / (64×2) = 8 FLOPs/byte
-- Ridge point = 625 → **严重 HBM bandwidth bound**
+- Ridge point = 313 → **严重 HBM bandwidth bound**
 
 **Prefill 场景** (`bt=128`, `num_bt=T_L/bt`):
 
@@ -1022,7 +1025,7 @@ AI_stage6 = Total_FLOPs_stage6 / Total_Bytes_HBM_stage6
 # BF16: AI = 2K / (2(K+1)) = K/(K+1) ≈ 1 FLOPs/byte (K=8 → 0.89)
 ```
 
-> **瓶颈特征**: 严重 **HBM bandwidth bound** (AI ≈ 1, 远低于 ridge point 625). 但该阶段数据量较小 (相比 Stage 3), 绝对延迟不高. 主要延迟来自 **小 DMA 串行化** — 逐 token 逐 expert 的 gather 是 `fori_loop` 串行发起.
+> **瓶颈特征**: 严重 **HBM bandwidth bound** (AI ≈ 1, 远低于 ridge point 313). 但该阶段数据量较小 (相比 Stage 3), 绝对延迟不高. 主要延迟来自 **小 DMA 串行化** — 逐 token 逐 expert 的 gather 是 `fori_loop` 串行发起.
 
 ### 6.7 延迟模型
 
@@ -1244,9 +1247,9 @@ Stage 3 FLOPs = 6 × 64 × 8 × 8192 × 2048 = 51.5 TFLOPS
 Stage 3 Weight bytes = 64 × 3 × 8192 × 2048 × 2 = 6.44 GB
 AI = 51.5e12 / 6.44e9 = 8.0 FLOPs/byte
 
-T_compute = 51.5e12 / 2307e12 = 22.3 μs
+T_compute = 51.5e12 / 1154e12 = 44.6 μs
 T_hbm     = 6.44e9 / 3690e9 = 1745 μs
-T_stage3  ≈ 1745 μs (HBM BW bound, MXU 利用率 ≈ 1.3%)
+T_stage3  ≈ 1745 μs (HBM BW bound, MXU 利用率 ≈ 2.6%)
 ```
 
 ### 10.2 Prefill 配置
@@ -1267,12 +1270,12 @@ Total (4 tiles) = 412 TFLOPS / 25.8 GB
 
 AI = 103e12 / 6.44e9 = 16.0 FLOPs/byte (per tile)
 
-T_compute_total = 412e12 / 2307e12 = 178 μs
+T_compute_total = 412e12 / 1154e12 = 357 μs
 T_hbm_total     = 25.8e9 / 3690e9 = 6990 μs
-T_stage3 ≈ 6990 μs (HBM BW bound, MXU 利用率 ≈ 2.5%)
+T_stage3 ≈ 6990 μs (HBM BW bound, MXU 利用率 ≈ 5.1%)
 ```
 
-> **结论**: Decode 和 Prefill 均严格 HBM BW bound. MXU 利用率极低 (< 3%), 主要瓶颈是逐专家权重读取. 优化方向: 增大 `bt×K/E_L` (通过 EP degree, batch size, 或权重量化减少 B_w).
+> **结论**: Decode 和 Prefill 均严格 HBM BW bound. MXU 利用率极低 (< 6%), 主要瓶颈是逐专家权重读取. 优化方向: 增大 `bt×K/E_L` (通过 EP degree, batch size, 或权重量化减少 B_w).
 
 ---
 
