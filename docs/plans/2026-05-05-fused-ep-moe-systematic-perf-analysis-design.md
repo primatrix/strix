@@ -622,26 +622,34 @@ $$T_{S2c}^{\text{visible}} = \max(0, T_{S2c}^{\text{total}} - (E_L - 1) \times T
 
 #### Stage 3: 输出聚合
 
-VPU 加权求和，无 MXU 计算:
+从 HBM 读取所有前置依赖 (expert gather 输出、SE 累加器、topk\_weights)，加权求和后写回:
 
-$$T_{S3} = \max\left(\frac{bt \times k \times H \times B_a}{BW_{HBM}}, \frac{bt \times (k + 2) \times H}{V_{VPU}}\right) + \frac{bt \times H \times B_a}{BW_{HBM}}$$
+$$T_{S3} = \frac{bt \times k \times H \times B_a + bt \times H \times 4 + bt \times k \times 4 + bt \times H \times B_a}{BW_{HBM}} + \frac{bt \times (k + 2) \times H}{V_{VPU}}$$
 
-| 资源 | 数据量 / 计算量 | 耗时公式 |
-|------|---------------|---------|
-| MXU | 0 | 0 |
-| HBM 读取 | $bt \times k \times H \times B_a$ | $\text{Bytes} / BW_{HBM}$ |
-| HBM 写入 | $bt \times H \times B_a$ | $\text{Bytes} / BW_{HBM}$ |
-| VPU | $bt \times (k + 2) \times H$ ops | $\text{Ops} / V_{VPU}$ |
+| 资源 | 数据量 / 计算量 | 说明 |
+|------|---------------|------|
+| HBM 读取: expert outputs | $bt \times k \times H \times B_a$ | 从 A2A gather buffer 读取 $k$ 个专家输出 |
+| HBM 读取: SE 累加器 | $bt \times H \times 4$ | F32 SE 输出，S2b 期间写回 HBM (VMEM 已被权重占用) |
+| HBM 读取: topk\_weights | $bt \times k \times 4$ | F32 路由权重，S1 后可能已被 evict |
+| HBM 写入: final output | $bt \times H \times B_a$ | BF16 最终输出 |
+| VPU | $bt \times (k + 2) \times H$ ops | 加权求和 + SE 加法 + 精度转换 |
 
 #### Stage 4: Shared Expert Compute (独立阶段)
 
-与 S2b 相同的 Roofline 模型，但作用于 SE 权重:
+与 S2b 相同的 Roofline 模型。注意 SE 需要 $n_{bse}$ 次 token re-staging:
 
-$$T_{S4}^{\text{HBM}} = \frac{3 \times H \times I_{SE} \times B_w}{BW_{HBM}}$$
+$$T_{S4}^{\text{HBM}} = \frac{3 \times H \times I_{SE} \times B_w + n_{bse} \times bt \times H \times B_a}{BW_{HBM}}$$
 
 $$T_{S4}^{\text{compute}} = \frac{6 \times bt \times H \times I_{SE}}{F_{MXU}}$$
 
 $$T_{S4} = \max(T_{S4}^{\text{HBM}}, T_{S4}^{\text{compute}})$$
+
+| 资源 | 数据量 | 说明 |
+|------|-------|------|
+| HBM 读取: SE 权重 | $3 \times H \times I_{SE} \times B_w$ | W1\_SE, W3\_SE, W2\_SE 各一次 |
+| HBM 读取: token re-staging | $n_{bse} \times bt \times H \times B_a$ | 每个 SE block 重新 staging token |
+| HBM 写入: SE 累加器 | $bt \times H \times 4$ | F32 累加器写回 HBM 供 S3 读取 |
+| MXU | $6 \times bt \times H \times I_{SE}$ FLOPs | Gate + Up + Down |
 
 **Roofline 判定**:
 
