@@ -72,19 +72,6 @@ reviewers: []
 | `D` | ep_size (设备数 / Expert Parallelism 度) | 1–256 |
 | `T_L` | local_num_tokens = T / D | |
 | `E_L` | local_num_experts = E / D | |
-| `bt` | 外层 token tile | 8–128 |
-| `bts` | 内层 token staging tile (expert_ffn 内) | 8–128 |
-| `btc` | 计算 token tile (MXU GEMM 的 M 维度) | 8–64 |
-| `bf` | intermediate_size tile | 128–2048 |
-| `bfc` | intermediate_size 计算 tile | 128–2048 |
-| `bd1` | hidden_size tile (FFN1 K 维度) | 128–2048 |
-| `bd1c` | hidden_size 计算 tile (FFN1) | 128–2048 |
-| `bd2` | hidden_size tile (FFN2 N 维度) | 128–2048 |
-| `bd2c` | hidden_size 计算 tile (FFN2) | 128–2048 |
-| `bse` | 共享专家 intermediate tile | 128–1024 |
-| `t_p` | t_packing = 32 / dtype_bits (BF16=2) | 1–4 |
-| `B_w` | 每权重元素字节数 (BF16=2, INT8=1) | 1–4 |
-| `B_t` | 每 token 元素字节数 (BF16=2) | 2–4 |
 
 ---
 
