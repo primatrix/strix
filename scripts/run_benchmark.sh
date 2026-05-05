@@ -20,6 +20,7 @@ CHUNK_SIZE=""
 COMPILE_ONLY=""
 TARGET_TOPOLOGY=""
 NUM_TOKENS=""
+EP_SIZE=""
 JOB_TIMEOUT=${JOB_TIMEOUT:-7200}
 
 # ---- Usage ----
@@ -38,6 +39,7 @@ Options:
   --compile-only       Cross-compile only, no execution
   --target-topology <t> Target topology for cross-compilation (default: 2x8x8)
   --num-tokens <n>     Override num_tokens for cross-compilation
+  --ep-size <n>        Expert parallelism size (overrides kernel default)
   -h, --help           Show this help
 EOF
   exit 1
@@ -81,6 +83,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --num-tokens)
       NUM_TOKENS="${2:?--num-tokens requires a value}"
+      shift 2
+      ;;
+    --ep-size)
+      EP_SIZE="${2:?--ep-size requires a value}"
       shift 2
       ;;
     -h|--help)
@@ -130,7 +136,7 @@ TPU_CHIPS=$(( ${TPU_TOPOLOGY//x/*} ))
 export TPU_ACCELERATOR="tpu${TPU_TYPE#v}"
 
 # ---- Export for envsubst ----
-export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY
+export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY EP_SIZE
 
 # ---- GCS config ----
 export GCS_BUCKET="${GCS_BUCKET:-gs://poc_profile/}"
@@ -170,7 +176,7 @@ trap cleanup EXIT
 
 # ---- Render and deploy ----
 echo "[run_benchmark] Rendering Job YAML for ${JOB_NAME}..."
-ENVSUBST_VARS='$JOB_NAME $BRANCH $BRANCH_LABEL $KERNEL_MODULE $SHAPE $CHUNK_SIZE $TPU_TYPE $TPU_TOPOLOGY $TPU_CHIPS $TPU_ACCELERATOR $GCS_BUCKET $RUNNER_CMD'
+ENVSUBST_VARS='$JOB_NAME $BRANCH $BRANCH_LABEL $KERNEL_MODULE $SHAPE $CHUNK_SIZE $TPU_TYPE $TPU_TOPOLOGY $TPU_CHIPS $TPU_ACCELERATOR $GCS_BUCKET $RUNNER_CMD $EP_SIZE'
 RENDERED_YAML="$(envsubst "${ENVSUBST_VARS}" < "${YAML_TEMPLATE}")"
 
 echo "[run_benchmark] Deploying Job..."

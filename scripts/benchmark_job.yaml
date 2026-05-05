@@ -37,6 +37,8 @@ spec:
               value: "${SHAPE}"
             - name: CHUNK_SIZE
               value: "${CHUNK_SIZE}"
+            - name: EP_SIZE
+              value: "${EP_SIZE}"
             - name: BRANCH
               value: "${BRANCH}"
             - name: JOB_NAME

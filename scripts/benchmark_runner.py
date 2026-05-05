@@ -62,6 +62,12 @@ def parse_args(argv=None):
         help="GCS bucket for result upload",
     )
     p.add_argument(
+        "--ep-size",
+        type=int,
+        default=_int_or_none(os.environ.get("EP_SIZE")),
+        help="Expert parallelism size (overrides kernel config default)",
+    )
+    p.add_argument(
         "--num-runs",
         type=int,
         default=10,
@@ -127,13 +133,12 @@ def import_kernel(module_path):
     return mod.kernel_fn, mod.config
 
 
-def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None):
+def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_size=None):
     """Execute kernel benchmark and return list of timing values (seconds)."""
     kwargs = dict(config.get("default_shape", {}))
     if chunk_size is not None:
         kwargs["chunk_size"] = chunk_size
-    if "ep_size" in config:
-        kwargs["ep_size"] = config["ep_size"]
+    kwargs["ep_size"] = ep_size if ep_size is not None else config.get("ep_size", 4)
 
     run_fn = kernel_fn(**kwargs)
 
@@ -239,6 +244,7 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
     timings = run_benchmark(
         kernel_fn, config, args.num_warmup, args.num_runs,
         chunk_size=args.chunk_size,
+        ep_size=args.ep_size,
     )
 
     if not is_coordinator():

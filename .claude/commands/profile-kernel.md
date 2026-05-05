@@ -8,6 +8,21 @@ Profile a Pallas kernel on remote TPU and download all IR dumps (HLO, LLO, Mosai
 
 The argument `$ARGUMENTS` is the path to a YAML config file.
 
+## TPU v7x Topology Convention
+
+每个 TPU v7x chip 包含 **2 个 devices**（即每个 chip 有 2 个 TensorCore）。JAX 实际使用的 mesh topology 为 4D 形式 `(n, n, n, 2)`，其中最后一维固定为 2（devices per chip），前三维表示 chip 的物理排布。
+
+配置文件中 `tpu_topology` 字段只写 chip 排布的前三维，省略设备维。例如：
+
+| tpu_topology | chip 数 | 实际 topology | device 总数 | 最大 EP |
+|-------------|---------|--------------|------------|--------|
+| `2x2x1` | 4 | `(2,2,1,2)` | 8 | 8 |
+| `2x2x2` | 8 | `(2,2,2,2)` | 16 | 16 |
+| `2x4x1` | 8 | `(2,4,1,2)` | 16 | 16 |
+| `2x8x8` | 128 | `(2,8,8,2)` | 256 | 256 |
+
+**EP（Expert Parallelism）要求**：EP 将 experts 切分到 devices 上并行计算，因此 `EP ≤ device 总数 = chip 数 × 2`。
+
 ## Config File Format
 
 ```yaml
@@ -15,7 +30,7 @@ kernel: kernels.fused_moe          # Python module path (required)
 shape: "1,2048,4,128,128"          # Comma-separated shape (required for benchmark mode)
 chunk_size: 128                    # Optional
 tpu_type: v7x                     # Default: v7x
-tpu_topology: 2x2x1               # Default: 2x2x1
+tpu_topology: 2x2x1               # Default: 2x2x1 (chip topology, 3D)
 compile_only: false                # Default: false. If true, cross-compile only (no execution)
 target_topology: 2x8x8             # Target topology for cross-compilation (used when compile_only: true)
 ```
