@@ -7,7 +7,6 @@ from the fused MoE kernel for isolated performance analysis.
 from __future__ import annotations
 
 import functools
-import math
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +14,7 @@ from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from ._fused_moe_impl import FusedMoEBlockConfig, activation_fn, cdiv, align_to, get_dtype_packing
+from ._fused_moe_impl import FusedMoEBlockConfig, activation_fn, cdiv, get_dtype_packing
 
 config = {
     "default_shape": {
@@ -41,7 +40,7 @@ DEFAULT_BLOCK_CONFIG = FusedMoEBlockConfig(
     bfc=2048,
     bd1c=1024,
     bd2c=1024,
-    bse=512,
+    bse=512,  # unused (no shared expert); required by dataclass
 )
 
 
