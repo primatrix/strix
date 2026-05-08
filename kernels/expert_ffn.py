@@ -502,6 +502,14 @@ def expert_ffn(
     return output_packed.reshape(num_tokens, hidden_size)
 
 
+def _ref_expert_ffn(tokens, w1, w2, w3, *, act_fn="silu"):
+    """Pure-JAX reference: activation(tokens @ W1, tokens @ W3) @ W2."""
+    gate = tokens.astype(jnp.float32) @ w1.astype(jnp.float32)
+    up = tokens.astype(jnp.float32) @ w3.astype(jnp.float32)
+    act = activation_fn(gate, up, act_fn)
+    return (act @ w2.astype(jnp.float32)).astype(tokens.dtype)
+
+
 def kernel_fn(
     num_tokens=256,
     hidden_size=8192,
@@ -528,3 +536,33 @@ def kernel_fn(
         )
 
     return run
+
+
+if __name__ == "__main__":
+    import sys
+
+    num_tokens = int(sys.argv[1]) if len(sys.argv) > 1 else 32
+    hidden_size = 8192
+    intermediate_size = 2048
+    dtype = jnp.bfloat16
+
+    key = jax.random.key(0)
+    k1, k2, k3, k4 = jax.random.split(key, 4)
+    tokens = jax.random.normal(k1, (num_tokens, hidden_size), dtype=dtype)
+    w1 = jax.random.normal(k2, (hidden_size, intermediate_size), dtype=dtype)
+    w2 = jax.random.normal(k3, (intermediate_size, hidden_size), dtype=dtype)
+    w3 = jax.random.normal(k4, (hidden_size, intermediate_size), dtype=dtype)
+
+    bc = FusedMoEBlockConfig(
+        bt=num_tokens, bf=2048, bd1=1024, bd2=1024,
+        btc=num_tokens, bfc=2048, bd1c=1024, bd2c=1024, bse=512,
+        bts=num_tokens,
+    )
+
+    result = expert_ffn(tokens, w1, w2, w3, block_config=bc)
+    ref = _ref_expert_ffn(tokens, w1, w2, w3)
+    max_err = jnp.max(jnp.abs(result.astype(jnp.float32) - ref.astype(jnp.float32)))
+    rel_err = max_err / (jnp.max(jnp.abs(ref.astype(jnp.float32))) + 1e-6)
+    print(f"num_tokens={num_tokens}, max_abs_err={max_err:.6f}, rel_err={rel_err:.6f}")
+    assert rel_err < 0.05, f"Relative error too high: {rel_err}"
+    print("PASS")
