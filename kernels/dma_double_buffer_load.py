@@ -77,13 +77,11 @@ def _dma_double_buffer_load_kernel(
 
     def start_fetch_w(bw_sem_id, bf_id, bd_id):
         """Start async DMA copy from HBM to VMEM buffer bw_sem_id."""
-        for p in range(t_packing):
-            offset = p * h_per_t_packing + bd_id * bd_per_t_packing
-            pltpu.make_async_copy(
-                src_ref=w_hbm.at[pl.ds(offset, bd_per_t_packing), pl.ds(bf_id * bf, bf)],
-                dst_ref=b_w_x2_vmem.at[bw_sem_id, p],
-                sem=weight_sems.at[bw_sem_id],
-            ).start()
+        pltpu.make_async_copy(
+            src_ref=w_hbm.at[pl.ds(bd_id * bd, bd), pl.ds(bf_id * bf, bf)],
+            dst_ref=b_w_x2_vmem.at[bw_sem_id],
+            sem=weight_sems.at[bw_sem_id],
+        ).start()
 
     def wait_fetch_w(bw_sem_id):
         """Wait for async DMA copy to complete."""
