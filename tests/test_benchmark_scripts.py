@@ -337,3 +337,30 @@ class TestYamlIrDumpEnvStripped:
         content = _YAML_TEMPLATE.read_text()
         assert "name: LIBTPU_INIT_ARGS" not in content
         assert "--xla_jf_dump_to" not in content
+
+
+class TestShellSweepFlags:
+    """run_benchmark.sh forwards --sweep/--total-bytes/--no-ir-dump."""
+
+    def test_sweep_flag_in_help(self):
+        result = subprocess.run(
+            ["bash", str(_SHELL_SCRIPT), "-h"],
+            capture_output=True, text=True,
+        )
+        combined = result.stdout + result.stderr
+        assert "--sweep" in combined
+        assert "--total-bytes" in combined
+        assert "--no-ir-dump" in combined
+
+    def test_sweep_mutex_with_bf_fails(self):
+        """Shell exits non-zero when --sweep and --bf are both given."""
+        result = subprocess.run(
+            ["bash", str(_SHELL_SCRIPT), "kernels.dma_double_buffer_load",
+             "--shape", "8192,2048",
+             "--sweep", "2048:1024", "--bf", "2048"],
+            capture_output=True, text=True,
+            env={**os.environ, "KUBECONFIG": "/dev/null"},
+        )
+        assert result.returncode != 0
+        assert "mutually exclusive" in (result.stdout + result.stderr).lower() or \
+               "cannot" in (result.stdout + result.stderr).lower()
