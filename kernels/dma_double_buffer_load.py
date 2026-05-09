@@ -91,13 +91,8 @@ def _dma_double_buffer_load_kernel(
             sem=weight_sems.at[bw_sem_id],
         ).wait()
 
-    # -- DMA test: unrolled double-buffering (no fori_loop) --
-    start_fetch_w(0, 0, 0)
-    wait_fetch_w(0)
-    start_fetch_w(1, 1, 0)
-    wait_fetch_w(1)
-
-    output_hbm[0] = jnp.float32(1.0)
+    # -- Minimal test: no DMA, just write to output --
+    output_hbm[0] = jnp.float32(0.0)
 
 
 def dma_double_buffer_load(
