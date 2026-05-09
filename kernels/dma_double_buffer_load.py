@@ -99,6 +99,9 @@ def _dma_double_buffer_load_kernel(
         return tile_sum
 
     # -- Double-buffered load loop --
+    # Eliminates jax.lax.cond inside fori_loop to avoid Pallas lowering
+    # KeyError (JAX 0.10.0 bug: cond branches create inconsistent Jaxpr
+    # variable environments under scan/fori_loop lowering).
 
     # Prefetch first tile into buffer 0
     start_fetch_w(0, 0, 0)
@@ -112,29 +115,18 @@ def _dma_double_buffer_load_kernel(
         # Wait for current buffer to be ready
         wait_fetch_w(bw_sem_id)
 
-        # Start loading next tile into the other buffer (if more loads remain)
+        # Compute next tile coordinates (wraps around for repeated loads)
         next_bw_sem_id = 1 - bw_sem_id
         next_load_idx = load_idx + 1
-
-        # Compute next tile coordinates
         next_bf_id = next_load_idx % num_bf
         next_bd_id = (next_load_idx // num_bf) % num_bd
 
-        def start_next_load(_):
-            start_fetch_w(next_bw_sem_id, next_bf_id, next_bd_id)
+        # Always start next DMA fetch — on the final iteration this
+        # produces one extra unused transfer, but avoids jax.lax.cond
+        # which triggers a Jaxpr KeyError during Pallas lowering.
+        start_fetch_w(next_bw_sem_id, next_bf_id, next_bd_id)
 
-        def skip_next_load(_):
-            pass
-
-        # Only start next load if we haven't reached num_loads
-        jax.lax.cond(
-            next_load_idx < num_loads,
-            start_next_load,
-            skip_next_load,
-            None,
-        )
-
-        # Consume current weight tile (simulate usage)
+        # Consume current weight tile
         tile_checksum = consume_weight(bw_sem_id)
         checksum = checksum + tile_checksum
 
