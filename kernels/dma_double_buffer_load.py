@@ -91,8 +91,42 @@ def _dma_double_buffer_load_kernel(
             sem=weight_sems.at[bw_sem_id],
         ).wait()
 
-    # -- Minimal test: no DMA, just write to output --
-    output_hbm[0] = jnp.float32(0.0)
+    def consume_weight(bw_sem_id):
+        """Simulate weight consumption (read from VMEM, write checksum to HBM)."""
+        # Sum the weight tile to force VMEM read.
+        # Cast scalar result to f32 (not the tile) to avoid intermediate HBM allocation.
+        tile_sum_bf16 = jnp.sum(b_w_x2_vmem[bw_sem_id])
+        return tile_sum_bf16.astype(jnp.float32)
+
+    # -- Double-buffered load loop --
+    # Prefetch first tile into buffer 0
+    start_fetch_w(0, 0, 0)
+
+    checksum = jnp.float32(0.0)
+
+    def body(i, carry):
+        checksum, bw_sem_id = carry
+
+        wait_fetch_w(bw_sem_id)
+
+        next_bw_sem_id = 1 - bw_sem_id
+        next_bf_id = (i + 1) % num_bf
+        next_bd_id = ((i + 1) // num_bf) % num_bd
+
+        # Always start next DMA fetch. On the final iteration this produces
+        # one extra unused transfer, but avoids jax.lax.cond which triggers
+        # a Jaxpr KeyError during Pallas lowering.
+        start_fetch_w(next_bw_sem_id, next_bf_id, next_bd_id)
+
+        tile_checksum = consume_weight(bw_sem_id)
+        checksum = checksum + tile_checksum
+
+        return (checksum, next_bw_sem_id)
+
+    final_checksum, _ = jax.lax.fori_loop(
+        0, num_loads, body, (checksum, 0))
+
+    output_hbm[()] = final_checksum
 
 
 def dma_double_buffer_load(
@@ -120,11 +154,10 @@ def dma_double_buffer_load(
 
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
-        grid=(1,),
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
         ],
-        out_specs=pl.BlockSpec((1,), lambda i: (0,), memory_space=pltpu.MemorySpace.HBM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
         scratch_shapes=[
             pltpu.VMEM((2, t_packing, bd_per_pack, bf), w_dtype),  # b_w_x2_vmem
             pltpu.SemaphoreType.DMA((2,)),  # weight_sems
@@ -139,13 +172,13 @@ def dma_double_buffer_load(
             num_loads=num_loads,
         ),
         grid_spec=grid_spec,
-        out_shape=jax.ShapeDtypeStruct((1,), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((), jnp.float32),
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("arbitrary",),
         ),
     )(w)
 
-    return result[0]
+    return result
 
 
 def kernel_fn(
