@@ -18,6 +18,7 @@ import sys
 import time
 
 IR_DUMP_SUBDIRS = ("hlo", "llo", "mosaic")
+_GIB = 1024 ** 3
 
 
 def is_coordinator():
@@ -364,8 +365,8 @@ def build_sweep_record(
             "max_ms": max(timings) * 1000,
         }
         record["throughput"] = {
-            "gib_per_s_median": total_bytes / median_s / (1024 ** 3),
-            "gib_per_s_max": total_bytes / min_s / (1024 ** 3),
+            "gib_per_s_median": total_bytes / median_s / _GIB,
+            "gib_per_s_max": total_bytes / min_s / _GIB,
         }
     return record
 
@@ -416,7 +417,7 @@ def run_sweep(
             )
         except Exception as e:  # noqa: BLE001
             err_msg = f"{type(e).__name__}: {e}"
-            print(f"[benchmark] sweep[{idx}] (bf={cfg['bf']}, bd={cfg['bd']}) FAILED: {err_msg}")
+            print(f"[benchmark] sweep[{idx}] (bf={cfg['bf']}, bd={cfg['bd']}) FAILED: {err_msg}", file=sys.stderr)
             record = build_sweep_record(
                 kernel=kernel, shape=shape, job_name=job_name,
                 config_index=idx, cfg=cfg, total_bytes=total_bytes, dtype=dtype,
