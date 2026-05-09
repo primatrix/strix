@@ -353,14 +353,19 @@ class TestShellSweepFlags:
         assert "--no-ir-dump" in combined
 
     def test_sweep_mutex_with_bf_fails(self):
-        """Shell exits non-zero when --sweep and --bf are both given."""
+        """Shell exits non-zero when --sweep and --bf are both given.
+
+        The mutex check runs before preflight, so no KUBECONFIG override is
+        needed. Assertion is tight on the exact error phrase to catch a
+        regression where the mutex is removed (preflight would then fail
+        with a different message).
+        """
         result = subprocess.run(
             ["bash", str(_SHELL_SCRIPT), "kernels.dma_double_buffer_load",
              "--shape", "8192,2048",
              "--sweep", "2048:1024", "--bf", "2048"],
             capture_output=True, text=True,
-            env={**os.environ, "KUBECONFIG": "/dev/null"},
         )
         assert result.returncode != 0
-        assert "mutually exclusive" in (result.stdout + result.stderr).lower() or \
-               "cannot" in (result.stdout + result.stderr).lower()
+        combined = result.stdout + result.stderr
+        assert "mutually exclusive" in combined.lower(), combined
