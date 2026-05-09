@@ -26,6 +26,7 @@ BD=""
 SWEEP=""
 TOTAL_BYTES=""
 NO_IR_DUMP=""
+PROFILE=""
 JOB_TIMEOUT=${JOB_TIMEOUT:-7200}
 
 # ---- Usage ----
@@ -50,6 +51,7 @@ Options:
   --sweep <spec>       Comma-separated bf:bd pairs, e.g. "2048:1024,1024:512"
   --total-bytes <n>    Target total DMA bytes per sweep config (default: 67108864 = 64 MiB)
   --no-ir-dump         Disable HLO/LLO/Mosaic IR dump
+  --profile            Capture JAX profiler trace
   -h, --help           Show this help
 EOF
   exit 1
@@ -119,6 +121,10 @@ while [[ $# -gt 0 ]]; do
       NO_IR_DUMP="1"
       shift
       ;;
+    --profile)
+      PROFILE="1"
+      shift
+      ;;
     -h|--help)
       usage
       ;;
@@ -164,6 +170,9 @@ else
   if [[ -n "${NO_IR_DUMP}" ]]; then
     RUNNER_CMD="${RUNNER_CMD} --no-ir-dump"
   fi
+  if [[ -n "${PROFILE}" ]]; then
+    RUNNER_CMD="${RUNNER_CMD} --profile"
+  fi
 fi
 export RUNNER_CMD
 
@@ -187,7 +196,7 @@ TPU_CHIPS=$(( ${TPU_TOPOLOGY//x/*} ))
 export TPU_ACCELERATOR="tpu${TPU_TYPE#v}"
 
 # ---- Export for envsubst ----
-export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY EP_SIZE BF BD SWEEP TOTAL_BYTES NO_IR_DUMP
+export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY EP_SIZE BF BD SWEEP TOTAL_BYTES NO_IR_DUMP PROFILE
 
 # ---- GCS config ----
 export GCS_BUCKET="${GCS_BUCKET:-gs://poc_profile/}"

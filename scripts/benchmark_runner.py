@@ -121,6 +121,12 @@ def parse_args(argv=None):
         default=_int_or_none(os.environ.get("TOTAL_BYTES")) or 64 * 1024 * 1024,
         help="Target total DMA bytes per sweep config (default: 64 MiB)",
     )
+    p.add_argument(
+        "--profile",
+        action="store_true",
+        default=os.environ.get("PROFILE", "").lower() in ("1", "true", "yes"),
+        help="Capture JAX profiler trace after warmup (saved to output_dir/profiling/trace)",
+    )
 
     args = p.parse_args(argv)
 
@@ -434,6 +440,7 @@ def run_sweep(
     kernel: str,
     shape: str,
     job_name: str,
+    profile_dir: str | None = None,
 ):
     """Execute each sweep config in sequence, yielding one JSONL record per config.
 
@@ -452,6 +459,18 @@ def run_sweep(
                 result = run_fn()
                 if hasattr(result, "block_until_ready"):
                     result.block_until_ready()
+
+            if profile_dir is not None:
+                import jax
+                trace_dir = os.path.join(
+                    profile_dir, f"sweep_{idx}_bf{cfg['bf']}_bd{cfg['bd']}"
+                )
+                print(f"[benchmark] Capturing profiler trace → {trace_dir}")
+                jax.profiler.start_trace(trace_dir)
+                result = run_fn()
+                if hasattr(result, "block_until_ready"):
+                    result.block_until_ready()
+                jax.profiler.stop_trace()
 
             timings = []
             for _ in range(num_runs):
@@ -599,6 +618,12 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
             f"--xla_tpu_scoped_vmem_limit_kib={_VMEM_LIMIT_KIB}"
         )
 
+    profile_dir = None
+    if args.profile:
+        profile_dir = str(output_dir / "rank-0" / "profiling" / "trace")
+        pathlib.Path(profile_dir).mkdir(parents=True, exist_ok=True)
+        print(f"[benchmark] Profiler trace enabled → {profile_dir}")
+
     kernel_fn, config = import_kernel(args.kernel)
 
     if args.sweep:
@@ -612,6 +637,7 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
             num_warmup=args.num_warmup, num_runs=args.num_runs,
             total_bytes=args.total_bytes, dtype=dtype,
             kernel=args.kernel, shape=args.shape, job_name=args.job_name,
+            profile_dir=profile_dir,
         ))
 
         if not is_coordinator():
