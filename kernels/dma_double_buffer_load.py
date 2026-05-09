@@ -130,9 +130,9 @@ def _dma_double_buffer_load_kernel(
             start_fetch_w(next_bw_sem_id, next_bf_id, next_bd_id)
 
             tile_checksum = consume_weight(bw_sem_id_static)
-            checksum = checksum + tile_checksum
+            new_checksum = checksum + tile_checksum
 
-            return (next_load_idx, checksum, next_bw_sem_id)
+            return (next_load_idx, new_checksum, next_bw_sem_id)
 
         return with_static_bw(bw_sem_id, loop_body)
 
