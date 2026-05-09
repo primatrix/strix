@@ -21,6 +21,8 @@ COMPILE_ONLY=""
 TARGET_TOPOLOGY=""
 NUM_TOKENS=""
 EP_SIZE=""
+BF=""
+BD=""
 JOB_TIMEOUT=${JOB_TIMEOUT:-7200}
 
 # ---- Usage ----
@@ -40,6 +42,8 @@ Options:
   --target-topology <t> Target topology for cross-compilation (default: 2x8x8)
   --num-tokens <n>     Override num_tokens for cross-compilation
   --ep-size <n>        Expert parallelism size (overrides kernel default)
+  --bf <n>             Intermediate dimension block size
+  --bd <n>             Hidden dimension block size
   -h, --help           Show this help
 EOF
   exit 1
@@ -89,6 +93,14 @@ while [[ $# -gt 0 ]]; do
       EP_SIZE="${2:?--ep-size requires a value}"
       shift 2
       ;;
+    --bf)
+      BF="${2:?--bf requires a value}"
+      shift 2
+      ;;
+    --bd)
+      BD="${2:?--bd requires a value}"
+      shift 2
+      ;;
     -h|--help)
       usage
       ;;
@@ -113,6 +125,12 @@ if [[ -n "${COMPILE_ONLY}" ]]; then
   fi
 else
   RUNNER_CMD="python scripts/benchmark_runner.py"
+  if [[ -n "${BF}" ]]; then
+    RUNNER_CMD="${RUNNER_CMD} --bf ${BF}"
+  fi
+  if [[ -n "${BD}" ]]; then
+    RUNNER_CMD="${RUNNER_CMD} --bd ${BD}"
+  fi
 fi
 export RUNNER_CMD
 
@@ -136,7 +154,7 @@ TPU_CHIPS=$(( ${TPU_TOPOLOGY//x/*} ))
 export TPU_ACCELERATOR="tpu${TPU_TYPE#v}"
 
 # ---- Export for envsubst ----
-export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY EP_SIZE
+export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY EP_SIZE BF BD
 
 # ---- GCS config ----
 export GCS_BUCKET="${GCS_BUCKET:-gs://poc_profile/}"

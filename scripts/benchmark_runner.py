@@ -15,7 +15,6 @@ import os
 import pathlib
 import statistics
 import sys
-import tarfile
 import time
 
 IR_DUMP_SUBDIRS = ("hlo", "llo", "mosaic")
@@ -79,6 +78,23 @@ def parse_args(argv=None):
         default=3,
         help="Number of warmup runs (default: 3)",
     )
+    p.add_argument(
+        "--bf",
+        type=int,
+        default=_int_or_none(os.environ.get("BF")),
+        help="Intermediate dimension block size (overrides kernel default)",
+    )
+    p.add_argument(
+        "--bd",
+        type=int,
+        default=_int_or_none(os.environ.get("BD")),
+        help="Hidden dimension block size (overrides kernel default)",
+    )
+    p.add_argument(
+        "--output-dir",
+        default=os.environ.get("OUTPUT_DIR") or os.environ.get("ARTIFACT_LOCAL_DIR") or "/tmp/operator-artifact",
+        help="Operator-optimization artifact root directory",
+    )
 
     args = p.parse_args(argv)
 
@@ -133,12 +149,16 @@ def import_kernel(module_path):
     return mod.kernel_fn, mod.config
 
 
-def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_size=None):
+def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_size=None, bf=None, bd=None):
     """Execute kernel benchmark and return list of timing values (seconds)."""
     kwargs = dict(config.get("default_shape", {}))
     if chunk_size is not None:
         kwargs["chunk_size"] = chunk_size
     kwargs["ep_size"] = ep_size if ep_size is not None else config.get("ep_size", 4)
+    if bf is not None:
+        kwargs["bf"] = bf
+    if bd is not None:
+        kwargs["bd"] = bd
 
     run_fn = kernel_fn(**kwargs)
 
@@ -183,32 +203,76 @@ def write_benchmark_result(timings, kernel, shape, job_name, config, output_path
     return result
 
 
-def package_results(job_name, ir_dump_root, benchmark_result_path, output_dir):
-    """Create tar.gz archive of IR dumps and benchmark results."""
-    ir_dump_root = pathlib.Path(ir_dump_root)
-    benchmark_result_path = pathlib.Path(benchmark_result_path)
-    output_dir = pathlib.Path(output_dir)
-    tarball_path = output_dir / f"{job_name}.tar.gz"
+def _write_artifact_manifest(output_dir, args, config):
+    """Write manifest.json to the artifact root (operator-optimization contract)."""
+    import jax
 
+    manifest = {
+        "schema_version": 1,
+        "workflow": "operator-optimization",
+        "operator_family": "dma",
+        "operator_name": args.kernel,
+        "run_id": args.job_name,
+        "shape": args.shape,
+        "bf": args.bf,
+        "bd": args.bd,
+        "hardware": {
+            "device_type": os.environ.get("FALCON_DEVICE_TYPE", ""),
+            "device_count": jax.device_count(),
+            "device_topo": os.environ.get("FALCON_DEVICE_TOPO", ""),
+        },
+        "dimensions": {},
+    }
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
+
+
+def _write_profiling_meta(output_dir):
+    """Write profiling/env.txt and profiling/python-packages.txt to artifact root."""
+    profiling_dir = output_dir / "profiling"
+    profiling_dir.mkdir(parents=True, exist_ok=True)
+
+    env_path = profiling_dir / "env.txt"
+    env_vars = {
+        k: v for k, v in sorted(os.environ.items())
+        if k.startswith(("LIBTPU", "XLA_", "JAX_", "FALCON_", "TF_XLA", "SGLANG_JAX"))
+    }
+    with open(env_path, "w") as f:
+        for k, v in env_vars.items():
+            f.write(f"{k}={v}\n")
+
+    import importlib.metadata as md
+    pkgs_path = profiling_dir / "python-packages.txt"
+    with open(pkgs_path, "w") as f:
+        for pkg in ("jax", "jaxlib", "libtpu"):
+            try:
+                f.write(f"{pkg}={md.version(pkg)}\n")
+            except md.PackageNotFoundError:
+                f.write(f"{pkg}=MISSING\n")
+
+
+def _upload_if_configured(output_dir, args):
+    """Upload artifacts to GCS if --gcs-bucket is explicitly provided.
+
+    When running under Falcon, artifacts are written to $ARTIFACT_LOCAL_DIR and
+    Falcon handles collection. Only upload directly when GCS_BUCKET is set and
+    differs from the artifact path.
+    """
+    gcs_bucket = args.gcs_bucket
+    if not gcs_bucket or gcs_bucket == "gs://poc_profile/":
+        return
+
+    import tarfile
+    tarball_path = output_dir / f"{args.job_name}.tar.gz"
     with tarfile.open(tarball_path, "w:gz") as tar:
-        if ir_dump_root.exists():
-            tar.add(str(ir_dump_root), arcname="ir_dumps")
-        if benchmark_result_path.exists():
-            tar.add(str(benchmark_result_path), arcname="benchmark_result.json")
+        tar.add(str(output_dir), arcname=args.job_name)
 
-    return tarball_path
-
-
-def upload_to_gcs(tarball_path, gcs_bucket, job_name):
-    """Upload tarball to GCS."""
     from google.cloud import storage
-
     gcs_path = gcs_bucket.removeprefix("gs://").strip("/")
     parts = gcs_path.split("/", 1)
     bucket_name = parts[0]
     bucket_prefix = parts[1] if len(parts) > 1 else ""
-
-    blob_path = f"{job_name}/{pathlib.Path(tarball_path).name}"
+    blob_path = f"{args.job_name}/{tarball_path.name}"
     if bucket_prefix:
         blob_path = f"{bucket_prefix}/{blob_path}"
 
@@ -220,21 +284,18 @@ def upload_to_gcs(tarball_path, gcs_bucket, job_name):
     print(f"[benchmark] Upload complete")
 
 
-_DEFAULT_IR_DUMP_ROOT = pathlib.Path("/tmp/ir_dumps")
-_DEFAULT_RESULT_PATH = pathlib.Path("/tmp/benchmark_result.json")
-_DEFAULT_OUTPUT_DIR = pathlib.Path("/tmp")
-
-
 def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=None):
     """Run the full benchmark pipeline."""
-    ir_dump_root = ir_dump_root or _DEFAULT_IR_DUMP_ROOT
-    benchmark_result_path = benchmark_result_path or _DEFAULT_RESULT_PATH
-    output_dir = output_dir or _DEFAULT_OUTPUT_DIR
-
     args = parse_args(argv)
+    output_dir = pathlib.Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ir_dump_root = output_dir / "rank-0" / "compiler"
+    benchmark_result_path = output_dir / "rank-0" / "benchmark" / "metrics.jsonl"
 
     print(f"[benchmark] Starting benchmark for kernel: {args.kernel}")
     print(f"[benchmark] Shape: {args.shape}, Job: {args.job_name}")
+    print(f"[benchmark] bf={args.bf}, bd={args.bd}")
+    print(f"[benchmark] Output dir: {output_dir}")
 
     setup_ir_dump_dirs(ir_dump_root)
     setup_xla_flags(ir_dump_root)
@@ -245,6 +306,8 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
         kernel_fn, config, args.num_warmup, args.num_runs,
         chunk_size=args.chunk_size,
         ep_size=args.ep_size,
+        bf=args.bf,
+        bd=args.bd,
     )
 
     if not is_coordinator():
@@ -256,16 +319,12 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
         benchmark_result_path,
     )
 
-    tarball = package_results(
-        args.job_name, ir_dump_root, benchmark_result_path, output_dir,
-    )
+    _write_artifact_manifest(output_dir, args, config)
 
-    try:
-        upload_to_gcs(tarball, args.gcs_bucket, args.job_name)
-    except Exception as exc:
-        print(f"[benchmark] ERROR: GCS upload failed: {exc}", file=sys.stderr)
-        print(f"[benchmark] Tarball saved locally at: {tarball}", file=sys.stderr)
-        raise
+    if is_coordinator():
+        _write_profiling_meta(output_dir)
+
+    _upload_if_configured(output_dir, args)
 
     print(f"[benchmark] Done!")
 
