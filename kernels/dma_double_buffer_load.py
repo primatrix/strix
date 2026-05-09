@@ -11,13 +11,13 @@ import functools
 
 import jax
 import jax.numpy as jnp
-from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 try:
     from ._fused_moe_impl import cdiv
 except ImportError:
+    # Fallback for direct execution
     from _fused_moe_impl import cdiv
 
 config = {
@@ -36,11 +36,11 @@ config = {
 
 def _dma_double_buffer_load_kernel(
     w_hbm,
-    output_hbm,
+    output_vmem,
+    # Scratch buffers (VMEM).
     b_w_x2_vmem,
-    out_staging,   # VMEM staging for output DMA
+    # Semaphores.
     weight_sems,
-    output_sem,    # DMA semaphore for output write
     *,
     bf: int,
     bd: int,
@@ -52,6 +52,15 @@ def _dma_double_buffer_load_kernel(
     - Load weight tiles from HBM into VMEM using double-buffering
     - Ping-pong between two VMEM buffers (bw_sem_id = 0/1)
     - Measure pure DMA throughput without compute
+
+    Args:
+        w_hbm: Weight matrix in HBM [hidden_size, intermediate_size]
+        output_vmem: Scalar output ref for checksum (VMEM)
+        b_w_x2_vmem: Double-buffer VMEM scratch [2, bd, bf]
+        weight_sems: DMA semaphores [2]
+        bf: Intermediate dimension block size
+        bd: Hidden dimension block size
+        num_loads: Number of weight tiles to load (simulates expert iteration)
     """
     hidden_size = w_hbm.shape[0]
     intermediate_size = w_hbm.shape[1]
@@ -61,65 +70,50 @@ def _dma_double_buffer_load_kernel(
 
     # -- Weight DMA helpers --
 
-    def start_fetch_w(bw_sem_id, bf_id, bd_id):
-        """Start async DMA copy from HBM to VMEM buffer bw_sem_id."""
-        pltpu.make_async_copy(
+    def make_w_copy(buf, bf_id, bd_id):
+        """Create async copy descriptor for HBM→VMEM weight tile transfer."""
+        return pltpu.make_async_copy(
             src_ref=w_hbm.at[pl.ds(bd_id * bd, bd), pl.ds(bf_id * bf, bf)],
-            dst_ref=b_w_x2_vmem.at[bw_sem_id],
-            sem=weight_sems.at[bw_sem_id],
-        ).start()
+            dst_ref=b_w_x2_vmem.at[buf],
+            sem=weight_sems.at[buf],
+        )
 
-    def wait_fetch_w(bw_sem_id):
-        """Wait for async DMA copy to complete."""
-        pltpu.make_async_copy(
-            src_ref=b_w_x2_vmem.at[bw_sem_id],
-            dst_ref=b_w_x2_vmem.at[bw_sem_id],
-            sem=weight_sems.at[bw_sem_id],
-        ).wait()
+    def consume_weight(buf):
+        """Simulate weight consumption (read from VMEM, write checksum to HBM)."""
+        tile_sum = jnp.sum(b_w_x2_vmem[buf].astype(jnp.float32))
+        return tile_sum
 
-    def consume_weight(bw_sem_id):
-        """Simulate weight consumption (read from VMEM)."""
-        return jnp.sum(b_w_x2_vmem[bw_sem_id].astype(jnp.float32))
-
-    # -- Double-buffered load loop --
-    # Prefetch first tile into buffer 0
-    start_fetch_w(0, 0, 0)
+    # -- Double-buffered load loop (fully unrolled, paired descriptors) --
+    # Each make_async_copy descriptor is used for both .start() and .wait()
+    # to ensure the Mosaic lowering sees consistent HBM→VMEM refs.
 
     checksum = jnp.float32(0.0)
 
-    def body(i, carry):
-        checksum, bw_sem_id = carry
+    # Prefetch first tile into buffer 0
+    prev_copy = make_w_copy(0, 0, 0)
+    prev_copy.start()
 
-        wait_fetch_w(bw_sem_id)
+    for load_idx in range(num_loads):
+        buf = load_idx % 2
 
-        next_bw_sem_id = 1 - bw_sem_id
-        next_bf_id = (i + 1) % num_bf
-        next_bd_id = ((i + 1) // num_bf) % num_bd
+        # Wait for the DMA into the current buffer (same descriptor as start)
+        prev_copy.wait()
 
-        start_fetch_w(next_bw_sem_id, next_bf_id, next_bd_id)
+        # Start next DMA into the alternate buffer (skip on last iteration
+        # to keep DMA semaphores balanced at kernel exit)
+        if load_idx < num_loads - 1:
+            next_idx = load_idx + 1
+            next_buf = next_idx % 2
+            next_bf_id = next_idx % num_bf
+            next_bd_id = (next_idx // num_bf) % num_bd
+            prev_copy = make_w_copy(next_buf, next_bf_id, next_bd_id)
+            prev_copy.start()
 
-        tile_checksum = consume_weight(bw_sem_id)
-        checksum = checksum + tile_checksum
+        # Consume current weight tile
+        checksum = checksum + consume_weight(buf)
 
-        return (checksum, next_bw_sem_id)
-
-    final_checksum, _ = lax.fori_loop(
-        0, num_loads, body, (checksum, 0),
-        unroll=False,
-    )
-
-    # Write checksum to HBM output via DMA (Pallas forbids scalar VMEM stores)
-    out_staging[...] = final_checksum.reshape((1,))
-    pltpu.make_async_copy(
-        src_ref=out_staging.at[pl.ds(0, 1)],
-        dst_ref=output_hbm.at[pl.ds(0, 1)],
-        sem=output_sem.at[0],
-    ).start()
-    pltpu.make_async_copy(
-        src_ref=output_hbm.at[pl.ds(0, 1)],
-        dst_ref=output_hbm.at[pl.ds(0, 1)],
-        sem=output_sem.at[0],
-    ).wait()
+    # Write checksum to output (rank-1 to satisfy Pallas TPU block rank constraint)
+    output_vmem[...] = jnp.expand_dims(checksum, 0)
 
 
 def dma_double_buffer_load(
@@ -149,12 +143,10 @@ def dma_double_buffer_load(
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
         ],
-        out_specs=pl.BlockSpec((1,), lambda i: (0,), memory_space=pltpu.MemorySpace.HBM),
+        out_specs=pl.BlockSpec((1,), lambda i: (0,)),
         scratch_shapes=[
             pltpu.VMEM((2, bd, bf), w_dtype),  # b_w_x2_vmem
-            pltpu.VMEM((1,), jnp.float32),  # out_staging
             pltpu.SemaphoreType.DMA((2,)),  # weight_sems
-            pltpu.SemaphoreType.DMA((1,)),  # output_sem
         ],
     )
 

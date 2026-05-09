@@ -539,7 +539,7 @@ def _upload_if_configured(output_dir, args):
     differs from the artifact path.
     """
     gcs_bucket = args.gcs_bucket
-    if not gcs_bucket or gcs_bucket == "gs://poc_profile/":
+    if not gcs_bucket:
         return
 
     import tarfile
