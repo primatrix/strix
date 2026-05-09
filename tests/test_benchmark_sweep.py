@@ -159,6 +159,19 @@ class TestSweepCliFlags:
                 "--sweep", "2048:1024", "--bd", "1024",
             ])
 
+    def test_total_bytes_empty_env_uses_default(self, monkeypatch):
+        monkeypatch.setenv("TOTAL_BYTES", "")
+        runner = _import_runner()
+        args = runner.parse_args(["--kernel", "k", "--shape", "1"])
+        assert args.total_bytes == 64 * 1024 * 1024
+
+    def test_total_bytes_zero_rejected(self):
+        runner = _import_runner()
+        with pytest.raises(SystemExit):
+            runner.parse_args([
+                "--kernel", "k", "--shape", "1", "--total-bytes", "0",
+            ])
+
 
 class TestCheckKernelCompat:
     def test_accepts_kernel_with_sweep_kwargs(self):

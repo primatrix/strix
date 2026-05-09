@@ -109,7 +109,7 @@ def parse_args(argv=None):
     p.add_argument(
         "--total-bytes",
         type=int,
-        default=int(os.environ.get("TOTAL_BYTES", 64 * 1024 * 1024)),
+        default=_int_or_none(os.environ.get("TOTAL_BYTES")) or 64 * 1024 * 1024,
         help="Target total DMA bytes per sweep config (default: 64 MiB)",
     )
 
