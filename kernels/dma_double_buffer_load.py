@@ -91,30 +91,26 @@ def _dma_double_buffer_load_kernel(
     # Prefetch first tile into buffer 0
     start_fetch_w(0, 0, 0)
 
-    load_idx = 0
     checksum = jnp.float32(0.0)
 
-    def body(args):
-        load_idx, checksum, bw_sem_id = args
+    def body(i, carry):
+        checksum, bw_sem_id = carry
 
         wait_fetch_w(bw_sem_id)
 
         next_bw_sem_id = 1 - bw_sem_id
-        next_load_idx = load_idx + 1
-        next_bf_id = next_load_idx % num_bf
-        next_bd_id = (next_load_idx // num_bf) % num_bd
+        next_bf_id = (i + 1) % num_bf
+        next_bd_id = ((i + 1) // num_bf) % num_bd
 
         start_fetch_w(next_bw_sem_id, next_bf_id, next_bd_id)
 
         tile_checksum = consume_weight(bw_sem_id)
         checksum = checksum + tile_checksum
 
-        return (next_load_idx, checksum, next_bw_sem_id)
+        return (checksum, next_bw_sem_id)
 
-    final_load_idx, final_checksum, _ = lax.fori_loop(
-        0, num_loads,
-        lambda i, args: body(args),
-        (load_idx, checksum, 0),
+    final_checksum, _ = lax.fori_loop(
+        0, num_loads, body, (checksum, 0),
         unroll=False,
     )
 
