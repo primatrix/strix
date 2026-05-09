@@ -194,7 +194,7 @@ class TestIrDumpDirSetup:
 
 
 class TestXlaFlagsSetup:
-    """setup_xla_flags sets env vars only when missing."""
+    """setup_xla_flags sets XLA_FLAGS and LIBTPU_INIT_ARGS env vars."""
 
     def test_sets_xla_flags_when_missing(self, tmp_path):
         runner = _import_runner()
@@ -216,17 +216,22 @@ class TestXlaFlagsSetup:
             assert str(tmp_path / "llo") in libtpu
             assert str(tmp_path / "mosaic") in libtpu
 
-    def test_does_not_overwrite_existing_xla_flags(self):
-        runner = _import_runner()
-        with patch.dict(os.environ, {"XLA_FLAGS": "custom-flags"}):
-            runner.setup_xla_flags("/tmp/ir_dumps")
-            assert os.environ["XLA_FLAGS"] == "custom-flags"
+class TestSetupXlaFlagsUnconditional:
+    """setup_xla_flags always overwrites XLA_FLAGS / LIBTPU_INIT_ARGS."""
 
-    def test_does_not_overwrite_existing_libtpu_init_args(self):
+    def test_overwrites_preexisting_xla_flags(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XLA_FLAGS", "--preexisting")
         runner = _import_runner()
-        with patch.dict(os.environ, {"LIBTPU_INIT_ARGS": "custom-args"}):
-            runner.setup_xla_flags("/tmp/ir_dumps")
-            assert os.environ["LIBTPU_INIT_ARGS"] == "custom-args"
+        runner.setup_xla_flags(tmp_path)
+        assert "--xla_dump_to=" in os.environ["XLA_FLAGS"]
+        assert "--preexisting" not in os.environ["XLA_FLAGS"]
+
+    def test_overwrites_preexisting_libtpu_args(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("LIBTPU_INIT_ARGS", "--preexisting")
+        runner = _import_runner()
+        runner.setup_xla_flags(tmp_path)
+        assert "--xla_jf_dump_to=" in os.environ["LIBTPU_INIT_ARGS"]
+        assert "--preexisting" not in os.environ["LIBTPU_INIT_ARGS"]
 
 
 # ===================================================================

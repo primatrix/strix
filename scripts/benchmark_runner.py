@@ -119,25 +119,27 @@ def setup_ir_dump_dirs(root):
 
 
 def setup_xla_flags(ir_dump_root):
-    """Set XLA_FLAGS and LIBTPU_INIT_ARGS if not already present."""
+    """Unconditionally set XLA_FLAGS and LIBTPU_INIT_ARGS.
+
+    Python is the single source of truth for these flags; the Job YAML
+    no longer predefines them. Called only when --no-ir-dump is absent.
+    """
     ir_dump_root = pathlib.Path(ir_dump_root)
 
-    if "XLA_FLAGS" not in os.environ:
-        os.environ["XLA_FLAGS"] = (
-            f"--xla_dump_hlo_as_text --xla_dump_to={ir_dump_root / 'hlo'}"
-        )
+    os.environ["XLA_FLAGS"] = (
+        f"--xla_dump_hlo_as_text --xla_dump_to={ir_dump_root / 'hlo'}"
+    )
 
-    if "LIBTPU_INIT_ARGS" not in os.environ:
-        os.environ["LIBTPU_INIT_ARGS"] = " ".join([
-            "--xla_enable_custom_call_region_trace=true",
-            "--xla_xprof_register_llo_debug_info=true",
-            f"--xla_jf_dump_to={ir_dump_root / 'llo'}",
-            "--xla_jf_dump_hlo_text=true",
-            "--xla_jf_dump_llo_text=true",
-            "--xla_jf_emit_annotations=true",
-            f"--xla_mosaic_dump_to={ir_dump_root / 'mosaic'}",
-            "--xla_mosaic_enable_llo_source_annotations=true",
-        ])
+    os.environ["LIBTPU_INIT_ARGS"] = " ".join([
+        "--xla_enable_custom_call_region_trace=true",
+        "--xla_xprof_register_llo_debug_info=true",
+        f"--xla_jf_dump_to={ir_dump_root / 'llo'}",
+        "--xla_jf_dump_hlo_text=true",
+        "--xla_jf_dump_llo_text=true",
+        "--xla_jf_emit_annotations=true",
+        f"--xla_mosaic_dump_to={ir_dump_root / 'mosaic'}",
+        "--xla_mosaic_enable_llo_source_annotations=true",
+    ])
 
 
 def import_kernel(module_path):

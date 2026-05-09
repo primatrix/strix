@@ -323,3 +323,17 @@ class TestYamlEmptyChunkSize:
         container = rendered["spec"]["template"]["spec"]["containers"][0]
         env_map = {e["name"]: e["value"] for e in container["env"]}
         assert env_map["CHUNK_SIZE"] == ""
+
+
+class TestYamlIrDumpEnvStripped:
+    """benchmark_job.yaml must not hardcode XLA_FLAGS / LIBTPU_INIT_ARGS."""
+
+    def test_no_hardcoded_xla_flags(self):
+        content = _YAML_TEMPLATE.read_text()
+        assert "name: XLA_FLAGS" not in content
+        assert "--xla_dump_hlo_as_text" not in content
+
+    def test_no_hardcoded_libtpu_init_args(self):
+        content = _YAML_TEMPLATE.read_text()
+        assert "name: LIBTPU_INIT_ARGS" not in content
+        assert "--xla_jf_dump_to" not in content
