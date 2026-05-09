@@ -105,20 +105,18 @@ def _dma_double_buffer_load_kernel(
     # Prefetch first tile into buffer 0
     start_fetch_w(0, 0, 0)
 
-    load_idx = 0
     checksum = jnp.float32(0.0)
 
-    def body(args):
-        load_idx, checksum, bw_sem_id = args
+    def body(i, carry):
+        checksum, bw_sem_id = carry
 
         # Wait for current buffer to be ready
         wait_fetch_w(bw_sem_id)
 
         # Compute next tile coordinates (wraps around for repeated loads)
         next_bw_sem_id = 1 - bw_sem_id
-        next_load_idx = load_idx + 1
-        next_bf_id = next_load_idx % num_bf
-        next_bd_id = (next_load_idx // num_bf) % num_bd
+        next_bf_id = (i + 1) % num_bf
+        next_bd_id = ((i + 1) // num_bf) % num_bd
 
         # Always start next DMA fetch — on the final iteration this
         # produces one extra unused transfer, but avoids jax.lax.cond
@@ -129,14 +127,11 @@ def _dma_double_buffer_load_kernel(
         tile_checksum = consume_weight(bw_sem_id)
         checksum = checksum + tile_checksum
 
-        return (next_load_idx, checksum, next_bw_sem_id)
+        return (checksum, next_bw_sem_id)
 
     # Run the double-buffered load loop
-    final_load_idx, final_checksum, _ = jax.lax.fori_loop(
-        0, num_loads,
-        lambda i, args: body(args),
-        (load_idx, checksum, 0)
-    )
+    final_checksum, _ = jax.lax.fori_loop(
+        0, num_loads, body, (checksum, 0))
 
     # Write checksum to output (rank-1 to satisfy Pallas TPU block rank constraint)
     output_hbm[0] = final_checksum
