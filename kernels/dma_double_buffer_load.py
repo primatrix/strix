@@ -11,6 +11,7 @@ import functools
 
 import jax
 import jax.numpy as jnp
+from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
@@ -37,10 +38,10 @@ config = {
 def _dma_double_buffer_load_kernel(
     w_hbm,
     output_hbm,
-    # Scratch buffers (VMEM).
     b_w_x2_vmem,
-    # Semaphores.
+    out_staging,   # VMEM staging for output DMA
     weight_sems,
+    output_sem,    # DMA semaphore for output write
     *,
     bf: int,
     bd: int,
@@ -52,15 +53,6 @@ def _dma_double_buffer_load_kernel(
     - Load weight tiles from HBM into VMEM using double-buffering
     - Ping-pong between two VMEM buffers (bw_sem_id = 0/1)
     - Measure pure DMA throughput without compute
-
-    Args:
-        w_hbm: Weight matrix in HBM [hidden_size, intermediate_size]
-        output_hbm: Scalar output ref for checksum
-        b_w_x2_vmem: Double-buffer VMEM scratch [2, t_packing, bd_per_pack, bf]
-        weight_sems: DMA semaphores [2]
-        bf: Intermediate dimension block size
-        bd: Hidden dimension block size
-        num_loads: Number of weight tiles to load (simulates expert iteration)
     """
     hidden_size = w_hbm.shape[0]
     intermediate_size = w_hbm.shape[1]
@@ -91,8 +83,53 @@ def _dma_double_buffer_load_kernel(
             sem=weight_sems.at[bw_sem_id],
         ).wait()
 
-    # -- Minimal test: no DMA, just write to output --
-    output_hbm[0] = jnp.float32(0.0)
+    def consume_weight(bw_sem_id):
+        """Simulate weight consumption (read from VMEM)."""
+        return jnp.sum(b_w_x2_vmem[bw_sem_id].astype(jnp.float32))
+
+    # -- Double-buffered load loop --
+    # Prefetch first tile into buffer 0
+    start_fetch_w(0, 0, 0)
+
+    load_idx = 0
+    checksum = jnp.float32(0.0)
+
+    def body(args):
+        load_idx, checksum, bw_sem_id = args
+
+        wait_fetch_w(bw_sem_id)
+
+        next_bw_sem_id = 1 - bw_sem_id
+        next_load_idx = load_idx + 1
+        next_bf_id = next_load_idx % num_bf
+        next_bd_id = (next_load_idx // num_bf) % num_bd
+
+        start_fetch_w(next_bw_sem_id, next_bf_id, next_bd_id)
+
+        tile_checksum = consume_weight(bw_sem_id)
+        checksum = checksum + tile_checksum
+
+        return (next_load_idx, checksum, next_bw_sem_id)
+
+    final_load_idx, final_checksum, _ = lax.fori_loop(
+        0, num_loads,
+        lambda i, args: body(args),
+        (load_idx, checksum, 0),
+        unroll=False,
+    )
+
+    # Write checksum to HBM output via DMA (direct HBM stores not supported)
+    out_staging[0] = final_checksum
+    pltpu.make_async_copy(
+        src_ref=out_staging.at[pl.ds(0, 1)],
+        dst_ref=output_hbm.at[pl.ds(0, 1)],
+        sem=output_sem.at[0],
+    ).start()
+    pltpu.make_async_copy(
+        src_ref=output_hbm.at[pl.ds(0, 1)],
+        dst_ref=output_hbm.at[pl.ds(0, 1)],
+        sem=output_sem.at[0],
+    ).wait()
 
 
 def dma_double_buffer_load(
@@ -127,7 +164,9 @@ def dma_double_buffer_load(
         out_specs=pl.BlockSpec((1,), lambda i: (0,), memory_space=pltpu.MemorySpace.HBM),
         scratch_shapes=[
             pltpu.VMEM((2, t_packing, bd_per_pack, bf), w_dtype),  # b_w_x2_vmem
+            pltpu.VMEM((1,), jnp.float32),  # out_staging
             pltpu.SemaphoreType.DMA((2,)),  # weight_sems
+            pltpu.SemaphoreType.DMA((1,)),  # output_sem
         ],
     )
 
