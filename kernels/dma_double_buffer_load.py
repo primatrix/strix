@@ -93,9 +93,10 @@ def _dma_double_buffer_load_kernel(
 
     def consume_weight(bw_sem_id):
         """Simulate weight consumption (read from VMEM, write checksum to HBM)."""
-        # Sum the weight tile to force VMEM read
-        tile_sum = jnp.sum(b_w_x2_vmem[bw_sem_id].astype(jnp.float32))
-        return tile_sum
+        # Sum the weight tile to force VMEM read.
+        # Cast scalar result to f32 (not the tile) to avoid intermediate HBM allocation.
+        tile_sum_bf16 = jnp.sum(b_w_x2_vmem[bw_sem_id])
+        return tile_sum_bf16.astype(jnp.float32)
 
     # -- Double-buffered load loop --
     # Eliminates jax.lax.cond inside fori_loop to avoid Pallas lowering
