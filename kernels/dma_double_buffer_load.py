@@ -102,24 +102,12 @@ def _dma_double_buffer_load_kernel(
     # Prefetch first tile into buffer 0
     start_fetch_w(0, 0, 0)
 
-    checksum = jnp.float32(0.0)
+    # Minimal fori_loop test — no DMA inside loop, just counter
+    checksum = jnp.int32(0)
 
     def body(i, args):
         checksum, = args
-        bw_sem_id = i & 1  # alternates 0, 1, 0, 1, ...
-
-        wait_fetch_w(bw_sem_id)
-
-        next_i = i + 1
-        next_sem_id = next_i & 1
-        next_bf_id = next_i % num_bf
-        next_bd_id = (next_i // num_bf) % num_bd
-
-        start_fetch_w(next_sem_id, next_bf_id, next_bd_id)
-
-        checksum = checksum + jnp.float32(1.0)
-
-        return (checksum,)
+        return (checksum + 1,)
 
     final_checksum, = lax.fori_loop(
         0, num_loads, body, (checksum,),
@@ -127,7 +115,7 @@ def _dma_double_buffer_load_kernel(
     )
 
     # Write checksum to output (rank-1 to satisfy Pallas TPU block rank constraint)
-    output_hbm[0] = final_checksum
+    output_hbm[0] = jnp.float32(final_checksum)
 
 
 def dma_double_buffer_load(
