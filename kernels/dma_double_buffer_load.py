@@ -156,7 +156,6 @@ def dma_double_buffer_load(
 
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
-        grid=(1,),
         in_specs=[hbm],
         out_specs=hbm,
         scratch_shapes=[
@@ -174,9 +173,6 @@ def dma_double_buffer_load(
         ),
         grid_spec=grid_spec,
         out_shape=jax.ShapeDtypeStruct((1,), jnp.float32),
-        compiler_params=pltpu.CompilerParams(
-            dimension_semantics=("arbitrary",),
-        ),
     )(w)
 
     return result[0]
