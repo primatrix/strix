@@ -11,6 +11,7 @@ import functools
 
 import jax
 import jax.numpy as jnp
+from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
@@ -93,9 +94,20 @@ def _dma_double_buffer_load_kernel(
         return tile_sum
 
     # -- Double-buffered load loop --
-    # Eliminates jax.lax.cond inside fori_loop to avoid Pallas lowering
-    # KeyError (JAX 0.10.0 bug: cond branches create inconsistent Jaxpr
-    # variable environments under scan/fori_loop lowering).
+    # Use lax.cond to dispatch bw_sem_id to a static 0 or 1 before
+    # accessing Pallas Refs.  Tracing a dynamic (loop-carried) integer
+    # into Ref.at[...] or Ref[...] produces a Jaxpr variable mismatch
+    # → KeyError in JAX 0.10.0.  The cond branches are structurally
+    # symmetric (same body, different static values) so the Jaxpr
+    # environments stay consistent.
+
+    def with_static_bw(bw_sem_id, fn):
+        return lax.cond(
+            bw_sem_id == 0,
+            lambda _: fn(0),
+            lambda _: fn(1),
+            operand=None,
+        )
 
     # Prefetch first tile into buffer 0
     start_fetch_w(0, 0, 0)
@@ -106,31 +118,29 @@ def _dma_double_buffer_load_kernel(
     def body(args):
         load_idx, checksum, bw_sem_id = args
 
-        # Wait for current buffer to be ready
-        wait_fetch_w(bw_sem_id)
+        def loop_body(bw_sem_id_static):
+            # bw_sem_id_static is 0 or 1 (Python int, not a tracer)
+            wait_fetch_w(bw_sem_id_static)
 
-        # Compute next tile coordinates (wraps around for repeated loads)
-        next_bw_sem_id = 1 - bw_sem_id
-        next_load_idx = load_idx + 1
-        next_bf_id = next_load_idx % num_bf
-        next_bd_id = (next_load_idx // num_bf) % num_bd
+            next_bw_sem_id = 1 - bw_sem_id_static
+            next_load_idx = load_idx + 1
+            next_bf_id = next_load_idx % num_bf
+            next_bd_id = (next_load_idx // num_bf) % num_bd
 
-        # Always start next DMA fetch — on the final iteration this
-        # produces one extra unused transfer, but avoids jax.lax.cond
-        # which triggers a Jaxpr KeyError during Pallas lowering.
-        start_fetch_w(next_bw_sem_id, next_bf_id, next_bd_id)
+            start_fetch_w(next_bw_sem_id, next_bf_id, next_bd_id)
 
-        # Consume current weight tile
-        tile_checksum = consume_weight(bw_sem_id)
-        checksum = checksum + tile_checksum
+            tile_checksum = consume_weight(bw_sem_id_static)
+            checksum = checksum + tile_checksum
 
-        return (next_load_idx, checksum, next_bw_sem_id)
+            return (next_load_idx, checksum, next_bw_sem_id)
 
-    # Run the double-buffered load loop
-    final_load_idx, final_checksum, _ = jax.lax.fori_loop(
+        return with_static_bw(bw_sem_id, loop_body)
+
+    final_load_idx, final_checksum, _ = lax.fori_loop(
         0, num_loads,
         lambda i, args: body(args),
-        (load_idx, checksum, 0)
+        (load_idx, checksum, 0),
+        unroll=False,
     )
 
     # Write checksum to output (rank-1 to satisfy Pallas TPU block rank constraint)
