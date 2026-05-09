@@ -19,6 +19,13 @@ import time
 
 IR_DUMP_SUBDIRS = ("hlo", "llo", "mosaic")
 _GIB = 1024 ** 3
+_DTYPE_BYTES = {
+    "bfloat16": 2,
+    "float16": 2,
+    "float8_e4m3fn": 1,
+    "float8_e5m2": 1,
+    "float32": 4,
+}
 
 
 def is_coordinator():
@@ -585,7 +592,7 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
     if args.sweep:
         check_kernel_compat(kernel_fn, module_name=args.kernel)
         dtype = str(config.get("weight_dtype", "bfloat16"))
-        dtype_bytes = {"bfloat16": 2, "float16": 2, "float8_e4m3fn": 1, "float8_e5m2": 1, "float32": 4}.get(dtype, 2)
+        dtype_bytes = _DTYPE_BYTES.get(dtype, 2)
         sweep_configs = parse_sweep(args.sweep, args.total_bytes, dtype_bytes)
 
         records = list(run_sweep(
