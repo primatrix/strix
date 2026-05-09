@@ -91,19 +91,11 @@ def _dma_double_buffer_load_kernel(
             sem=weight_sems.at[bw_sem_id],
         ).wait()
 
-    # -- Double-buffered load loop (DMA only, no compute) --
-    # Prefetch first tile into buffer 0
+    # -- DMA test: unrolled double-buffering (no fori_loop) --
     start_fetch_w(0, 0, 0)
-
-    def body(i, bw_sem_id):
-        wait_fetch_w(bw_sem_id)
-        next_bw_sem_id = 1 - bw_sem_id
-        next_bf_id = (i + 1) % num_bf
-        next_bd_id = ((i + 1) // num_bf) % num_bd
-        start_fetch_w(next_bw_sem_id, next_bf_id, next_bd_id)
-        return next_bw_sem_id
-
-    _ = jax.lax.fori_loop(0, num_loads, body, 0)
+    wait_fetch_w(0)
+    start_fetch_w(1, 1, 0)
+    wait_fetch_w(1)
 
     output_hbm[0] = jnp.float32(1.0)
 
