@@ -45,6 +45,12 @@ spec:
               value: "${JOB_NAME}"
             - name: GCS_BUCKET
               value: "${GCS_BUCKET}"
+            - name: SWEEP
+              value: "${SWEEP}"
+            - name: TOTAL_BYTES
+              value: "${TOTAL_BYTES}"
+            - name: NO_IR_DUMP
+              value: "${NO_IR_DUMP}"
           resources:
             limits:
               google.com/tpu: ${TPU_CHIPS}

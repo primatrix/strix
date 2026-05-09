@@ -40,6 +40,9 @@ def _render_yaml(
     tpu_topology: str = "2x2x1",
     tpu_chips: str | None = None,
     gcs_bucket: str = "gs://poc_profile/",
+    sweep: str = "",
+    total_bytes: str = "",
+    no_ir_dump: str = "",
 ) -> str:
     """Render the YAML template by substituting ${VAR} placeholders.
 
@@ -65,6 +68,9 @@ def _render_yaml(
         "TPU_CHIPS": tpu_chips,
         "TPU_ACCELERATOR": tpu_accelerator,
         "GCS_BUCKET": gcs_bucket,
+        "SWEEP": sweep,
+        "TOTAL_BYTES": total_bytes,
+        "NO_IR_DUMP": no_ir_dump,
     }
     text = _YAML_TEMPLATE.read_text()
     for key, value in mapping.items():
@@ -369,3 +375,21 @@ class TestShellSweepFlags:
         assert result.returncode != 0
         combined = result.stdout + result.stderr
         assert "mutually exclusive" in combined.lower(), combined
+
+
+class TestYamlSweepEnv:
+    """benchmark_job.yaml exposes SWEEP/TOTAL_BYTES/NO_IR_DUMP envs."""
+
+    def test_template_has_sweep_placeholder(self):
+        assert "${SWEEP}" in _YAML_TEMPLATE.read_text()
+
+    def test_template_has_total_bytes_placeholder(self):
+        assert "${TOTAL_BYTES}" in _YAML_TEMPLATE.read_text()
+
+    def test_template_has_no_ir_dump_placeholder(self):
+        assert "${NO_IR_DUMP}" in _YAML_TEMPLATE.read_text()
+
+    def test_rendered_yaml_has_sweep_env(self):
+        rendered = _render_yaml(sweep="2048:1024,1024:512")
+        assert "name: SWEEP" in rendered
+        assert '"2048:1024,1024:512"' in rendered or "2048:1024,1024:512" in rendered
