@@ -872,3 +872,64 @@ class TestMainIntegration:
         data = json.loads(result_path.read_text())
         assert data["kernel"] == "kernels.env_test"
         assert data["job_name"] == "env-job"
+
+
+class TestNoIrDumpFlag:
+    """--no-ir-dump disables IR dump setup in main()."""
+
+    def test_parses_no_ir_dump_flag(self):
+        runner = _import_runner()
+        args = runner.parse_args(["--kernel", "k", "--shape", "1", "--no-ir-dump"])
+        assert args.no_ir_dump is True
+
+    def test_no_ir_dump_defaults_false(self):
+        runner = _import_runner()
+        args = runner.parse_args(["--kernel", "k", "--shape", "1"])
+        assert args.no_ir_dump is False
+
+    def test_no_ir_dump_env_fallback(self, monkeypatch):
+        monkeypatch.setenv("NO_IR_DUMP", "1")
+        runner = _import_runner()
+        args = runner.parse_args(["--kernel", "k", "--shape", "1"])
+        assert args.no_ir_dump is True
+
+    def test_no_ir_dump_env_zero_means_false(self, monkeypatch):
+        monkeypatch.setenv("NO_IR_DUMP", "")
+        runner = _import_runner()
+        args = runner.parse_args(["--kernel", "k", "--shape", "1"])
+        assert args.no_ir_dump is False
+
+
+class TestNoIrDumpSkipsSetup:
+    """main() skips setup_xla_flags when args.no_ir_dump is True."""
+
+    def test_main_skips_setup_when_no_ir_dump(self, tmp_path, monkeypatch):
+        """--no-ir-dump prevents setup_xla_flags from being called."""
+        monkeypatch.delenv("XLA_FLAGS", raising=False)
+        monkeypatch.delenv("LIBTPU_INIT_ARGS", raising=False)
+        runner = _import_runner()
+
+        # Stub out everything past IR-dump setup so we exit early.
+        with patch.object(runner, "setup_xla_flags") as mock_setup, \
+             patch.object(runner, "import_kernel", side_effect=SystemExit(0)):
+            with pytest.raises(SystemExit):
+                runner.main([
+                    "--kernel", "k", "--shape", "1",
+                    "--output-dir", str(tmp_path), "--no-ir-dump",
+                ])
+            mock_setup.assert_not_called()
+
+    def test_main_calls_setup_when_ir_dump_enabled(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("XLA_FLAGS", raising=False)
+        monkeypatch.delenv("LIBTPU_INIT_ARGS", raising=False)
+        monkeypatch.delenv("NO_IR_DUMP", raising=False)
+        runner = _import_runner()
+
+        with patch.object(runner, "setup_xla_flags") as mock_setup, \
+             patch.object(runner, "import_kernel", side_effect=SystemExit(0)):
+            with pytest.raises(SystemExit):
+                runner.main([
+                    "--kernel", "k", "--shape", "1",
+                    "--output-dir", str(tmp_path),
+                ])
+            mock_setup.assert_called_once()

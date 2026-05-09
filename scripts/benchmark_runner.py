@@ -95,6 +95,12 @@ def parse_args(argv=None):
         default=os.environ.get("OUTPUT_DIR") or os.environ.get("ARTIFACT_LOCAL_DIR") or "/tmp/operator-artifact",
         help="Operator-optimization artifact root directory",
     )
+    p.add_argument(
+        "--no-ir-dump",
+        action="store_true",
+        default=bool(os.environ.get("NO_IR_DUMP", "")),
+        help="Disable HLO/LLO/Mosaic IR dump (default: enabled)",
+    )
 
     args = p.parse_args(argv)
 
@@ -301,8 +307,11 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
     print(f"[benchmark] bf={args.bf}, bd={args.bd}")
     print(f"[benchmark] Output dir: {output_dir}")
 
-    setup_ir_dump_dirs(ir_dump_root)
-    setup_xla_flags(ir_dump_root)
+    if not args.no_ir_dump:
+        setup_ir_dump_dirs(ir_dump_root)
+        setup_xla_flags(ir_dump_root)
+    else:
+        print("[benchmark] IR dump disabled (--no-ir-dump)")
 
     kernel_fn, config = import_kernel(args.kernel)
 
