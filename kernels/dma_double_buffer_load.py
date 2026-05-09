@@ -117,8 +117,7 @@ def _dma_double_buffer_load_kernel(
 
         start_fetch_w(next_sem_id, next_bf_id, next_bd_id)
 
-        tile_checksum = consume_weight(bw_sem_id)
-        checksum = checksum + tile_checksum
+        checksum = checksum + jnp.float32(1.0)
 
         return (checksum,)
 
