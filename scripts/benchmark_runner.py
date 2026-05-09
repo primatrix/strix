@@ -320,6 +320,111 @@ def write_benchmark_result(timings, kernel, shape, job_name, config, output_path
     return result
 
 
+def build_sweep_record(
+    *,
+    kernel: str,
+    shape: str,
+    job_name: str,
+    config_index: int,
+    cfg: dict,
+    total_bytes: int,
+    dtype: str,
+    timings: list[float] | None,
+    status: str,
+    error: str | None,
+) -> dict:
+    """Construct one JSONL record for a sweep config (status ok or failed)."""
+    record = {
+        "schema_version": 2,
+        "kernel": kernel,
+        "shape": shape,
+        "job_name": job_name,
+        "config_index": config_index,
+        "config": {"bf": cfg["bf"], "bd": cfg["bd"], "num_loads": cfg["num_loads"]},
+        "derived": {
+            "tile_bytes": cfg["tile_bytes"],
+            "total_bytes": total_bytes,
+            "dtype": dtype,
+        },
+        "status": status,
+        "num_runs": len(timings) if timings else 0,
+        "timings_ms": [t * 1000 for t in timings] if timings else None,
+        "statistics": None,
+        "throughput": None,
+        "error": error,
+    }
+    if timings:
+        median_s = statistics.median(timings)
+        min_s = min(timings)
+        record["statistics"] = {
+            "mean_ms": statistics.mean(timings) * 1000,
+            "median_ms": median_s * 1000,
+            "stdev_ms": statistics.stdev(timings) * 1000 if len(timings) > 1 else 0.0,
+            "min_ms": min_s * 1000,
+            "max_ms": max(timings) * 1000,
+        }
+        record["throughput"] = {
+            "gib_per_s_median": total_bytes / median_s / (1024 ** 3),
+            "gib_per_s_max": total_bytes / min_s / (1024 ** 3),
+        }
+    return record
+
+
+def run_sweep(
+    kernel_fn,
+    config: dict,
+    sweep: list[dict],
+    *,
+    num_warmup: int,
+    num_runs: int,
+    total_bytes: int,
+    dtype: str,
+    kernel: str,
+    shape: str,
+    job_name: str,
+):
+    """Execute each sweep config in sequence, yielding one JSONL record per config.
+
+    A failing config (compile error, runtime exception) does not abort
+    the rest of the sweep; its record is emitted with status='failed'.
+    """
+    for idx, cfg in enumerate(sweep):
+        kwargs = dict(config.get("default_shape", {}))
+        kwargs["bf"] = cfg["bf"]
+        kwargs["bd"] = cfg["bd"]
+        kwargs["num_loads"] = cfg["num_loads"]
+        try:
+            run_fn = kernel_fn(**kwargs)
+
+            for _ in range(num_warmup):
+                result = run_fn()
+                if hasattr(result, "block_until_ready"):
+                    result.block_until_ready()
+
+            timings = []
+            for _ in range(num_runs):
+                start = time.perf_counter()
+                result = run_fn()
+                if hasattr(result, "block_until_ready"):
+                    result.block_until_ready()
+                timings.append(time.perf_counter() - start)
+
+            record = build_sweep_record(
+                kernel=kernel, shape=shape, job_name=job_name,
+                config_index=idx, cfg=cfg, total_bytes=total_bytes, dtype=dtype,
+                timings=timings, status="ok", error=None,
+            )
+        except Exception as e:  # noqa: BLE001
+            err_msg = f"{type(e).__name__}: {e}"
+            print(f"[benchmark] sweep[{idx}] (bf={cfg['bf']}, bd={cfg['bd']}) FAILED: {err_msg}")
+            record = build_sweep_record(
+                kernel=kernel, shape=shape, job_name=job_name,
+                config_index=idx, cfg=cfg, total_bytes=total_bytes, dtype=dtype,
+                timings=None, status="failed", error=err_msg,
+            )
+        yield record
+
+
 def _write_artifact_manifest(output_dir, args, config):
     """Write manifest.json to the artifact root (operator-optimization contract)."""
     import jax

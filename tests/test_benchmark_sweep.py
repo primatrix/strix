@@ -201,3 +201,97 @@ class TestCheckKernelCompat:
             runner.check_kernel_compat(kernel_fn, module_name="fake")
         msg = str(exc.value)
         assert "bd" in msg and "bf" in msg and "num_loads" in msg
+
+
+class TestBuildSweepRecord:
+    def test_ok_record_has_timings_and_stats(self):
+        runner = _import_runner()
+        cfg = {"bf": 2048, "bd": 1024, "num_loads": 16, "tile_bytes": 4194304}
+        rec = runner.build_sweep_record(
+            kernel="k", shape="8192,2048", job_name="j",
+            config_index=0, cfg=cfg, total_bytes=_TOTAL, dtype="bfloat16",
+            timings=[0.001, 0.002, 0.003],
+            status="ok",
+            error=None,
+        )
+        assert rec["status"] == "ok"
+        assert rec["config"] == {"bf": 2048, "bd": 1024, "num_loads": 16}
+        assert rec["derived"]["tile_bytes"] == 4194304
+        assert rec["num_runs"] == 3
+        assert rec["statistics"]["median_ms"] == pytest.approx(2.0)
+        # GiB/s = total_bytes / median_s / 1024**3
+        expected = _TOTAL / 0.002 / (1024 ** 3)
+        assert rec["throughput"]["gib_per_s_median"] == pytest.approx(expected)
+
+    def test_failed_record_has_null_timings(self):
+        runner = _import_runner()
+        cfg = {"bf": 2048, "bd": 1024, "num_loads": 16, "tile_bytes": 4194304}
+        rec = runner.build_sweep_record(
+            kernel="k", shape="8192,2048", job_name="j",
+            config_index=1, cfg=cfg, total_bytes=_TOTAL, dtype="bfloat16",
+            timings=None,
+            status="failed",
+            error="RuntimeError: OOM",
+        )
+        assert rec["status"] == "failed"
+        assert rec["timings_ms"] is None
+        assert rec["statistics"] is None
+        assert rec["throughput"] is None
+        assert rec["error"] == "RuntimeError: OOM"
+
+
+class TestRunSweep:
+    def test_runs_every_config_and_records_timings(self):
+        runner = _import_runner()
+        calls = []
+
+        def fake_kernel_fn(**kwargs):
+            calls.append(kwargs)
+
+            def run():
+                return 0.0  # scalar without block_until_ready
+
+            return run
+
+        fake_config = {"default_shape": {"hidden_size": 8192, "intermediate_size": 2048}}
+        sweep = [
+            {"bf": 2048, "bd": 1024, "num_loads": 16, "tile_bytes": 4194304},
+            {"bf": 1024, "bd": 512, "num_loads": 128, "tile_bytes": 1048576},
+        ]
+
+        records = list(runner.run_sweep(
+            fake_kernel_fn, fake_config, sweep,
+            num_warmup=1, num_runs=2, total_bytes=_TOTAL, dtype="bfloat16",
+            kernel="k", shape="8192,2048", job_name="j",
+        ))
+        assert len(records) == 2
+        assert all(r["status"] == "ok" for r in records)
+        # kernel_fn receives bf/bd/num_loads via kwargs
+        assert calls[0]["bf"] == 2048 and calls[0]["bd"] == 1024 and calls[0]["num_loads"] == 16
+        assert calls[1]["bf"] == 1024 and calls[1]["bd"] == 512 and calls[1]["num_loads"] == 128
+
+    def test_failing_config_does_not_abort_sweep(self):
+        runner = _import_runner()
+        attempts = []
+
+        def fake_kernel_fn(**kwargs):
+            attempts.append(kwargs)
+            if kwargs["bf"] == 1024:
+                raise RuntimeError("boom")
+            return lambda: 0.0
+
+        fake_config = {"default_shape": {}}
+        sweep = [
+            {"bf": 2048, "bd": 1024, "num_loads": 16, "tile_bytes": 4194304},
+            {"bf": 1024, "bd": 512, "num_loads": 128, "tile_bytes": 1048576},
+            {"bf": 2048, "bd": 512, "num_loads": 32, "tile_bytes": 2097152},
+        ]
+
+        records = list(runner.run_sweep(
+            fake_kernel_fn, fake_config, sweep,
+            num_warmup=1, num_runs=1, total_bytes=_TOTAL, dtype="bfloat16",
+            kernel="k", shape="8192,2048", job_name="j",
+        ))
+        assert [r["status"] for r in records] == ["ok", "failed", "ok"]
+        assert "boom" in records[1]["error"]
+        assert len(attempts) == 3
