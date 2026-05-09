@@ -179,7 +179,7 @@ def dma_double_buffer_load(
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
         ],
-        out_specs=pl.BlockSpec((1,), lambda: (0,), memory_space=pltpu.MemorySpace.HBM),
+        out_specs=pl.BlockSpec((1,), lambda i: (0,), memory_space=pltpu.MemorySpace.HBM),
         scratch_shapes=[
             pltpu.VMEM((2, t_packing, bd_per_pack, bf), w_dtype),  # b_w_x2_vmem
             pltpu.SemaphoreType.DMA((2,)),  # weight_sems
