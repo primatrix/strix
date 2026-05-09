@@ -40,6 +40,9 @@ def _render_yaml(
     tpu_topology: str = "2x2x1",
     tpu_chips: str | None = None,
     gcs_bucket: str = "gs://poc_profile/",
+    sweep: str = "",
+    total_bytes: str = "",
+    no_ir_dump: str = "",
 ) -> str:
     """Render the YAML template by substituting ${VAR} placeholders.
 
@@ -65,6 +68,9 @@ def _render_yaml(
         "TPU_CHIPS": tpu_chips,
         "TPU_ACCELERATOR": tpu_accelerator,
         "GCS_BUCKET": gcs_bucket,
+        "SWEEP": sweep,
+        "TOTAL_BYTES": total_bytes,
+        "NO_IR_DUMP": no_ir_dump,
     }
     text = _YAML_TEMPLATE.read_text()
     for key, value in mapping.items():
@@ -323,3 +329,70 @@ class TestYamlEmptyChunkSize:
         container = rendered["spec"]["template"]["spec"]["containers"][0]
         env_map = {e["name"]: e["value"] for e in container["env"]}
         assert env_map["CHUNK_SIZE"] == ""
+
+
+class TestYamlIrDumpEnvStripped:
+    """benchmark_job.yaml must not hardcode XLA_FLAGS / LIBTPU_INIT_ARGS."""
+
+    def test_no_hardcoded_xla_flags(self):
+        content = _YAML_TEMPLATE.read_text()
+        assert "name: XLA_FLAGS" not in content
+        assert "--xla_dump_hlo_as_text" not in content
+
+    def test_no_hardcoded_libtpu_init_args(self):
+        content = _YAML_TEMPLATE.read_text()
+        assert "name: LIBTPU_INIT_ARGS" not in content
+        assert "--xla_jf_dump_to" not in content
+
+
+class TestShellSweepFlags:
+    """run_benchmark.sh forwards --sweep/--total-bytes/--no-ir-dump."""
+
+    def test_sweep_flag_in_help(self):
+        result = subprocess.run(
+            ["bash", str(_SHELL_SCRIPT), "-h"],
+            capture_output=True, text=True,
+        )
+        combined = result.stdout + result.stderr
+        assert "--sweep" in combined
+        assert "--total-bytes" in combined
+        assert "--no-ir-dump" in combined
+
+    def test_sweep_mutex_with_bf_fails(self):
+        """Shell exits non-zero when --sweep and --bf are both given.
+
+        The mutex check runs before preflight, so no KUBECONFIG override is
+        needed. Assertion is tight on the exact error phrase to catch a
+        regression where the mutex is removed (preflight would then fail
+        with a different message).
+        """
+        result = subprocess.run(
+            ["bash", str(_SHELL_SCRIPT), "kernels.dma_double_buffer_load",
+             "--shape", "8192,2048",
+             "--sweep", "2048:1024", "--bf", "2048"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode != 0
+        combined = result.stdout + result.stderr
+        assert "mutually exclusive" in combined.lower(), combined
+
+
+class TestYamlSweepEnv:
+    """benchmark_job.yaml exposes SWEEP/TOTAL_BYTES/NO_IR_DUMP envs."""
+
+    def test_template_has_sweep_placeholder(self):
+        assert "${SWEEP}" in _YAML_TEMPLATE.read_text()
+
+    def test_template_has_total_bytes_placeholder(self):
+        assert "${TOTAL_BYTES}" in _YAML_TEMPLATE.read_text()
+
+    def test_template_has_no_ir_dump_placeholder(self):
+        assert "${NO_IR_DUMP}" in _YAML_TEMPLATE.read_text()
+
+    def test_rendered_yaml_has_sweep_env(self):
+        import yaml
+        rendered = _render_yaml(sweep="2048:1024,1024:512")
+        parsed = yaml.safe_load(rendered)
+        env = parsed["spec"]["template"]["spec"]["containers"][0]["env"]
+        env_map = {e["name"]: e["value"] for e in env}
+        assert env_map["SWEEP"] == "2048:1024,1024:512"

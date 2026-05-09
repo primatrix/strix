@@ -23,6 +23,9 @@ NUM_TOKENS=""
 EP_SIZE=""
 BF=""
 BD=""
+SWEEP=""
+TOTAL_BYTES=""
+NO_IR_DUMP=""
 JOB_TIMEOUT=${JOB_TIMEOUT:-7200}
 
 # ---- Usage ----
@@ -44,6 +47,9 @@ Options:
   --ep-size <n>        Expert parallelism size (overrides kernel default)
   --bf <n>             Intermediate dimension block size
   --bd <n>             Hidden dimension block size
+  --sweep <spec>       Comma-separated bf:bd pairs, e.g. "2048:1024,1024:512"
+  --total-bytes <n>    Target total DMA bytes per sweep config (default: 67108864 = 64 MiB)
+  --no-ir-dump         Disable HLO/LLO/Mosaic IR dump
   -h, --help           Show this help
 EOF
   exit 1
@@ -101,6 +107,18 @@ while [[ $# -gt 0 ]]; do
       BD="${2:?--bd requires a value}"
       shift 2
       ;;
+    --sweep)
+      SWEEP="${2:?--sweep requires a value}"
+      shift 2
+      ;;
+    --total-bytes)
+      TOTAL_BYTES="${2:?--total-bytes requires a value}"
+      shift 2
+      ;;
+    --no-ir-dump)
+      NO_IR_DUMP="1"
+      shift
+      ;;
     -h|--help)
       usage
       ;;
@@ -114,6 +132,12 @@ done
 if [[ -z "${SHAPE}" && -z "${COMPILE_ONLY}" ]]; then
   echo "Error: --shape is required (unless --compile-only)" >&2
   usage
+fi
+
+# ---- Mutex: --sweep vs --bf/--bd ----
+if [[ -n "${SWEEP}" && ( -n "${BF}" || -n "${BD}" ) ]]; then
+  echo "Error: --sweep is mutually exclusive with --bf/--bd" >&2
+  exit 1
 fi
 
 # ---- Set runner command ----
@@ -130,6 +154,15 @@ else
   fi
   if [[ -n "${BD}" ]]; then
     RUNNER_CMD="${RUNNER_CMD} --bd ${BD}"
+  fi
+  if [[ -n "${SWEEP}" ]]; then
+    RUNNER_CMD="${RUNNER_CMD} --sweep ${SWEEP}"
+  fi
+  if [[ -n "${TOTAL_BYTES}" ]]; then
+    RUNNER_CMD="${RUNNER_CMD} --total-bytes ${TOTAL_BYTES}"
+  fi
+  if [[ -n "${NO_IR_DUMP}" ]]; then
+    RUNNER_CMD="${RUNNER_CMD} --no-ir-dump"
   fi
 fi
 export RUNNER_CMD
@@ -154,7 +187,7 @@ TPU_CHIPS=$(( ${TPU_TOPOLOGY//x/*} ))
 export TPU_ACCELERATOR="tpu${TPU_TYPE#v}"
 
 # ---- Export for envsubst ----
-export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY EP_SIZE BF BD
+export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY EP_SIZE BF BD SWEEP TOTAL_BYTES NO_IR_DUMP
 
 # ---- GCS config ----
 export GCS_BUCKET="${GCS_BUCKET:-gs://poc_profile/}"
@@ -194,7 +227,7 @@ trap cleanup EXIT
 
 # ---- Render and deploy ----
 echo "[run_benchmark] Rendering Job YAML for ${JOB_NAME}..."
-ENVSUBST_VARS='$JOB_NAME $BRANCH $BRANCH_LABEL $KERNEL_MODULE $SHAPE $CHUNK_SIZE $TPU_TYPE $TPU_TOPOLOGY $TPU_CHIPS $TPU_ACCELERATOR $GCS_BUCKET $RUNNER_CMD $EP_SIZE'
+ENVSUBST_VARS='$JOB_NAME $BRANCH $BRANCH_LABEL $KERNEL_MODULE $SHAPE $CHUNK_SIZE $TPU_TYPE $TPU_TOPOLOGY $TPU_CHIPS $TPU_ACCELERATOR $GCS_BUCKET $RUNNER_CMD $EP_SIZE $SWEEP $TOTAL_BYTES $NO_IR_DUMP'
 RENDERED_YAML="$(envsubst "${ENVSUBST_VARS}" < "${YAML_TEMPLATE}")"
 
 echo "[run_benchmark] Deploying Job..."
