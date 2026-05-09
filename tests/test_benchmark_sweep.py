@@ -115,3 +115,76 @@ class TestParseSweepAggregatesErrors:
         msg = str(exc.value)
         assert "sweep[0]" in msg
         assert "sweep[1]" in msg
+
+
+class TestSweepCliFlags:
+    def test_parses_sweep_flag(self):
+        runner = _import_runner()
+        args = runner.parse_args([
+            "--kernel", "k", "--shape", "1", "--sweep", "2048:1024",
+        ])
+        assert args.sweep == "2048:1024"
+
+    def test_parses_total_bytes(self):
+        runner = _import_runner()
+        args = runner.parse_args([
+            "--kernel", "k", "--shape", "1", "--total-bytes", "4194304",
+        ])
+        assert args.total_bytes == 4194304
+
+    def test_total_bytes_defaults_to_64mib(self):
+        runner = _import_runner()
+        args = runner.parse_args(["--kernel", "k", "--shape", "1"])
+        assert args.total_bytes == 64 * 1024 * 1024
+
+    def test_sweep_env_fallback(self, monkeypatch):
+        monkeypatch.setenv("SWEEP", "2048:1024,1024:512")
+        runner = _import_runner()
+        args = runner.parse_args(["--kernel", "k", "--shape", "1"])
+        assert args.sweep == "2048:1024,1024:512"
+
+    def test_sweep_mutex_with_bf(self):
+        runner = _import_runner()
+        with pytest.raises(SystemExit):
+            runner.parse_args([
+                "--kernel", "k", "--shape", "1",
+                "--sweep", "2048:1024", "--bf", "2048",
+            ])
+
+    def test_sweep_mutex_with_bd(self):
+        runner = _import_runner()
+        with pytest.raises(SystemExit):
+            runner.parse_args([
+                "--kernel", "k", "--shape", "1",
+                "--sweep", "2048:1024", "--bd", "1024",
+            ])
+
+
+class TestCheckKernelCompat:
+    def test_accepts_kernel_with_sweep_kwargs(self):
+        runner = _import_runner()
+
+        def kernel_fn(hidden_size=1, intermediate_size=1, bf=1, bd=1, num_loads=1, **_):
+            return lambda: None
+
+        # Should not raise.
+        runner.check_kernel_compat(kernel_fn, module_name="fake")
+
+    def test_accepts_kernel_with_kwargs_only(self):
+        runner = _import_runner()
+
+        def kernel_fn(**kwargs):
+            return lambda: None
+
+        runner.check_kernel_compat(kernel_fn, module_name="fake")
+
+    def test_rejects_kernel_missing_required_kwargs(self):
+        runner = _import_runner()
+
+        def kernel_fn(hidden_size=1, intermediate_size=1):
+            return lambda: None
+
+        with pytest.raises(SystemExit) as exc:
+            runner.check_kernel_compat(kernel_fn, module_name="fake")
+        msg = str(exc.value)
+        assert "bd" in msg and "bf" in msg and "num_loads" in msg

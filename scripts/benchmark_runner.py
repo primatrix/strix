@@ -101,11 +101,27 @@ def parse_args(argv=None):
         default=bool(os.environ.get("NO_IR_DUMP", "")),
         help="Disable HLO/LLO/Mosaic IR dump (default: enabled)",
     )
+    p.add_argument(
+        "--sweep",
+        default=os.environ.get("SWEEP"),
+        help="Comma-separated bf:bd pairs, e.g. '2048:1024,1024:512'",
+    )
+    p.add_argument(
+        "--total-bytes",
+        type=int,
+        default=int(os.environ.get("TOTAL_BYTES", 64 * 1024 * 1024)),
+        help="Target total DMA bytes per sweep config (default: 64 MiB)",
+    )
 
     args = p.parse_args(argv)
 
     if args.kernel is None:
         p.error("--kernel is required (or set KERNEL_MODULE env var)")
+
+    if args.sweep and (args.bf is not None or args.bd is not None):
+        p.error("--sweep is mutually exclusive with --bf/--bd")
+    if args.total_bytes <= 0:
+        p.error("--total-bytes must be positive")
 
     return args
 
@@ -230,6 +246,24 @@ def import_kernel(module_path):
         sys.path.append(cwd)
     mod = importlib.import_module(module_path)
     return mod.kernel_fn, mod.config
+
+
+def check_kernel_compat(kernel_fn, *, module_name: str) -> None:
+    """Verify kernel_fn accepts the kwargs sweep mode will pass."""
+    import inspect
+
+    sig = inspect.signature(kernel_fn)
+    params = sig.parameters
+    has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if has_var_kw:
+        return
+    required = {"bf", "bd", "num_loads"}
+    missing = required - set(params.keys())
+    if missing:
+        raise SystemExit(
+            f"kernel {module_name}.kernel_fn does not accept {sorted(missing)}; "
+            f"sweep mode requires these kwargs or **kwargs"
+        )
 
 
 def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_size=None, bf=None, bd=None):
