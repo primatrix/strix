@@ -899,6 +899,19 @@ class TestNoIrDumpFlag:
         args = runner.parse_args(["--kernel", "k", "--shape", "1"])
         assert args.no_ir_dump is False
 
+    def test_no_ir_dump_env_literal_zero_means_false(self, monkeypatch):
+        """NO_IR_DUMP=0 must not enable no-ir-dump (bool('0') is True trap)."""
+        monkeypatch.setenv("NO_IR_DUMP", "0")
+        runner = _import_runner()
+        args = runner.parse_args(["--kernel", "k", "--shape", "1"])
+        assert args.no_ir_dump is False
+
+    def test_no_ir_dump_env_false_means_false(self, monkeypatch):
+        monkeypatch.setenv("NO_IR_DUMP", "false")
+        runner = _import_runner()
+        args = runner.parse_args(["--kernel", "k", "--shape", "1"])
+        assert args.no_ir_dump is False
+
 
 class TestNoIrDumpSkipsSetup:
     """main() skips setup_xla_flags when args.no_ir_dump is True."""

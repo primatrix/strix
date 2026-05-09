@@ -106,7 +106,7 @@ def parse_args(argv=None):
     p.add_argument(
         "--no-ir-dump",
         action="store_true",
-        default=bool(os.environ.get("NO_IR_DUMP", "")),
+        default=os.environ.get("NO_IR_DUMP", "").lower() in ("1", "true", "yes"),
         help="Disable HLO/LLO/Mosaic IR dump (default: enabled)",
     )
     p.add_argument(
