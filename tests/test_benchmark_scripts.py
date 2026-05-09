@@ -390,6 +390,9 @@ class TestYamlSweepEnv:
         assert "${NO_IR_DUMP}" in _YAML_TEMPLATE.read_text()
 
     def test_rendered_yaml_has_sweep_env(self):
+        import yaml
         rendered = _render_yaml(sweep="2048:1024,1024:512")
-        assert "name: SWEEP" in rendered
-        assert '"2048:1024,1024:512"' in rendered or "2048:1024,1024:512" in rendered
+        parsed = yaml.safe_load(rendered)
+        env = parsed["spec"]["template"]["spec"]["containers"][0]["env"]
+        env_map = {e["name"]: e["value"] for e in env}
+        assert env_map["SWEEP"] == "2048:1024,1024:512"
