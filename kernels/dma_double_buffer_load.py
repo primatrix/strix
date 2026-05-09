@@ -211,6 +211,7 @@ def kernel_fn(
     weight_dtype: jnp.dtype = jnp.bfloat16,
     bf: int = 2048,
     bd: int = 1024,
+    **_kwargs,  # Accept and ignore extra params (ep_size, chunk_size, etc.)
 ):
     """Construct inputs and return a zero-arg closure for benchmarking."""
     key = jax.random.key(42)
