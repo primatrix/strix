@@ -121,8 +121,10 @@ def setup_ir_dump_dirs(root):
 def setup_xla_flags(ir_dump_root):
     """Unconditionally set XLA_FLAGS and LIBTPU_INIT_ARGS.
 
-    Python is the single source of truth for these flags; the Job YAML
-    no longer predefines them. Called only when --no-ir-dump is absent.
+    Python is the sole source of these flags within the runner; the Job
+    YAML no longer predefines them. Must be called before JAX or libtpu
+    is imported — these libraries snapshot XLA_FLAGS / LIBTPU_INIT_ARGS
+    at init time, so later mutations are ignored.
     """
     ir_dump_root = pathlib.Path(ir_dump_root)
 
