@@ -114,8 +114,8 @@ def _dma_double_buffer_load_kernel(
         unroll=False,
     )
 
-    # Write checksum to HBM output via DMA (direct HBM stores not supported)
-    out_staging[0] = final_checksum
+    # Write checksum to HBM output via DMA (Pallas forbids scalar VMEM stores)
+    out_staging[...] = final_checksum.reshape((1,))
     pltpu.make_async_copy(
         src_ref=out_staging.at[pl.ds(0, 1)],
         dst_ref=output_hbm.at[pl.ds(0, 1)],
