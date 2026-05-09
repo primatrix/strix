@@ -77,8 +77,7 @@ def _dma_double_buffer_load_kernel(
 
     def start_fetch_w(bw_sem_id, bf_id, bd_id):
         """Start async DMA copy from HBM to VMEM buffer bw_sem_id."""
-        # Single DMA operation for the entire [bd, bf] tile
-        pltpu.async_copy(
+        pltpu.make_async_copy(
             src_ref=w_hbm.at[pl.ds(bd_id * bd, bd), pl.ds(bf_id * bf, bf)],
             dst_ref=b_w_x2_vmem.at[bw_sem_id],
             sem=weight_sems.at[bw_sem_id],
