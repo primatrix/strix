@@ -63,46 +63,7 @@ def _dma_double_buffer_load_kernel(
         bd: Hidden dimension block size
         num_loads: Number of weight tiles to load (simulates expert iteration)
     """
-    hidden_size = w_hbm.shape[0]
-    intermediate_size = w_hbm.shape[1]
-
-    num_bf = cdiv(intermediate_size, bf)
-    num_bd = cdiv(hidden_size, bd)
-
-    # -- Weight DMA helpers --
-
-    def start_fetch_w(bw_sem_id, bf_id, bd_id):
-        """Start async DMA copy from HBM to VMEM buffer bw_sem_id."""
-        pltpu.make_async_copy(
-            src_ref=w_hbm.at[pl.ds(bd_id * bd, bd), pl.ds(bf_id * bf, bf)],
-            dst_ref=b_w_x2_vmem.at[bw_sem_id],
-            sem=weight_sems.at[bw_sem_id],
-        ).start()
-
-    def wait_fetch_w(bw_sem_id):
-        """Wait for async DMA copy to complete."""
-        pltpu.make_async_copy(
-            src_ref=b_w_x2_vmem.at[bw_sem_id],
-            dst_ref=b_w_x2_vmem.at[bw_sem_id],
-            sem=weight_sems.at[bw_sem_id],
-        ).wait()
-
-    def consume_weight(bw_sem_id):
-        """Simulate weight consumption (read from VMEM, write checksum to HBM)."""
-        # Sum the weight tile to force VMEM read
-        tile_sum = jnp.sum(b_w_x2_vmem[bw_sem_id].astype(jnp.float32))
-        return tile_sum
-
-    # -- Double-buffered load loop --
-    # Use fori_loop(unroll=False) to match the fused_moe lowering path.
-    # Derive bw_sem_id from loop index i rather than carrying it as a
-    # loop accumulator — this avoids the Jaxpr variable mismatch KeyError
-    # that occurs when loop-carried tracers index Pallas Refs (JAX 0.10.0).
-
-    # Prefetch first tile into buffer 0
-    start_fetch_w(0, 0, 0)
-
-    # Minimal fori_loop test — no DMA inside loop, just counter
+    # Absolute minimal kernel — no DMA, no Refs, just fori_loop counter
     checksum = jnp.int32(0)
 
     def body(i, args):
@@ -114,7 +75,6 @@ def _dma_double_buffer_load_kernel(
         unroll=False,
     )
 
-    # Write checksum to output (rank-1 to satisfy Pallas TPU block rank constraint)
     output_hbm[0] = jnp.float32(final_checksum)
 
 
