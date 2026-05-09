@@ -564,10 +564,14 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
     output_dir.mkdir(parents=True, exist_ok=True)
     ir_dump_root = output_dir / "rank-0" / "compiler"
     benchmark_result_path = output_dir / "rank-0" / "benchmark" / "metrics.jsonl"
+    sweep_summary_path = output_dir / "rank-0" / "benchmark" / "sweep_summary.json"
 
     print(f"[benchmark] Starting benchmark for kernel: {args.kernel}")
     print(f"[benchmark] Shape: {args.shape}, Job: {args.job_name}")
-    print(f"[benchmark] bf={args.bf}, bd={args.bd}")
+    if args.sweep:
+        print(f"[benchmark] Sweep: {args.sweep} (total_bytes={args.total_bytes})")
+    else:
+        print(f"[benchmark] bf={args.bf}, bd={args.bd}")
     print(f"[benchmark] Output dir: {output_dir}")
 
     if not args.no_ir_dump:
@@ -577,6 +581,44 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
         print("[benchmark] IR dump disabled (--no-ir-dump)")
 
     kernel_fn, config = import_kernel(args.kernel)
+
+    if args.sweep:
+        check_kernel_compat(kernel_fn, module_name=args.kernel)
+        dtype = str(config.get("weight_dtype", "bfloat16"))
+        dtype_bytes = {"bfloat16": 2, "float16": 2, "float8_e4m3fn": 1, "float8_e5m2": 1, "float32": 4}.get(dtype, 2)
+        sweep_configs = parse_sweep(args.sweep, args.total_bytes, dtype_bytes)
+
+        records = list(run_sweep(
+            kernel_fn, config, sweep_configs,
+            num_warmup=args.num_warmup, num_runs=args.num_runs,
+            total_bytes=args.total_bytes, dtype=dtype,
+            kernel=args.kernel, shape=args.shape, job_name=args.job_name,
+        ))
+
+        if not is_coordinator():
+            print("[benchmark] Non-coordinator process, skipping dump/upload")
+            return
+
+        benchmark_result_path.parent.mkdir(parents=True, exist_ok=True)
+        with benchmark_result_path.open("w") as f:
+            for rec in records:
+                f.write(json.dumps(rec, default=str) + "\n")
+
+        write_sweep_summary(
+            records, sweep_summary_path,
+            kernel=args.kernel, job_name=args.job_name, total_bytes=args.total_bytes,
+        )
+
+        _write_artifact_manifest(output_dir, args, config, sweep=sweep_configs)
+        _write_profiling_meta(output_dir)
+        _upload_if_configured(output_dir, args)
+
+        if all(r["status"] == "failed" for r in records):
+            print("[benchmark] All sweep configs failed — exiting 1")
+            raise SystemExit(1)
+
+        print(f"[benchmark] Done!")
+        return
 
     timings = run_benchmark(
         kernel_fn, config, args.num_warmup, args.num_runs,

@@ -374,3 +374,56 @@ class TestManifestSweepMode:
         assert data["bf"] == 2048
         assert data["bd"] == 1024
         assert "sweep" not in data
+
+
+class TestSweepMainIntegration:
+    def test_main_sweep_writes_jsonl_and_summary(self, tmp_path, monkeypatch):
+        runner = _import_runner()
+
+        monkeypatch.setattr(runner, "is_coordinator", lambda: True)
+
+        fake_jax = type("J", (), {
+            "device_count": staticmethod(lambda: 8),
+            "process_index": staticmethod(lambda: 0),
+        })()
+        monkeypatch.setitem(__import__("sys").modules, "jax", fake_jax)
+
+        def fake_kernel_fn(**kwargs):
+            return lambda: 0.0
+
+        fake_config = {
+            "default_shape": {"hidden_size": 8192, "intermediate_size": 2048},
+            "weight_dtype": "bfloat16",
+        }
+        monkeypatch.setattr(runner, "import_kernel", lambda name: (fake_kernel_fn, fake_config))
+
+        runner.main([
+            "--kernel", "kernels.dma_double_buffer_load",
+            "--shape", "8192,2048",
+            "--sweep", "2048:1024,1024:512",
+            "--total-bytes", str(_TOTAL),
+            "--no-ir-dump",
+            "--num-warmup", "1",
+            "--num-runs", "2",
+            "--output-dir", str(tmp_path),
+            "--job-name", "j",
+        ])
+
+        metrics_path = tmp_path / "rank-0" / "benchmark" / "metrics.jsonl"
+        summary_path = tmp_path / "rank-0" / "benchmark" / "sweep_summary.json"
+        manifest_path = tmp_path / "manifest.json"
+        assert metrics_path.exists()
+        lines = [l for l in metrics_path.read_text().splitlines() if l.strip()]
+        assert len(lines) == 2
+        import json as _json
+        rec0 = _json.loads(lines[0])
+        assert rec0["status"] == "ok"
+        assert rec0["config"]["bf"] == 2048
+
+        summary = _json.loads(summary_path.read_text())
+        assert summary["num_configs"] == 2
+        assert len(summary["rows"]) == 2
+
+        manifest = _json.loads(manifest_path.read_text())
+        assert manifest["mode"] == "sweep"
+        assert manifest["sweep"]["num_configs"] == 2
