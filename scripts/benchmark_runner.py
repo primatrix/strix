@@ -19,6 +19,7 @@ import time
 
 IR_DUMP_SUBDIRS = ("hlo", "llo", "mosaic")
 _GIB = 1024 ** 3
+_VMEM_LIMIT_KIB = 64 * 1024  # 64 MiB
 _DTYPE_BYTES = {
     "bfloat16": 2,
     "float16": 2,
@@ -208,6 +209,13 @@ def parse_sweep(spec: str, total_bytes: int, dtype_bytes: int) -> list[dict]:
             "num_loads": num_loads,
             "tile_bytes": tile_bytes,
         })
+        if bf != bd and bd % 128 == 0 and bf % 8 == 0:
+            configs.append({
+                "bf": bd,
+                "bd": bf,
+                "num_loads": num_loads,
+                "tile_bytes": tile_bytes,
+            })
 
     if errors:
         raise SystemExit("\n".join(errors))
@@ -244,6 +252,7 @@ def setup_xla_flags(ir_dump_root):
         "--xla_jf_emit_annotations=true",
         f"--xla_mosaic_dump_to={ir_dump_root / 'mosaic'}",
         "--xla_mosaic_enable_llo_source_annotations=true",
+        f"--xla_tpu_scoped_vmem_limit_kib={_VMEM_LIMIT_KIB}",
     ])
 
 
@@ -586,6 +595,9 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
         setup_xla_flags(ir_dump_root)
     else:
         print("[benchmark] IR dump disabled (--no-ir-dump)")
+        os.environ["LIBTPU_INIT_ARGS"] = (
+            f"--xla_tpu_scoped_vmem_limit_kib={_VMEM_LIMIT_KIB}"
+        )
 
     kernel_fn, config = import_kernel(args.kernel)
 

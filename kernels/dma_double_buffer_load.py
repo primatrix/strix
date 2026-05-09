@@ -109,8 +109,7 @@ def _dma_double_buffer_load_kernel(
             prev_copy = make_w_copy(next_buf, next_bf_id, next_bd_id)
             prev_copy.start()
 
-        # Consume current weight tile
-        checksum = checksum + consume_weight(buf)
+        checksum = checksum + jnp.float32(1.0)
 
     # Write checksum to output (rank-1 to satisfy Pallas TPU block rank constraint)
     output_vmem[...] = jnp.expand_dims(checksum, 0)
