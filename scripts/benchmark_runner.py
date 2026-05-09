@@ -117,6 +117,79 @@ def _int_or_none(val):
     return int(val)
 
 
+def parse_sweep(spec: str, total_bytes: int, dtype_bytes: int) -> list[dict]:
+    """Parse --sweep string into a validated list of config dicts.
+
+    Spec grammar: "bf:bd,bf:bd,...". For each pair compute
+    num_loads = total_bytes // (bf * bd * dtype_bytes), enforce TPU tile
+    alignment (bd % 8 == 0, bf % 128 == 0), and reject non-integral
+    divisions. Collects all errors before raising so the user sees every
+    offending pair at once.
+    """
+    if not spec or not spec.strip():
+        raise SystemExit("--sweep: no configs specified")
+
+    errors: list[str] = []
+    configs: list[dict] = []
+
+    for idx, raw in enumerate(spec.split(",")):
+        raw = raw.strip()
+        parts = raw.split(":")
+        if len(parts) != 2:
+            errors.append(f"sweep[{idx}]: invalid pair '{raw}' (expected 'bf:bd')")
+            continue
+        try:
+            bf = int(parts[0])
+            bd = int(parts[1])
+        except ValueError:
+            errors.append(f"sweep[{idx}]: invalid pair '{raw}' (bf and bd must be integers)")
+            continue
+
+        if bf <= 0 or bd <= 0:
+            errors.append(
+                f"sweep[{idx}] (bf={bf}, bd={bd}): bf and bd must be positive integers"
+            )
+            continue
+
+        pair_errors: list[str] = []
+        if bf % 128 != 0:
+            pair_errors.append(
+                f"sweep[{idx}] (bf={bf}, bd={bd}): bf must be divisible by 128 (TPU lane alignment)"
+            )
+        if bd % 8 != 0:
+            pair_errors.append(
+                f"sweep[{idx}] (bf={bf}, bd={bd}): bd must be divisible by 8 (TPU sublane alignment for bf16)"
+            )
+
+        tile_bytes = bf * bd * dtype_bytes
+        if total_bytes % tile_bytes != 0:
+            pair_errors.append(
+                f"sweep[{idx}] (bf={bf}, bd={bd}): total_bytes={total_bytes} "
+                f"not divisible by tile_bytes={tile_bytes}; adjust --total-bytes or tile dims"
+            )
+        num_loads = total_bytes // tile_bytes
+        if num_loads < 1:
+            pair_errors.append(
+                f"sweep[{idx}] (bf={bf}, bd={bd}): derived num_loads=0; "
+                f"tile too large for total_bytes={total_bytes}"
+            )
+
+        if pair_errors:
+            errors.extend(pair_errors)
+            continue
+
+        configs.append({
+            "bf": bf,
+            "bd": bd,
+            "num_loads": num_loads,
+            "tile_bytes": tile_bytes,
+        })
+
+    if errors:
+        raise SystemExit("\n".join(errors))
+    return configs
+
+
 def setup_ir_dump_dirs(root):
     """Create IR dump directories under *root*."""
     root = pathlib.Path(root)
