@@ -126,7 +126,7 @@ def _dma_double_buffer_load_kernel(
     final_checksum, _ = jax.lax.fori_loop(
         0, num_loads, body, (checksum, 0))
 
-    output_hbm[()] = final_checksum
+    output_hbm[0] = final_checksum
 
 
 def dma_double_buffer_load(
@@ -172,13 +172,13 @@ def dma_double_buffer_load(
             num_loads=num_loads,
         ),
         grid_spec=grid_spec,
-        out_shape=jax.ShapeDtypeStruct((), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.float32),
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("arbitrary",),
         ),
     )(w)
 
-    return result
+    return result[0]
 
 
 def kernel_fn(
