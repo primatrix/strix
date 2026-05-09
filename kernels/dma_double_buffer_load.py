@@ -146,8 +146,8 @@ def _dma_double_buffer_load_kernel(
         (load_idx, checksum, 0)
     )
 
-    # Write checksum to output
-    output_hbm[()] = final_checksum
+    # Write checksum to output (rank-1 to satisfy Pallas TPU block rank constraint)
+    output_hbm[0] = final_checksum
 
 
 def dma_double_buffer_load(
@@ -179,7 +179,7 @@ def dma_double_buffer_load(
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
+        out_specs=pl.BlockSpec((1,), lambda: (0,), memory_space=pltpu.MemorySpace.HBM),
         scratch_shapes=[
             pltpu.VMEM((2, t_packing, bd_per_pack, bf), w_dtype),  # b_w_x2_vmem
             pltpu.SemaphoreType.DMA((2,)),  # weight_sems
@@ -194,13 +194,13 @@ def dma_double_buffer_load(
             num_loads=num_loads,
         ),
         grid_spec=grid_spec,
-        out_shape=jax.ShapeDtypeStruct((), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.float32),
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("arbitrary",),
         ),
     )(w)
 
-    return result
+    return result[0]
 
 
 def kernel_fn(
