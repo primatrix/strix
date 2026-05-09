@@ -295,3 +295,82 @@ class TestRunSweep:
         assert [r["status"] for r in records] == ["ok", "failed", "ok"]
         assert "boom" in records[1]["error"]
         assert len(attempts) == 3
+
+
+class TestWriteSweepSummary:
+    def test_rows_sorted_by_throughput_desc(self, tmp_path):
+        runner = _import_runner()
+        records = [
+            {"status": "ok", "config": {"bf": 2048, "bd": 1024, "num_loads": 16},
+             "derived": {"tile_bytes": 4194304, "total_bytes": _TOTAL, "dtype": "bfloat16"},
+             "statistics": {"median_ms": 2.0, "stdev_ms": 0.1},
+             "throughput": {"gib_per_s_median": 30.0}},
+            {"status": "ok", "config": {"bf": 1024, "bd": 512, "num_loads": 128},
+             "derived": {"tile_bytes": 1048576, "total_bytes": _TOTAL, "dtype": "bfloat16"},
+             "statistics": {"median_ms": 1.0, "stdev_ms": 0.05},
+             "throughput": {"gib_per_s_median": 60.0}},
+            {"status": "failed", "config": {"bf": 512, "bd": 512, "num_loads": 256},
+             "derived": {"tile_bytes": 524288, "total_bytes": _TOTAL, "dtype": "bfloat16"},
+             "statistics": None, "throughput": None, "error": "boom"},
+        ]
+
+        out = tmp_path / "sweep_summary.json"
+        runner.write_sweep_summary(
+            records, out,
+            kernel="kernels.dma_double_buffer_load", job_name="j", total_bytes=_TOTAL,
+        )
+        import json as _json
+        data = _json.loads(out.read_text())
+        assert data["num_configs"] == 3
+        assert data["failed_count"] == 1
+        assert len(data["rows"]) == 2
+        assert data["rows"][0]["gib_per_s_median"] == 60.0
+        assert data["rows"][1]["gib_per_s_median"] == 30.0
+        assert data["sorted_by"] == "gib_per_s_median_desc"
+
+
+class TestManifestSweepMode:
+    def test_sweep_manifest_has_entries_and_null_scalars(self, tmp_path, monkeypatch):
+        runner = _import_runner()
+        fake_jax = type("J", (), {"device_count": staticmethod(lambda: 8)})()
+        monkeypatch.setitem(__import__("sys").modules, "jax", fake_jax)
+
+        args = type("A", (), {
+            "kernel": "kernels.dma_double_buffer_load",
+            "job_name": "j", "shape": "8192,2048",
+            "bf": None, "bd": None, "sweep": "2048:1024,1024:512",
+            "total_bytes": _TOTAL,
+        })()
+        sweep = [
+            {"bf": 2048, "bd": 1024, "num_loads": 16, "tile_bytes": 4194304},
+            {"bf": 1024, "bd": 512, "num_loads": 128, "tile_bytes": 1048576},
+        ]
+        runner._write_artifact_manifest(tmp_path, args, config={}, sweep=sweep)
+
+        import json as _json
+        data = _json.loads((tmp_path / "manifest.json").read_text())
+        assert data["mode"] == "sweep"
+        assert data["bf"] is None
+        assert data["bd"] is None
+        assert data["sweep"]["num_configs"] == 2
+        assert data["sweep"]["entries"][0] == {"bf": 2048, "bd": 1024, "num_loads": 16}
+        assert data["sweep"]["total_bytes"] == _TOTAL
+
+    def test_single_manifest_has_scalars_and_no_sweep_key(self, tmp_path, monkeypatch):
+        runner = _import_runner()
+        fake_jax = type("J", (), {"device_count": staticmethod(lambda: 8)})()
+        monkeypatch.setitem(__import__("sys").modules, "jax", fake_jax)
+
+        args = type("A", (), {
+            "kernel": "kernels.dma_double_buffer_load",
+            "job_name": "j", "shape": "8192,2048",
+            "bf": 2048, "bd": 1024, "sweep": None, "total_bytes": _TOTAL,
+        })()
+        runner._write_artifact_manifest(tmp_path, args, config={}, sweep=None)
+
+        import json as _json
+        data = _json.loads((tmp_path / "manifest.json").read_text())
+        assert data["mode"] == "single"
+        assert data["bf"] == 2048
+        assert data["bd"] == 1024
+        assert "sweep" not in data

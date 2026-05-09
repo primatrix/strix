@@ -321,6 +321,41 @@ def write_benchmark_result(timings, kernel, shape, job_name, config, output_path
     return result
 
 
+def write_sweep_summary(records, output_path, *, kernel: str, job_name: str, total_bytes: int):
+    """Write sweep_summary.json aggregating ok-status records, sorted by throughput desc."""
+    output_path = pathlib.Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    ok = [r for r in records if r["status"] == "ok"]
+    failed_count = sum(1 for r in records if r["status"] == "failed")
+
+    rows = [
+        {
+            "bf": r["config"]["bf"],
+            "bd": r["config"]["bd"],
+            "num_loads": r["config"]["num_loads"],
+            "tile_bytes": r["derived"]["tile_bytes"],
+            "median_ms": r["statistics"]["median_ms"],
+            "stdev_ms": r["statistics"]["stdev_ms"],
+            "gib_per_s_median": r["throughput"]["gib_per_s_median"],
+        }
+        for r in ok
+    ]
+    rows.sort(key=lambda row: row["gib_per_s_median"], reverse=True)
+
+    summary = {
+        "schema_version": 1,
+        "job_name": job_name,
+        "kernel": kernel,
+        "total_bytes": total_bytes,
+        "num_configs": len(records),
+        "failed_count": failed_count,
+        "rows": rows,
+        "sorted_by": "gib_per_s_median_desc",
+    }
+    output_path.write_text(json.dumps(summary, indent=2, default=str))
+
+
 def build_sweep_record(
     *,
     kernel: str,
@@ -426,19 +461,25 @@ def run_sweep(
         yield record
 
 
-def _write_artifact_manifest(output_dir, args, config):
-    """Write manifest.json to the artifact root (operator-optimization contract)."""
+def _write_artifact_manifest(output_dir, args, config, sweep=None):
+    """Write manifest.json to the artifact root (operator-optimization contract).
+
+    sweep=None → single-config mode (bf/bd are scalars, no 'sweep' key).
+    sweep=[{bf, bd, num_loads, tile_bytes}, ...] → sweep mode (bf/bd null).
+    """
     import jax
 
+    is_sweep = sweep is not None
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "workflow": "operator-optimization",
         "operator_family": "dma",
         "operator_name": args.kernel,
         "run_id": args.job_name,
         "shape": args.shape,
-        "bf": args.bf,
-        "bd": args.bd,
+        "mode": "sweep" if is_sweep else "single",
+        "bf": None if is_sweep else args.bf,
+        "bd": None if is_sweep else args.bd,
         "hardware": {
             "device_type": os.environ.get("FALCON_DEVICE_TYPE", ""),
             "device_count": jax.device_count(),
@@ -446,6 +487,15 @@ def _write_artifact_manifest(output_dir, args, config):
         },
         "dimensions": {},
     }
+    if is_sweep:
+        manifest["sweep"] = {
+            "total_bytes": args.total_bytes,
+            "num_configs": len(sweep),
+            "entries": [
+                {"bf": c["bf"], "bd": c["bd"], "num_loads": c["num_loads"]}
+                for c in sweep
+            ],
+        }
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
 
