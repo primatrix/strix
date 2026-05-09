@@ -16,10 +16,9 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 try:
-    from ._fused_moe_impl import cdiv, get_dtype_packing
+    from ._fused_moe_impl import cdiv
 except ImportError:
-    # Fallback for direct execution
-    from _fused_moe_impl import cdiv, get_dtype_packing
+    from _fused_moe_impl import cdiv
 
 config = {
     "default_shape": {
@@ -56,11 +55,6 @@ def _dma_double_buffer_load_kernel(
     """
     hidden_size = w_hbm.shape[0]
     intermediate_size = w_hbm.shape[1]
-
-    w_dtype = w_hbm.dtype
-    t_packing = get_dtype_packing(w_dtype)
-    h_per_t_packing = hidden_size // t_packing
-    bd_per_t_packing = bd // t_packing
 
     num_bf = cdiv(intermediate_size, bf)
     num_bd = cdiv(hidden_size, bd)
@@ -148,8 +142,6 @@ def dma_double_buffer_load(
     """
     hidden_size, intermediate_size = w.shape
     w_dtype = w.dtype
-    t_packing = get_dtype_packing(w_dtype)
-    bd_per_pack = bd // t_packing
 
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
@@ -159,7 +151,7 @@ def dma_double_buffer_load(
         ],
         out_specs=pl.BlockSpec((1,), lambda i: (0,), memory_space=pltpu.MemorySpace.HBM),
         scratch_shapes=[
-            pltpu.VMEM((2, t_packing, bd_per_pack, bf), w_dtype),  # b_w_x2_vmem
+            pltpu.VMEM((2, bd, bf), w_dtype),  # b_w_x2_vmem
             pltpu.VMEM((1,), jnp.float32),  # out_staging
             pltpu.SemaphoreType.DMA((2,)),  # weight_sems
             pltpu.SemaphoreType.DMA((1,)),  # output_sem
