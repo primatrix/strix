@@ -152,12 +152,13 @@ def dma_double_buffer_load(
     t_packing = get_dtype_packing(w_dtype)
     bd_per_pack = bd // t_packing
 
+    hbm = pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM)
+
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
-        in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
-        ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
+        grid=(1,),
+        in_specs=[hbm],
+        out_specs=hbm,
         scratch_shapes=[
             pltpu.VMEM((2, t_packing, bd_per_pack, bf), w_dtype),  # b_w_x2_vmem
             pltpu.SemaphoreType.DMA((2,)),  # weight_sems
