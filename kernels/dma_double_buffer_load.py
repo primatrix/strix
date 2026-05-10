@@ -35,8 +35,8 @@ config = {
 
 
 def _dma_double_buffer_load_kernel(
-    bf_offsets_ref,
-    bd_offsets_ref,
+    bf_indices_ref,
+    bd_indices_ref,
     w_hbm,
     output_vmem,
     # Scratch buffers (VMEM).
@@ -50,12 +50,12 @@ def _dma_double_buffer_load_kernel(
 ):
     """Pallas kernel body — double-buffered weight loading from HBM to VMEM.
 
-    Uses pre-computed tile offsets passed as scalar prefetch to avoid
-    per-DMA address computation overhead in the kernel body.
+    Uses pre-computed tile indices passed as scalar prefetch to avoid
+    per-DMA modular arithmetic in the kernel body.
 
     Args:
-        bf_offsets_ref: Pre-computed bf dimension offsets [num_loads]
-        bd_offsets_ref: Pre-computed bd dimension offsets [num_loads]
+        bf_indices_ref: Pre-computed bf tile indices [num_loads] (SMEM)
+        bd_indices_ref: Pre-computed bd tile indices [num_loads] (SMEM)
         w_hbm: Weight matrix in HBM [hidden_size, intermediate_size]
         output_vmem: Scalar output ref for checksum (VMEM)
         b_w_x2_vmem: Double-buffer VMEM scratch [2, bd, bf]
@@ -65,9 +65,9 @@ def _dma_double_buffer_load_kernel(
         num_loads: Number of weight tiles to load
     """
     def make_w_copy(buf, load_idx):
-        """Create async copy descriptor using pre-computed offsets from SMEM."""
-        bf_off = bf_offsets_ref[load_idx]
-        bd_off = bd_offsets_ref[load_idx]
+        """Create async copy descriptor using pre-computed tile indices."""
+        bf_off = bf_indices_ref[load_idx] * bf
+        bd_off = bd_indices_ref[load_idx] * bd
         return pltpu.make_async_copy(
             src_ref=w_hbm.at[pl.ds(bd_off, bd), pl.ds(bf_off, bf)],
             dst_ref=b_w_x2_vmem.at[buf],
@@ -131,17 +131,15 @@ def dma_double_buffer_load(
     num_bf = cdiv(intermediate_size, bf)
     num_bd = cdiv(hidden_size, bd)
 
-    # Pre-compute all tile offsets as byte offsets into the weight matrix
-    bf_offsets = np.zeros(num_loads, dtype=np.int32)
-    bd_offsets = np.zeros(num_loads, dtype=np.int32)
+    # Pre-compute tile indices (not offsets) — compiler proves alignment via * bf/bd
+    bf_indices = np.zeros(num_loads, dtype=np.int32)
+    bd_indices = np.zeros(num_loads, dtype=np.int32)
     for i in range(num_loads):
-        bf_id = i % num_bf
-        bd_id = (i // num_bf) % num_bd
-        bf_offsets[i] = bf_id * bf
-        bd_offsets[i] = bd_id * bd
+        bf_indices[i] = i % num_bf
+        bd_indices[i] = (i // num_bf) % num_bd
 
-    bf_offsets_jax = jnp.array(bf_offsets)
-    bd_offsets_jax = jnp.array(bd_offsets)
+    bf_indices_jax = jnp.array(bf_indices)
+    bd_indices_jax = jnp.array(bd_indices)
 
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=2,
@@ -168,7 +166,7 @@ def dma_double_buffer_load(
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("arbitrary",),
         ),
-    )(bf_offsets_jax, bd_offsets_jax, w)
+    )(bf_indices_jax, bd_indices_jax, w)
 
     return result[0]
 
