@@ -30,12 +30,14 @@ config = {
     "weight_dtype": "bfloat16",
     "tpu_type": "v7x",
     "tpu_topology": "1x1",
-    "description": "Double-buffer VMEM load — DMA efficiency test with JIT compilation and dynamic addressing",
+    "description": "Double-buffer VMEM load — DMA with pre-computed indices in SMEM (no runtime address calculation)",
 }
 
 
 def _dma_double_buffer_load_kernel(
     w_hbm,
+    bf_indices_smem,
+    bd_indices_smem,
     output_vmem,
     # Scratch buffers (VMEM).
     b_w_x2_vmem,
@@ -55,6 +57,8 @@ def _dma_double_buffer_load_kernel(
 
     Args:
         w_hbm: Weight matrix in HBM [hidden_size, intermediate_size]
+        bf_indices_smem: Pre-computed bf indices [num_loads] in SMEM
+        bd_indices_smem: Pre-computed bd indices [num_loads] in SMEM
         output_vmem: Scalar output ref for checksum (VMEM)
         b_w_x2_vmem: Double-buffer VMEM scratch [2, bd, bf]
         weight_sems: DMA semaphores [2]
@@ -62,40 +66,31 @@ def _dma_double_buffer_load_kernel(
         bd: Hidden dimension block size
         num_loads: Number of weight tiles to load (simulates expert iteration)
     """
-    hidden_size = w_hbm.shape[0]
-    intermediate_size = w_hbm.shape[1]
-
-    num_bf = cdiv(intermediate_size, bf)
-    num_bd = cdiv(hidden_size, bd)
-
     # -- Weight DMA helpers --
 
-    def make_w_copy(buf, bf_id, bd_id):
+    def make_w_copy(buf, tile_idx):
         """Create async copy descriptor for HBM→VMEM weight tile transfer."""
+        bf_id = bf_indices_smem[tile_idx]
+        bd_id = bd_indices_smem[tile_idx]
         return pltpu.make_async_copy(
             src_ref=w_hbm.at[pl.ds(bd_id * bd, bd), pl.ds(bf_id * bf, bf)],
             dst_ref=b_w_x2_vmem.at[buf],
             sem=weight_sems.at[buf],
         )
 
-    def consume_weight(buf):
-        """Simulate weight consumption (read from VMEM, write checksum to HBM)."""
-        tile_sum = jnp.sum(b_w_x2_vmem[buf].astype(jnp.float32))
-        return tile_sum
-
-    # -- Double-buffered load loop (fully unrolled) --
+    # -- Double-buffered load loop --
     # Pipeline: prefetch 2 tiles, then wait → start(i+2, same buf) → compute.
     # Keeps 2 DMAs in flight at all times for maximum HBM bandwidth utilization.
 
     checksum = jnp.float32(0.0)
 
     # Prefetch tile 0 → buf 0
-    copy_0 = make_w_copy(0, 0, 0)
+    copy_0 = make_w_copy(0, 0)
     copy_0.start()
 
     # Prefetch tile 1 → buf 1
     if num_loads > 1:
-        copy_1 = make_w_copy(1, 1 % num_bf, (1 // num_bf) % num_bd)
+        copy_1 = make_w_copy(1, 1)
         copy_1.start()
 
     for load_idx in range(num_loads):
@@ -109,10 +104,7 @@ def _dma_double_buffer_load_kernel(
 
         # Immediately start next DMA into same buffer (2 tiles ahead)
         if load_idx + 2 < num_loads:
-            next_tile = load_idx + 2
-            next_bf_id = next_tile % num_bf
-            next_bd_id = (next_tile // num_bf) % num_bd
-            next_copy = make_w_copy(buf, next_bf_id, next_bd_id)
+            next_copy = make_w_copy(buf, load_idx + 2)
             next_copy.start()
             if buf == 0:
                 copy_0 = next_copy
@@ -148,11 +140,20 @@ def dma_double_buffer_load(
     hidden_size, intermediate_size = w.shape
     w_dtype = w.dtype
 
+    # Pre-compute tile indices on host
+    num_bf = cdiv(intermediate_size, bf)
+    num_bd = cdiv(hidden_size, bd)
+
+    bf_indices = jnp.array([i % num_bf for i in range(num_loads)], dtype=jnp.int32)
+    bd_indices = jnp.array([(i // num_bf) % num_bd for i in range(num_loads)], dtype=jnp.int32)
+
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
         grid=(1,),
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
+            pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),  # w_hbm
+            pl.BlockSpec((num_loads,), lambda i: (0,), memory_space=pltpu.MemorySpace.SMEM),  # bf_indices
+            pl.BlockSpec((num_loads,), lambda i: (0,), memory_space=pltpu.MemorySpace.SMEM),  # bd_indices
         ],
         out_specs=pl.BlockSpec((1,), lambda i: (0,)),
         scratch_shapes=[
@@ -173,7 +174,7 @@ def dma_double_buffer_load(
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("arbitrary",),
         ),
-    )(w)
+    )(w, bf_indices, bd_indices)
 
     return result[0]
 
