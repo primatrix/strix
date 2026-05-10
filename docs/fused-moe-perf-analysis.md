@@ -231,12 +231,70 @@ y       : 8 MB
 
 适合 prefill（大 bt、高算术强度），不适合 decode 流水。
 
-### 5.6 结论
+### 5.6 多批次调度：权重常驻 vs Token 常驻
+
+当 `bt_total > bt_tile` 时（例如总 1024 tokens，每次只能处理 512），存在两种嵌套循环顺序。
+
+**Strategy A：权重外循环，Token 内循环**（权重仅加载 1 次，维护多份 y_acc）
+```
+for i in 0..N-1:                     # 遍历权重 tile
+    load W1_i, W3_i, W2_i            # 每 tile 只加载一次
+    for b in 0..B-1:                 # 遍历 token 批
+        act_up_b = silu(x_b @ W1_i) * (x_b @ W3_i)
+        y_acc[b] += act_up_b @ W2_i  # B 份 y_acc 常驻 VMEM
+flush y_acc[*]
+```
+
+**Strategy B：Token 外循环，权重内循环**（每批重新加载全部权重）
+```
+for b in 0..B-1:
+    load x_b
+    y_acc = 0
+    for i in 0..N-1:
+        load W1_i, W3_i, W2_i        # 每批重新加载 3 × 32 MB
+        y_acc += ...
+    flush y_acc
+```
+
+**HBM 流量对比（单专家，bt_total = 1024，B = 2）**：
+
+| 项 | Strategy A | Strategy B |
+|-----|-----------|-----------|
+| W1 | 32 × 1 = 32 MB | 32 × 2 = 64 MB |
+| W3 | 32 × 1 = 32 MB | 32 × 2 = 64 MB |
+| W2 | 32 × 1 = 32 MB | 32 × 2 = 64 MB |
+| x  | 16 MB | 16 MB |
+| y  | 16 MB | 16 MB |
+| **合计** | **128 MB** | **224 MB** |
+
+**A 节省 96 MB，HBM 流量下降 ~43%**。
+
+**VMEM 占用对比（4 MB tile）**：
+
+| 项 | Strategy A | Strategy B |
+|-----|-----------|-----------|
+| x | 16 MB（两批） | 8 MB（一批） |
+| W tile × 3（单缓冲） | 12 MB | 12 MB |
+| y_acc | 16 MB（两份） | 8 MB（一份） |
+| **单缓冲合计** | **44 MB** | **28 MB** |
+| **双缓冲合计** | **56 MB** | **40 MB** |
+
+**一般化规则**：
+- HBM(Strategy A) ≈ `W_total + bt_total × (d_in + d_out) × 2B`
+- HBM(Strategy B) ≈ `W_total × ⌈bt_total / bt_tile⌉ + bt_total × (d_in + d_out) × 2B`
+- 只要权重体积大于单批 I/O（`W_total > bt_tile × (d_in + d_out) × 2B`，MoE 几乎总成立），**Strategy A 更省**。
+
+**何时不得不用 B**：
+- bt_total ↑ 到 ~4096 以上时，多份 y_acc 加 x 超出 VMEM（例如 bt_total=8192 时 y_acc 需 128 MB）；
+- 8 MB tile + 双缓冲 + 2 份 y_acc：16 + 48 + 16 = 80 MB，超 VMEM 上限。
+
+### 5.7 结论
 
 1. 三个权重**必须**沿 f 维度分 tile 流式加载（全量 = 96 MB，远超 VMEM）。
 2. W1/W3 的输出维切分与 W2 的 reduction 维切分**对齐**，是 SwiGLU + 下降流水的前提。
 3. W2 分片产出 y 的**部分和**，非完整切片；`y_acc` (bt, d) 必须作为 VMEM 中的累加器驻留。
-4. **推荐**：4 MB tile + 三权重双缓冲 + VREG 流式 SwiGLU + y_acc 累加 ≈ 40 MB，留 ~24 MB 余量用于下一专家权重预取或共享专家权重驻留。
+4. 多批 token 场景下采用 **权重外循环 + y_acc 分批累加**（Strategy A），权重加载摊薄到所有批次。
+5. **推荐**：4 MB tile + 三权重双缓冲 + VREG 流式 SwiGLU + y_acc 累加 ≈ 40 MB（单批）/ 56 MB（双批），留余量用于下一专家权重预取或共享专家权重驻留。
 
 ---
 
