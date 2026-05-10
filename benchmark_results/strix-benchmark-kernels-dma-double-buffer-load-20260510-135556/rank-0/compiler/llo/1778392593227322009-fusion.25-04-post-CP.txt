@@ -1,0 +1,169 @@
+// [Enable stack traces via -xla_jf_collect_llo_stack_trace or -xla_jf_debug_level=2]
+$region0: #{fusion.25}
+  #allocation0 [shape = 's32[1]{0}', space=sflag, size = 0x4, scoped, tag = 'scoped memory for fusion.25']
+  %s0 = inlined_call_operand.vmem [shape: u32[8192], index: 0, kind: output, shape index: {0}] /* operand 0 */
+  %s1 = inlined_call_operand.vmem [shape: u32[8192], index: 1, kind: output, shape index: {1}] /* operand 1 */
+  %v3 = vlaneseq
+  %v6 = vand.u32 %v3, 65535
+  %v9 = vmul.u32 %v6, 2048
+  %v11 = vand.u32 %v9, 65535
+  %v12 = vlaneseq
+  %v15 = vshrl.u32 %v12, 16
+  %v18 = vmul.u32 %v15, 2048
+  %v20 = vshrl.u32 %v9, 16
+  %v23 = vadd.s32 %v18, %v20
+  %v25 = vand.u32 %v23, 65535
+  %v26 = vshll.u32 %v25, 16
+  %v27 = vor.u32 %v11, %v26
+  %v28 = vshrl.u32 %v23, 16
+  %v29 = vshrl.u32 %v25, 16
+  %v32 = vadd.s32 %v28, %v29
+  %35 = vst [vmem:[%s0] sm:$0xff] /*vst_source=*/%v27
+  %36 = vst [vmem:[%s1] sm:$0xff] /*vst_source=*/%v32
+  %v37 = vlaneseq
+  %v39 = vadd.s32 %v37, 1024
+  %v40 = vand.u32 %v39, 65535
+  %v43 = vmul.u32 %v40, 2048
+  %v45 = vand.u32 %v43, 65535
+  %v46 = vlaneseq
+  %v48 = vadd.s32 %v46, 1024
+  %v49 = vshrl.u32 %v48, 16
+  %v52 = vmul.u32 %v49, 2048
+  %v54 = vshrl.u32 %v43, 16
+  %v57 = vadd.s32 %v52, %v54
+  %v59 = vand.u32 %v57, 65535
+  %v60 = vshll.u32 %v59, 16
+  %v61 = vor.u32 %v45, %v60
+  %v62 = vshrl.u32 %v57, 16
+  %v63 = vshrl.u32 %v59, 16
+  %v66 = vadd.s32 %v62, %v63
+  %s69 = scalar_lea.vmem %s0, 8
+  %70 = vst [vmem:[%s69] sm:$0xff] /*vst_source=*/%v61
+  %s71 = scalar_lea.vmem %s1, 8
+  %72 = vst [vmem:[%s71] sm:$0xff] /*vst_source=*/%v66
+  %v73 = vlaneseq
+  %v75 = vadd.s32 %v73, 2048
+  %v76 = vand.u32 %v75, 65535
+  %v79 = vmul.u32 %v76, 2048
+  %v81 = vand.u32 %v79, 65535
+  %v82 = vlaneseq
+  %v84 = vadd.s32 %v82, 2048
+  %v85 = vshrl.u32 %v84, 16
+  %v88 = vmul.u32 %v85, 2048
+  %v90 = vshrl.u32 %v79, 16
+  %v93 = vadd.s32 %v88, %v90
+  %v95 = vand.u32 %v93, 65535
+  %v96 = vshll.u32 %v95, 16
+  %v97 = vor.u32 %v81, %v96
+  %v98 = vshrl.u32 %v93, 16
+  %v99 = vshrl.u32 %v95, 16
+  %v102 = vadd.s32 %v98, %v99
+  %s105 = scalar_lea.vmem %s0, 16
+  %106 = vst [vmem:[%s105] sm:$0xff] /*vst_source=*/%v97
+  %s107 = scalar_lea.vmem %s1, 16
+  %108 = vst [vmem:[%s107] sm:$0xff] /*vst_source=*/%v102
+  %v109 = vlaneseq
+  %v111 = vadd.s32 %v109, 3072
+  %v112 = vand.u32 %v111, 65535
+  %v115 = vmul.u32 %v112, 2048
+  %v117 = vand.u32 %v115, 65535
+  %v118 = vlaneseq
+  %v120 = vadd.s32 %v118, 3072
+  %v121 = vshrl.u32 %v120, 16
+  %v124 = vmul.u32 %v121, 2048
+  %v126 = vshrl.u32 %v115, 16
+  %v129 = vadd.s32 %v124, %v126
+  %v131 = vand.u32 %v129, 65535
+  %v132 = vshll.u32 %v131, 16
+  %v133 = vor.u32 %v117, %v132
+  %v134 = vshrl.u32 %v129, 16
+  %v135 = vshrl.u32 %v131, 16
+  %v138 = vadd.s32 %v134, %v135
+  %s141 = scalar_lea.vmem %s0, 24
+  %142 = vst [vmem:[%s141] sm:$0xff] /*vst_source=*/%v133
+  %s143 = scalar_lea.vmem %s1, 24
+  %144 = vst [vmem:[%s143] sm:$0xff] /*vst_source=*/%v138
+  %v145 = vlaneseq
+  %v147 = vadd.s32 %v145, 4096
+  %v148 = vand.u32 %v147, 65535
+  %v151 = vmul.u32 %v148, 2048
+  %v153 = vand.u32 %v151, 65535
+  %v154 = vlaneseq
+  %v156 = vadd.s32 %v154, 4096
+  %v157 = vshrl.u32 %v156, 16
+  %v160 = vmul.u32 %v157, 2048
+  %v162 = vshrl.u32 %v151, 16
+  %v165 = vadd.s32 %v160, %v162
+  %v167 = vand.u32 %v165, 65535
+  %v168 = vshll.u32 %v167, 16
+  %v169 = vor.u32 %v153, %v168
+  %v170 = vshrl.u32 %v165, 16
+  %v171 = vshrl.u32 %v167, 16
+  %v174 = vadd.s32 %v170, %v171
+  %s177 = scalar_lea.vmem %s0, 32
+  %178 = vst [vmem:[%s177] sm:$0xff] /*vst_source=*/%v169
+  %s179 = scalar_lea.vmem %s1, 32
+  %180 = vst [vmem:[%s179] sm:$0xff] /*vst_source=*/%v174
+  %v181 = vlaneseq
+  %v183 = vadd.s32 %v181, 5120
+  %v184 = vand.u32 %v183, 65535
+  %v187 = vmul.u32 %v184, 2048
+  %v189 = vand.u32 %v187, 65535
+  %v190 = vlaneseq
+  %v192 = vadd.s32 %v190, 5120
+  %v193 = vshrl.u32 %v192, 16
+  %v196 = vmul.u32 %v193, 2048
+  %v198 = vshrl.u32 %v187, 16
+  %v201 = vadd.s32 %v196, %v198
+  %v203 = vand.u32 %v201, 65535
+  %v204 = vshll.u32 %v203, 16
+  %v205 = vor.u32 %v189, %v204
+  %v206 = vshrl.u32 %v201, 16
+  %v207 = vshrl.u32 %v203, 16
+  %v210 = vadd.s32 %v206, %v207
+  %s213 = scalar_lea.vmem %s0, 40
+  %214 = vst [vmem:[%s213] sm:$0xff] /*vst_source=*/%v205
+  %s215 = scalar_lea.vmem %s1, 40
+  %216 = vst [vmem:[%s215] sm:$0xff] /*vst_source=*/%v210
+  %v217 = vlaneseq
+  %v219 = vadd.s32 %v217, 6144
+  %v220 = vand.u32 %v219, 65535
+  %v223 = vmul.u32 %v220, 2048
+  %v225 = vand.u32 %v223, 65535
+  %v226 = vlaneseq
+  %v228 = vadd.s32 %v226, 6144
+  %v229 = vshrl.u32 %v228, 16
+  %v232 = vmul.u32 %v229, 2048
+  %v234 = vshrl.u32 %v223, 16
+  %v237 = vadd.s32 %v232, %v234
+  %v239 = vand.u32 %v237, 65535
+  %v240 = vshll.u32 %v239, 16
+  %v241 = vor.u32 %v225, %v240
+  %v242 = vshrl.u32 %v237, 16
+  %v243 = vshrl.u32 %v239, 16
+  %v246 = vadd.s32 %v242, %v243
+  %s249 = scalar_lea.vmem %s0, 48
+  %250 = vst [vmem:[%s249] sm:$0xff] /*vst_source=*/%v241
+  %s251 = scalar_lea.vmem %s1, 48
+  %252 = vst [vmem:[%s251] sm:$0xff] /*vst_source=*/%v246
+  %v253 = vlaneseq
+  %v255 = vadd.s32 %v253, 7168
+  %v256 = vand.u32 %v255, 65535
+  %v259 = vmul.u32 %v256, 2048
+  %v261 = vand.u32 %v259, 65535
+  %v262 = vlaneseq
+  %v264 = vadd.s32 %v262, 7168
+  %v265 = vshrl.u32 %v264, 16
+  %v268 = vmul.u32 %v265, 2048
+  %v270 = vshrl.u32 %v259, 16
+  %v273 = vadd.s32 %v268, %v270
+  %v275 = vand.u32 %v273, 65535
+  %v276 = vshll.u32 %v275, 16
+  %v277 = vor.u32 %v261, %v276
+  %v278 = vshrl.u32 %v273, 16
+  %v279 = vshrl.u32 %v275, 16
+  %v282 = vadd.s32 %v278, %v279
+  %s285 = scalar_lea.vmem %s0, 56
+  %286 = vst [vmem:[%s285] sm:$0xff] /*vst_source=*/%v277
+  %s287 = scalar_lea.vmem %s1, 56
+  %288 = vst [vmem:[%s287] sm:$0xff] /*vst_source=*/%v282

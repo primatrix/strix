@@ -1,0 +1,50 @@
+
+Total bytes used: 67128320 (64.02MiB)
+
+Used values:
+<6 seed.1 @0>
+ positions:
+  seed.1
+ uses:
+  copy, operand 0
+ from instruction: %seed.1 = s32[]{:T(128)} parameter(0), metadata={op_name="seed"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"0"}],"used_scoped_memory_configs":[]}
+<7 copy @6>
+ positions:
+  copy
+ uses:
+  shift_right_logical.1, operand 0
+  convert_element_type.3, operand 0
+ from instruction: %copy = s32[]{:T(128)S(6)} copy(%seed.1), backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"67108864"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
+<8 convert_element_type.3 @0>
+ positions:
+  convert_element_type.3
+  bitcast.1
+ uses:
+  bitcast.1, operand 0
+  pad_add_fusion, operand 0
+ from instruction: %convert_element_type.3 = u32[]{:T(128)} convert(%copy), metadata={op_name="jit(_threefry_seed)/convert_element_type" stack_frame_id=4}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"67108864"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
+<9 constant.1 @0>
+ positions:
+  constant.1
+ uses:
+  shift_right_logical.1, operand 1
+ from instruction: %constant.1 = s32[]{:T(128)} constant(32), backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"0"}],"used_scoped_memory_configs":[]}
+<10 shift_right_logical.1 @6>
+ positions:
+  shift_right_logical.1
+ uses:
+  convert_element_type.2, operand 0
+ from instruction: %shift_right_logical.1 = s32[]{:T(128)S(6)} shift-right-logical(%copy, %constant.1), metadata={op_name="jit(_threefry_seed)/shift_right_logical" stack_frame_id=4}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"67108864"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
+<11 convert_element_type.2 @0>
+ positions:
+  convert_element_type.2
+  bitcast
+ uses:
+  bitcast, operand 0
+  pad_add_fusion, operand 1
+ from instruction: %convert_element_type.2 = u32[]{:T(128)} convert(%shift_right_logical.1), metadata={op_name="jit(_threefry_seed)/convert_element_type" stack_frame_id=4}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"67108864"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
+<12 pad_add_fusion @0>
+ positions:
+  pad_add_fusion
+ uses:
+ from instruction: %pad_add_fusion = u32[2]{0:T(128)} fusion(%bitcast.1, %bitcast), kind=kLoop, calls=%fused_computation, metadata={op_name="jit(_threefry_seed)/concatenate" stack_frame_id=4}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"11744052"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}

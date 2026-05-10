@@ -1,0 +1,83 @@
+// [Enable stack traces via -xla_jf_collect_llo_stack_trace or -xla_jf_debug_level=2]
+$region0: #{pad_add_fusion}
+  #allocation12 [shape = 's32[1]{0}', space=sflag, size = 0x4, offset = 0, scoped, tag = 'scoped memory for pad_add_fusion']
+  #allocation13 [shape = 's32[]', space=sflag, size = 0x4, offset = 0, fixed_abs, tag = 'sflag constant byte address 0x0 - dummy sync flag']
+  // region range: [0, 141)
+  %s104_s0 = inlined_call_operand.<no memory space> [shape: u32[1], index: 0, kind: input, shape index: {}] /* operand 0 */
+  %s105_s1 = inlined_call_operand.<no memory space> [shape: u32[1], index: 1, kind: input, shape index: {}] /* operand 1 */
+  %s106_s2 = inlined_call_operand.hbm [shape: u32[2], index: 2, kind: output, shape index: {}] /* operand 2 */
+  %v3_v0 = vstv %s104_s0
+  %v5_v1 = vstv %s105_s1
+  $region1: #{pad_add_fusion} parent=0
+    #allocation10 [shape = 'u8[512]{0}', space=vmem, size = 0x400, offset = 0, scoped, tag = 'operand span for operand 2']
+    #allocation11 [shape = 's32[1]{0}', space=sflag, size = 0x4, offset = 0x4, scoped, tag = 'scoped memory for pad_add_fusion']
+    // region range: [2, 141)
+    %v11_v2 = vlaneseq
+    %7 = vsyncpa [#allocation11], 0
+    %v12_v3 = vadd.s32 1024, %v11_v2
+    %v19_v4 = vand.u32 127, %v11_v2
+    %vm15_vm0 = vcmask 1046528 /* [0:6,0:127] */
+    %vm13_vm1 = vcmp.lt.s32.totalorder %v12_v3, 1025
+    %v14_v5 = vsel /*vm=*/%vm13_vm1, /*on_true_vy=*/%v3_v0, /*on_false_vx=*/0
+    %v16_v6 = vsel /*vm=*/%vm15_vm0, /*on_true_vy=*/%v14_v5, /*on_false_vx=*/0
+    %vm20_vm2 = vcmp.lt.s32.totalorder %v19_v4, 127
+    %v17_v7 = vrot.slane %v16_v6, 7
+    %v21_v8 = vsel /*vm=*/%vm20_vm2, /*on_true_vy=*/%v14_v5, /*on_false_vx=*/%v17_v7
+    %s69_s1 = smov 1 /* materialized constant */
+    %22 = vrot.lane.b32.xlu0 %v21_v8, %s69_s1
+    %vm26_vm3 = vcmp.lt.s32.totalorder %v11_v2, 1
+    %v27_v9 = vsel /*vm=*/%vm26_vm3, /*on_true_vy=*/%v5_v1, /*on_false_vx=*/0
+    %s70_s12 = smov [#allocation10] /* materialized constant */
+    %s37_s13 = sshll.u32 %s70_s12, 4
+    %v23_v10 = vpop.permute.xlu0 %22
+    %v30_v11 = vadd.s32 %v27_v9, %v23_v10
+    %s38_s13 = int_to_ptr.vmem [resolvable:$true] %s37_s13
+    %32 = vst [vmem:[#allocation10] sm:$0x1] /*vst_source=*/%v30_v11
+    %s45_s14 = scalar_lea.vmem %s38_s13, 16
+    %p46_p0 = scmp.ne.s32.totalorder %s38_s13, %s45_s14
+    %s49_s15 = scalar_lea.vmem %s38_s13, 32
+    %p50_p1 = scmp.lt.s32.totalorder %s38_s13, %s38_s13
+    %p51_p2 = scmp.lt.s32.totalorder %s49_s15, %s45_s14
+    %p52_p3 = por %p51_p2, %p50_p1
+    %p53_p4 = pnand %p52_p3, %p46_p0
+    %56 = shalt.err (!%p53_p4) /* BoundsCheck 1 [deref of %s38] for %40 = dma.vmem_to_hbm [thread:$0]  /*vmem=*/%s38, /*size_in_granules=*/16, /*hbm=*/%s2, /*dst_syncflagno=*/[#allocation11] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+hlo: pad_add_fusion
+ */
+    %s57_s18 = scalar_lea.hbm %s106_s2, 16
+    %p58_p5 = scmp.ne.s32.totalorder %s106_s2, %s57_s18
+    %p61_p6 = scmp.lt.u32.totalorder %s57_s18, %s106_s2
+    %p63_p7 = pnand %p61_p6, %p58_p5
+    %66 = shalt.err (!%p63_p7) /* BoundsCheck 1 [deref of %s2] for %40 = dma.vmem_to_hbm [thread:$0]  /*vmem=*/%s38, /*size_in_granules=*/16, /*hbm=*/%s2, /*dst_syncflagno=*/[#allocation11] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+hlo: pad_add_fusion
+ */
+    %40 = dma.vmem_to_hbm [thread:$0]  /*vmem=*/%s38_s13, /*size_in_granules=*/16, /*hbm=*/%s106_s2, /*dst_syncflagno=*/[#allocation11] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+    %67 = dma.done.wait [#allocation11], 16 /* pipeline-emitter-dma-wait */
+    %68 = vsyncadd [#allocation11], 4294967280
+    %42 = vsyncpa [#allocation11], 1

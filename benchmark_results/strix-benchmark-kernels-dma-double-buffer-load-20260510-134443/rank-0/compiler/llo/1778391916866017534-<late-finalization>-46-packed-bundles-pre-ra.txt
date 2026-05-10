@@ -1,0 +1,13 @@
+= control target key start
+LH: loop header
+LB: loop body
+LE: loop exit
+PB: predicated region body
+PF: predicated region fallthrough
+CT: control target
+= control target key end
+
+     0   :  { %0 = vdelay 1 } /* Start region 0 */
+   0x1   :  { %1 = sfence }
+   0x2   :  { %s4 = smov 0 /* materialized constant */ }
+   0x3   :  { %2 = sst [smem:[#allocation0]] %s4 } /* End region 0 */

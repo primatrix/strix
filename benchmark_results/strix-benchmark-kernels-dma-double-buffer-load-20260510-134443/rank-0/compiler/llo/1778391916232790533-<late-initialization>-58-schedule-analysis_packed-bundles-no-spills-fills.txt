@@ -1,0 +1,5 @@
+Schedule analysis:
+	total scheduled bundles:    45
+	empty scheduled bundles:    19
+	non empty scheduled bundles: 26
+	  26.00 scheduled bundles (100.00%): <no hlo>

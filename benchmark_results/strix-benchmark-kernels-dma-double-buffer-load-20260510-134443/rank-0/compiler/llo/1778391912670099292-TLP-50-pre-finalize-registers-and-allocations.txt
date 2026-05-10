@@ -1,0 +1,268 @@
+// [Enable stack traces via -xla_jf_collect_llo_stack_trace or -xla_jf_debug_level=2]
+$region0:
+  #allocation0 [shape = 'u32[1]{0}', space=smem, size = 0xffffffffffffffff, tag = 'Program registry']
+  #allocation1 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xfff98, fixed_abs, tag = 'smem constant byte address 0xfff98 - program shared registry']
+  #allocation2 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xfffa8, fixed_abs, tag = 'smem constant byte address 0xfffa8 - program descriptor state']
+  #allocation4 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xfff90, fixed_abs, tag = 'smem constant byte address 0xfff90 - output ptr']
+  #allocation9 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xfff80, fixed_abs, tag = 'smem constant byte address 0xfff80 - rng seed']
+  #allocation10 [shape = 'u32[]', space=smem, size = 0x4, offset = 0, fixed_abs, tag = 'smem constant byte address 0x0 - chip ID']
+  #allocation11 [shape = 'u32[]', space=smem, size = 0x4, offset = 0x4, fixed_abs, tag = 'smem constant byte address 0x4 - core index']
+  #allocation12 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xffff4, fixed_abs, tag = 'smem constant byte address 0xffff4 - program id location']
+  #allocation13 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xffff8, fixed_abs, tag = 'smem constant byte address 0xffff8 - program id location']
+  #allocation14 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xffffc, fixed_abs, tag = 'smem constant byte address 0xffffc - program id location']
+  #allocation15 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xfffe8, fixed_abs, tag = 'smem constant byte address 0xfffe8 - run id low location']
+  #allocation16 [shape = 's32[]', space=sflag, size = 0x4, offset = 0, fixed_abs, tag = 'sflag constant byte address 0x0 - dummy sync flag']
+  $region219: parent=0
+    %s191_s0 = sld [smem:[#allocation15]]
+    %s192_s1 = sand.u32 134217727, %s191_s0
+    %s193_s2 = sor.u32 4026531840, %s192_s1
+    %194 = vtrace %s193_s2
+    %s185_s3 = sld [smem:[#allocation12]]
+    %186 = vtrace %s185_s3
+    %s187_s4 = sld [smem:[#allocation13]]
+    %188 = vtrace %s187_s4
+    %s189_s5 = sld [smem:[#allocation14]]
+    %190 = vtrace %s189_s5
+  %184 = inlined_call /* <late-initialization> */
+  $region220: parent=0
+    %v171_v0 = vlaneseq
+    %v226_v1 = vshrl.u32 %v171_v0, 7
+    %v227_v1 = vpseudo.spill_to_mem %v226_v1
+    %v228_v1 = vpseudo.fill_from_mem %v227_v1
+    %v173_v2 = vshrl.u32 %v228_v1, 1
+    %v229_v1 = vpseudo.fill_from_mem %v227_v1
+    %v174_v3 = vand.u32 1, %v229_v1
+    %v175_v4 = vshll.u32 %v174_v3, 2
+    %v176_v5 = vadd.s32 %v175_v4, %v173_v2
+    %v230_v1 = vpseudo.fill_from_mem %v227_v1
+    %v182_v6 = vsub.s32 %v173_v2, %v230_v1
+    %v231_v1 = vpseudo.fill_from_mem %v227_v1
+    %v177_v7 = vsub.s32 %v176_v5, %v231_v1
+    %178 = vsetiar.raw.iar0 %v177_v7 /* EvenOdd Store IAR initialization */
+    %183 = vsetiar.raw.iar1 %v182_v6 /* EvenOdd Load IAR initialization */
+    %s47_s6 = sld [smem:[#allocation9]]
+    // Predicated region
+    $region28: parent=220 // pred_check
+      %p196_p0 = scmp.eq.s32.totalorder %s47_s6, 0
+    $region29: parent=220 // pred_check_branch
+      %51 = sbr.rel (%p196_p0) target = $region31
+    $region30: parent=220 // pred_region
+      %s52_s7 = sld [smem:[#allocation10]] /* logical chip id */
+      %s53_s8 = sld [smem:[#allocation11]] /* core id */
+      %s197_s9 = sshll.u32 %s52_s7, 1
+      %s55_s10 = sadd.s32 %s197_s9, %s53_s8
+      %v57_v8 = vand.u32 127, %v171_v0
+      %v60_v9 = vstv %s55_s10
+      %v61_v10 = vshll.u32 %v60_v9, 7
+      %v62_v11 = vor.u32 %v61_v10, %v57_v8
+      %s68_s11 = sxor.u32 2925155241, %s47_s6
+      %v64_v12 = vxor.u32 1135663077, %v62_v11
+      %s69_s12 = smul.u32 2223506493, %s68_s11
+      %v65_v13 = vmul.u32 2925155241, %v64_v12
+      %v66_v14 = vshrl.u32 %v65_v13, 16
+      %s70_s13 = sshrl.u32 %s69_s12, 16
+      %v67_v15 = vxor.u32 %v66_v14, %v65_v13
+      %s71_s14 = sxor.u32 %s70_s13, %s69_s12
+      %v72_v16 = vxor.u32 2223506493, %v67_v15
+      %v73_v17 = vmul.u32 1519409121, %v72_v16
+      %s76_s15 = smul.u32 3389127133, %s71_s14
+      %v74_v18 = vshrl.u32 %v73_v17, 16
+      %v75_v19 = vxor.u32 %v74_v18, %v73_v17
+      %v78_v20 = vstv %s76_s15
+      %v77_v21 = vmul.u32 1232336661, %v75_v19
+      %v79_v22 = vsub.s32 %v78_v20, %v77_v21
+      %v80_v23 = vshrl.u32 %v79_v22, 16
+      %v81_v24 = vxor.u32 %v80_v23, %v79_v22
+      %v82_v25 = vxor.u32 1519409121, %v81_v24
+      %v83_v26 = vmul.u32 2449846741, %v82_v25
+      %v84_v27 = vshrl.u32 %v83_v26, 16
+      %v85_v28 = vxor.u32 %v84_v27, %v83_v26
+      %v86_v29 = vmul.u32 3389127133, %v67_v15
+      %v87_v30 = vmul.u32 1232336661, %v85_v28
+      %v88_v31 = vsub.s32 %v86_v29, %v87_v30
+      %v89_v32 = vshrl.u32 %v88_v31, 16
+      %v90_v33 = vxor.u32 %v89_v32, %v88_v31
+      %v95_v34 = vxor.u32 2925155241, %v81_v24
+      %v91_v35 = vxor.u32 1135663077, %v90_v33
+      %v92_v36 = vmul.u32 2925155241, %v91_v35
+      %v96_v37 = vmul.u32 2223506493, %v95_v34
+      %v93_v38 = vshrl.u32 %v92_v36, 16
+      %v94_v39 = vxor.u32 %v93_v38, %v92_v36
+      %v97_v40 = vshrl.u32 %v96_v37, 16
+      %v99_v41 = vxor.u32 2223506493, %v94_v39
+      %v98_v42 = vxor.u32 %v97_v40, %v96_v37
+      %v100_v43 = vmul.u32 1519409121, %v99_v41
+      %v101_v44 = vshrl.u32 %v100_v43, 16
+      %v102_v45 = vxor.u32 %v101_v44, %v100_v43
+      %v103_v46 = vmul.u32 3389127133, %v98_v42
+      %v104_v47 = vmul.u32 1232336661, %v102_v45
+      %v105_v48 = vsub.s32 %v103_v46, %v104_v47
+      %v106_v49 = vshrl.u32 %v105_v48, 16
+      %v107_v50 = vxor.u32 %v106_v49, %v105_v48
+      %v108_v51 = vxor.u32 1519409121, %v107_v50
+      %v109_v52 = vmul.u32 2449846741, %v108_v51
+      %v110_v53 = vshrl.u32 %v109_v52, 16
+      %v111_v54 = vxor.u32 %v110_v53, %v109_v52
+      %v112_v55 = vmul.u32 3389127133, %v94_v39
+      %v125_v56 = vxor.u32 1179257497, %v107_v50
+      %v113_v57 = vmul.u32 1232336661, %v111_v54
+      %v114_v58 = vsub.s32 %v112_v55, %v113_v57
+      %v126_v59 = vmul.u32 2174555301, %v125_v56
+      %v141_v60 = vxor.u32 3546938817, %v107_v50
+      %v115_v61 = vshrl.u32 %v114_v58, 16
+      %v129_v62 = vxor.u32 461070425, %v107_v50
+      %v145_v63 = vxor.u32 728804945, %v107_v50
+      %v116_v0 = vxor.u32 %v115_v61, %v114_v58
+      %v127_v2 = vshrl.u32 %v126_v59, 16
+      %v142_v3 = vmul.u32 1343633581, %v141_v60
+      %v117_v4 = vxor.u32 2337405405, %v116_v0
+      %v121_v5 = vxor.u32 747796405, %v116_v0
+      %v133_v6 = vxor.u32 2174555301, %v116_v0
+      %v130_v7 = vmul.u32 702470093, %v129_v62
+      %v137_v8 = vxor.u32 702470093, %v116_v0
+      %v146_v9 = vmul.u32 1920080165, %v145_v63
+      %v118_v10 = vmul.u32 1179257497, %v117_v4
+      %v122_v11 = vmul.u32 461070425, %v121_v5
+      %v134_v12 = vmul.u32 3546938817, %v133_v6
+      %v138_v13 = vmul.u32 728804945, %v137_v8
+      %v119_v14 = vshrl.u32 %v118_v10, 16
+      %v128_v15 = vxor.u32 %v127_v2, %v126_v59
+      %v143_v16 = vshrl.u32 %v142_v3, 16
+      %v135_v17 = vshrl.u32 %v134_v12, 16
+      %v120_v18 = vxor.u32 %v119_v14, %v118_v10
+      %v131_v19 = vshrl.u32 %v130_v7, 16
+      %v123_v20 = vshrl.u32 %v122_v11, 16
+      %v136_v21 = vxor.u32 %v135_v17, %v134_v12
+      %v139_v22 = vshrl.u32 %v138_v13, 16
+      %v147_v23 = vshrl.u32 %v146_v9, 16
+      %v144_v24 = vxor.u32 %v143_v16, %v142_v3
+      %v149_v25 = vor.u32 %v128_v15, %v120_v18
+      %v150_v26 = vor.u32 %v149_v25, %v136_v21
+      %v124_v27 = vxor.u32 %v123_v20, %v122_v11
+      %v132_v28 = vxor.u32 %v131_v19, %v130_v7
+      %v140_v29 = vxor.u32 %v139_v22, %v138_v13
+      %v148_v30 = vxor.u32 %v147_v23, %v146_v9
+      %v151_v31 = vor.u32 %v150_v26, %v144_v24
+      %v232_v1 = vpseudo.fill_from_mem %v227_v1
+      %vm198_vm0 = vcmp.eq.s32.totalorder %v232_v1, 1
+      %vm152_vm1 = vcmp.eq.s32.totalorder %v151_v31, 0
+      %v233_v1 = vpseudo.fill_from_mem %v227_v1
+      %vm199_vm2 = vcmp.eq.s32.totalorder %v233_v1, 2
+      %v234_v1 = vpseudo.fill_from_mem %v227_v1
+      %vm200_vm3 = vcmp.eq.s32.totalorder %v234_v1, 3
+      %v162_v32 = vsel /*vm=*/%vm152_vm1, /*on_true_vy=*/%v124_v27, /*on_false_vx=*/%v120_v18
+      %v163_v33 = vsel /*vm=*/%vm152_vm1, /*on_true_vy=*/%v132_v28, /*on_false_vx=*/%v128_v15
+      %v165_v34 = vsel /*vm=*/%vm152_vm1, /*on_true_vy=*/%v140_v29, /*on_false_vx=*/%v136_v21
+      %v167_v35 = vsel /*vm=*/%vm152_vm1, /*on_true_vy=*/%v148_v30, /*on_false_vx=*/%v144_v24
+      %v164_v36 = vsel /*vm=*/%vm198_vm0, /*on_true_vy=*/%v163_v33, /*on_false_vx=*/%v162_v32
+      %v166_v37 = vsel /*vm=*/%vm199_vm2, /*on_true_vy=*/%v165_v34, /*on_false_vx=*/%v164_v36
+      %v168_v38 = vsel /*vm=*/%vm200_vm3, /*on_true_vy=*/%v167_v35, /*on_false_vx=*/%v166_v37
+      %169 = set.rngseed %v168_v38 /* Rng seed initialization */
+      %v170_v39 = vrng /* Rng seed initialization */
+    $region31: parent=220 // pred_fallthru
+      _
+    %45 = vsettm 1
+    %s222_s16 = smov 2147483646 /* materialized constant */
+    %44 = vsettm %s222_s16
+    %42 = vtrace 2415919103
+    %s223_s17 = smov [#allocation0] /* materialized constant */
+    %0 = sst [smem:[#allocation1]] %s223_s17
+    %1 = compiler-scheduling-barrier /* program-shared-registry-initialized */
+    %s2_s18 = sld [smem:[#allocation2]]
+  // Predicated region
+  $region1: parent=0 // pred_check
+    %p201_p1 = scmp.ne.s32.totalorder %s2_s18, 1
+  $region2: parent=0 // pred_check_branch
+    %6 = sbr.rel (%p201_p1) target = $region4
+  $region3: parent=0 // pred_region
+    $region221: parent=3
+      $region6: parent=221
+        #allocation3 [shape = 'u32[1]{0}', space=smem, size = 0x4, scoped, fixed_abs, tag = 'Program parameters guard allocation']
+        _
+      %s235_s2 = sld [smem:[#allocation4]]
+      %s236_s2 = spseudo.spill_to_mem %s235_s2
+      %s237_s2 = spseudo.fill_from_mem %s236_s2
+      %s8_s2 = int_to_ptr.hbm [resolvable:$false] %s237_s2
+      $region7: parent=221
+        #allocation5 [shape = 's32[1]{0}', space=sflag, size = 0x4, scoped, tag = 'scoped memory for <no-hlo-instruction>']
+        _
+      %s9_s19 = scalar_parameter_address 0
+      $region8: parent=221
+        #allocation6 [shape = 's32[1]{0}', space=sflag, size = 0x4, scoped, tag = 'scoped memory for <no-hlo-instruction>']
+        _
+      $region9: #{constant.1} parent=221
+        %10 = compiler-scheduling-barrier
+        %11 = compiler-scheduling-barrier
+      $region10: #{seed.1} parent=221
+        %12 = compiler-scheduling-barrier
+        %14 = compiler-scheduling-barrier
+      $region11: #{copy} parent=221
+        %15 = compiler-scheduling-barrier
+        $region12: #{copy} parent=11
+          #allocation7 [shape = 'u32[8,128]{1,0}', space=vmem, size = 0x1000, scoped, tag = 'scoped memory for copy']
+          $region13: #{copy} parent=12
+            #allocation8 [shape = 's32[1]{0}', space=sflag, size = 0x4, scoped, tag = 'scoped memory for copy']
+            %16 = vsyncpa [#allocation8], 0
+            %s224_s20 = smov [#allocation7] /* materialized constant */
+            %s17_s21 = sshll.u32 %s224_s20, 4
+            %s18_s21 = int_to_ptr.vmem [resolvable:$true] %s17_s21
+            %s208_s22 = scalar_lea.vmem %s18_s21, 1
+            %p209_p2 = scmp.ne.s32.totalorder %s18_s21, %s208_s22
+            %s212_s23 = scalar_lea.vmem %s18_s21, 128
+            %p213_p3 = scmp.lt.s32.totalorder %s18_s21, %s18_s21
+            %p214_p4 = scmp.lt.s32.totalorder %s212_s23, %s208_s22
+            %p215_p5 = por %p214_p4, %p213_p3
+            %p216_p6 = pnand %p215_p5, %p209_p2
+            %219 = shalt.err (!%p216_p6) /* BoundsCheck 0 [deref of %s18] for %20 = dma.hbm_to_vmem [thread:$0]  /*hbm=*/%s9, /*size_in_granules=*/1, /*vmem=*/%s18, /*dst_syncflagno=*/[#allocation8]
+hlo: copy
+ */
+            %20 = dma.hbm_to_vmem [thread:$0]  /*hbm=*/%s9_s19, /*size_in_granules=*/1, /*vmem=*/%s18_s21, /*dst_syncflagno=*/[#allocation8]
+            %220 = dma.done.wait [#allocation8], 1 /* local-dma-wait */
+            %221 = vsyncadd [#allocation8], 4294967295
+            %22 = vsyncpa [#allocation8], 1
+          %v23_v1 = vld [vmem:[#allocation7] sm:$0xff]
+        %202 = vpush %v23_v1
+        %s238_s1 = spop %202
+        %s239_s24 = spseudo.spill_to_mem %s238_s1
+        %25 = compiler-scheduling-barrier
+      $region14: #{convert_element_type.3} parent=221
+        %26 = compiler-scheduling-barrier
+        %27 = compiler-scheduling-barrier
+      $region15: #{shift_right_logical.1} parent=221
+        %28 = compiler-scheduling-barrier
+        %s240_s24 = spseudo.fill_from_mem %s239_s24
+        %s29_s1 = sshrl.u32 %s240_s24, 32
+        %30 = compiler-scheduling-barrier
+      $region16: #{convert_element_type.2} parent=221
+        %31 = compiler-scheduling-barrier
+        %32 = compiler-scheduling-barrier
+      $region17: #{bitcast.1} parent=221
+        %33 = compiler-scheduling-barrier
+        %34 = compiler-scheduling-barrier
+      $region18: #{bitcast} parent=221
+        %35 = compiler-scheduling-barrier
+        %36 = compiler-scheduling-barrier
+    $region19: #{pad_add_fusion} parent=3
+      $region222: #{pad_add_fusion} parent=19
+        %40 = vtrace 2147483648
+        %37 = compiler-scheduling-barrier
+        %s241_s2 = spseudo.fill_from_mem %s236_s2
+        %s242_s2 = spseudo.remat %s8_s2, %s241_s2
+        %s243_s24 = spseudo.fill_from_mem %s239_s24
+        %s244_s1 = spseudo.remat %s29_s1, %s243_s24, 32
+        %s245_s0 = spseudo.fill_from_mem %s239_s24
+      %38 = inlined_call %s245_s0, %s244_s1, %s242_s2 /* %pad_add_fusion = fusion(%bitcast.1, %bitcast) */
+      $region223: #{pad_add_fusion} parent=19
+        %39 = compiler-scheduling-barrier
+        %41 = vtrace 2415919104
+    $region224: parent=3
+      _
+  $region4: parent=0 // pred_fallthru
+    _
+  $region225: parent=0
+    %43 = vtrace 2684354559
+    %s225_s25 = smov 2147483647 /* materialized constant */
+    %46 = vsettm %s225_s25
+  %195 = inlined_call /* <late-finalization> */
+  $region226: parent=0
+    _

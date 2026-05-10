@@ -1,0 +1,246 @@
+// [Enable stack traces via -xla_jf_collect_llo_stack_trace or -xla_jf_debug_level=2]
+$region0: #{fusion.32}
+  #allocation0 [shape = 'u32[2048]{0}', space=vmem, size = 0x2000, scoped, tag = 'scoped memory for fusion.32']
+  #allocation1 [shape = 'u32[2048]{0}', space=vmem, size = 0x2000, scoped, tag = 'scoped memory for fusion.32']
+  #allocation2 [shape = 'u32[2048]{0}', space=vmem, size = 0x2000, scoped, tag = 'scoped memory for fusion.32']
+  #allocation3 [shape = 'u32[2048]{0}', space=vmem, size = 0x2000, scoped, tag = 'scoped memory for fusion.32']
+  #allocation4 [shape = 'u32[2048]{0}', space=vmem, size = 0x2000, scoped, tag = 'scoped memory for fusion.32']
+  #allocation5 [shape = 'u32[2048]{0}', space=vmem, size = 0x2000, scoped, tag = 'scoped memory for fusion.32']
+  #allocation6 [shape = 'u32[2048]{0}', space=vmem, size = 0x2000, scoped, tag = 'scoped memory for fusion.32']
+  #allocation7 [shape = 'u32[2048]{0}', space=vmem, size = 0x2000, scoped, tag = 'scoped memory for fusion.32']
+  #allocation8 [shape = 'u32[2048]{0}', space=vmem, size = 0x2000, scoped, tag = 'scoped memory for fusion.32']
+  #allocation9 [shape = 'u32[2048]{0}', space=vmem, size = 0x2000, scoped, tag = 'scoped memory for fusion.32']
+  #allocation18 [shape = 's32[1]{0}', space=sflag, size = 0x4, scoped, tag = 'scoped memory for fusion.32']
+  %s0 = inlined_call_operand.hbm [shape: u32[2], index: 0, kind: input, shape index: {}] /* operand 0 */
+  %s1 = inlined_call_operand.hbm [shape: u32[1], index: 1, kind: output, shape index: {0}] /* operand 1 */
+  %s2 = inlined_call_operand.hbm [shape: u32[1], index: 2, kind: output, shape index: {1}] /* operand 2 */
+  $region1: #{fusion.32} parent=0
+    #allocation10 [shape = 'u8[512]{0}', space=vmem, size = 0x400, scoped, tag = 'operand span for operand 0']
+    #allocation11 [shape = 's32[1]{0}', space=sflag, size = 0x4, scoped, tag = 'scoped memory for fusion.32']
+    #allocation12 [shape = 's32[1]{0}', space=sflag, size = 0x4, scoped, tag = 'scoped memory for fusion.32']
+    #allocation13 [shape = 'u8[512]{0}', space=vmem, size = 0x400, scoped, tag = 'operand span for operand 0']
+    #allocation14 [shape = 's32[1]{0}', space=sflag, size = 0x4, scoped, tag = 'scoped memory for fusion.32']
+    #allocation15 [shape = 'u8[512]{0}', space=vmem, size = 0x400, scoped, tag = 'operand span for operand 1']
+    #allocation16 [shape = 'u8[512]{0}', space=vmem, size = 0x400, scoped, tag = 'operand span for operand 2']
+    #allocation17 [shape = 's32[1]{0}', space=sflag, size = 0x4, scoped, tag = 'scoped memory for fusion.32']
+    %4 = vsyncpa [#allocation11], 0
+    %5 = vsyncpa [#allocation14], 0
+    %6 = vsyncpa [#allocation12], 0
+    %7 = vsyncpa [#allocation17], 0
+    %s12 = sshll.u32 [#allocation10], 4
+    %s20 = sshll.u32 [#allocation13], 4
+    %s13 = int_to_ptr.vmem [resolvable:$true] %s12
+    %s21 = int_to_ptr.vmem [resolvable:$true] %s20
+    %s67 = scalar_lea.hbm %s0, 16
+    %p68 = scmp.ne.s32.totalorder %s0, %s67
+    %p71 = scmp.lt.u32.totalorder %s67, %s0
+    %p73 = pnand %p71, %p68
+    %76 = shalt.err (!%p73) /* BoundsCheck 0 [deref of %s0] for %15 = dma.hbm_to_vmem [thread:$0]  /*hbm=*/%s0, /*size_in_granules=*/16, /*vmem=*/%s13, /*dst_syncflagno=*/[#allocation11] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+hlo: fusion.32
+ */
+    %s77 = scalar_lea.vmem %s13, 16
+    %p78 = scmp.ne.s32.totalorder %s13, %s77
+    %s79 = sshll.u32 [#allocation10], 4
+    %s80 = int_to_ptr.vmem [resolvable:$false] %s79
+    %s81 = scalar_lea.vmem %s80, 32
+    %p82 = scmp.lt.s32.totalorder %s13, %s80
+    %p83 = scmp.lt.s32.totalorder %s81, %s77
+    %p84 = por %p83, %p82
+    %p85 = pnand %p84, %p78
+    %88 = shalt.err (!%p85) /* BoundsCheck 0 [deref of %s13] for %15 = dma.hbm_to_vmem [thread:$0]  /*hbm=*/%s0, /*size_in_granules=*/16, /*vmem=*/%s13, /*dst_syncflagno=*/[#allocation11] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+hlo: fusion.32
+ */
+    %15 = dma.hbm_to_vmem [thread:$0]  /*hbm=*/%s0, /*size_in_granules=*/16, /*vmem=*/%s13, /*dst_syncflagno=*/[#allocation11] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+    %s89 = scalar_lea.hbm %s0, 16
+    %p90 = scmp.ne.s32.totalorder %s0, %s89
+    %p93 = scmp.lt.u32.totalorder %s89, %s0
+    %p95 = pnand %p93, %p90
+    %98 = shalt.err (!%p95) /* BoundsCheck 1 [deref of %s0] for %23 = dma.hbm_to_vmem [thread:$0]  /*hbm=*/%s0, /*size_in_granules=*/16, /*vmem=*/%s21, /*dst_syncflagno=*/[#allocation14] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+hlo: fusion.32
+ */
+    %s99 = scalar_lea.vmem %s21, 16
+    %p100 = scmp.ne.s32.totalorder %s21, %s99
+    %s101 = sshll.u32 [#allocation13], 4
+    %s102 = int_to_ptr.vmem [resolvable:$false] %s101
+    %s103 = scalar_lea.vmem %s102, 32
+    %p104 = scmp.lt.s32.totalorder %s21, %s102
+    %p105 = scmp.lt.s32.totalorder %s103, %s99
+    %p106 = por %p105, %p104
+    %p107 = pnand %p106, %p100
+    %110 = shalt.err (!%p107) /* BoundsCheck 1 [deref of %s21] for %23 = dma.hbm_to_vmem [thread:$0]  /*hbm=*/%s0, /*size_in_granules=*/16, /*vmem=*/%s21, /*dst_syncflagno=*/[#allocation14] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+hlo: fusion.32
+ */
+    %23 = dma.hbm_to_vmem [thread:$0]  /*hbm=*/%s0, /*size_in_granules=*/16, /*vmem=*/%s21, /*dst_syncflagno=*/[#allocation14] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+    %24 = dma.done [#allocation11], 16 /* pipeline-emitter-dma-wait */
+    %25 = dma.done [#allocation14], 16 /* pipeline-emitter-dma-wait */
+    %v30 = vlaneseq
+    %s52 = sshll.u32 [#allocation16], 4
+    %v31 = vand.u32 127, %v30
+    %vm27 = vcmask 1040384 /* [0:0,0:127] */
+    %s53 = int_to_ptr.vmem [resolvable:$true] %s52
+    %v26 = vld [vmem:[#allocation10] sm:$0x1]
+    %v36 = vld [vmem:[#allocation13] sm:$0x1]
+    %v28 = vsel /*vm=*/%vm27, /*on_true_vy=*/0, /*on_false_vx=*/%v26
+    %vm32 = vcmp.lt.s32.totalorder %v31, 1
+    %39 = vst [vmem:[#allocation16] sm:$0x1] /*vst_source=*/%v36
+    %v29 = vrot.slane %v28, 1
+    %s111 = scalar_lea.vmem %s53, 16
+    %p112 = scmp.ne.s32.totalorder %s53, %s111
+    %s113 = sshll.u32 [#allocation16], 4
+    %s114 = int_to_ptr.vmem [resolvable:$false] %s113
+    %s115 = scalar_lea.vmem %s114, 32
+    %p116 = scmp.lt.s32.totalorder %s53, %s114
+    %p117 = scmp.lt.s32.totalorder %s115, %s111
+    %p118 = por %p117, %p116
+    %p119 = pnand %p118, %p112
+    %122 = shalt.err (!%p119) /* BoundsCheck 5 [deref of %s53] for %55 = dma.vmem_to_hbm [thread:$0]  /*vmem=*/%s53, /*size_in_granules=*/16, /*hbm=*/%s2, /*dst_syncflagno=*/[#allocation17] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+hlo: fusion.32
+ */
+    %s123 = scalar_lea.hbm %s2, 16
+    %p124 = scmp.ne.s32.totalorder %s2, %s123
+    %p127 = scmp.lt.u32.totalorder %s123, %s2
+    %p129 = pnand %p127, %p124
+    %132 = shalt.err (!%p129) /* BoundsCheck 5 [deref of %s2] for %55 = dma.vmem_to_hbm [thread:$0]  /*vmem=*/%s53, /*size_in_granules=*/16, /*hbm=*/%s2, /*dst_syncflagno=*/[#allocation17] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+hlo: fusion.32
+ */
+    %55 = dma.vmem_to_hbm [thread:$0]  /*vmem=*/%s53, /*size_in_granules=*/16, /*hbm=*/%s2, /*dst_syncflagno=*/[#allocation17] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+    %v33 = vsel /*vm=*/%vm32, /*on_true_vy=*/%v29, /*on_false_vx=*/%v26
+    %34 = vrot.lane.b32.xlu0 %v33, 127
+    %s44 = sshll.u32 [#allocation15], 4
+    %s45 = int_to_ptr.vmem [resolvable:$true] %s44
+    %v35 = vpop.permute.xlu0 %34
+    %38 = vst [vmem:[#allocation15] sm:$0x1] /*vst_source=*/%v35
+    %s133 = scalar_lea.vmem %s45, 16
+    %p134 = scmp.ne.s32.totalorder %s45, %s133
+    %s135 = sshll.u32 [#allocation15], 4
+    %s136 = int_to_ptr.vmem [resolvable:$false] %s135
+    %s137 = scalar_lea.vmem %s136, 32
+    %p138 = scmp.lt.s32.totalorder %s45, %s136
+    %p139 = scmp.lt.s32.totalorder %s137, %s133
+    %p140 = por %p139, %p138
+    %p141 = pnand %p140, %p134
+    %144 = shalt.err (!%p141) /* BoundsCheck 7 [deref of %s45] for %47 = dma.vmem_to_hbm [thread:$0]  /*vmem=*/%s45, /*size_in_granules=*/16, /*hbm=*/%s1, /*dst_syncflagno=*/[#allocation12] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+hlo: fusion.32
+ */
+    %s145 = scalar_lea.hbm %s1, 16
+    %p146 = scmp.ne.s32.totalorder %s1, %s145
+    %p149 = scmp.lt.u32.totalorder %s145, %s1
+    %p151 = pnand %p149, %p146
+    %154 = shalt.err (!%p151) /* BoundsCheck 7 [deref of %s1] for %47 = dma.vmem_to_hbm [thread:$0]  /*vmem=*/%s45, /*size_in_granules=*/16, /*hbm=*/%s1, /*dst_syncflagno=*/[#allocation12] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+hlo: fusion.32
+ */
+    %47 = dma.vmem_to_hbm [thread:$0]  /*vmem=*/%s45, /*size_in_granules=*/16, /*hbm=*/%s1, /*dst_syncflagno=*/[#allocation12] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+    %56 = dma.done [#allocation12], 16 /* pipeline-emitter-dma-wait */
+    %57 = dma.done [#allocation17], 16 /* pipeline-emitter-dma-wait */
+    %58 = vsyncpa [#allocation11], 1
+    %59 = vsyncpa [#allocation14], 1
+    %60 = vsyncpa [#allocation12], 1
+    %61 = vsyncpa [#allocation17], 1

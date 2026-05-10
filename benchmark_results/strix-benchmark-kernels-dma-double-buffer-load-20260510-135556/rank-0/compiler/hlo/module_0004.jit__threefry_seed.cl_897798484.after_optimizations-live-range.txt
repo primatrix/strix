@@ -1,0 +1,29 @@
+HloLiveRange (max 9):
+  InstructionSequence:
+    0:constant.1
+    1:seed.1
+    2:copy
+    3:convert_element_type.3
+    4:shift_right_logical.1
+    5:convert_element_type.2
+    6:bitcast.1
+    7:bitcast
+    8:pad_add_fusion
+  BufferLiveRange:
+    seed.1{}:0-9
+    copy{}:2-4
+    convert_element_type.3{}:3-8
+    constant.1{}:0-4
+    shift_right_logical.1{}:4-5
+    convert_element_type.2{}:5-8
+    pad_add_fusion{}:8-9
+  Live ranges at 5 (peak):
+    convert_element_type.2{}: 4 bytes (cumulative: 4 bytes)
+    convert_element_type.3{}: 4 bytes (cumulative: 8 bytes)
+    seed.1{}: 4 bytes (cumulative: 12 bytes)
+    shift_right_logical.1{}: 4 bytes (cumulative: 16 bytes)
+  Stack trace breakdown for peak usage: 16 bytes
+    main.1 (100.0%, total: 16 bytes, current: 0 bytes, remaining: 16 bytes)
+      ├── jit(_threefry_seed)/convert_element_type (50.0%, total: 8 bytes, current: 8 bytes, remaining: 8 bytes)
+      ├── jit(_threefry_seed)/shift_right_logical (25.0%, total: 4 bytes, current: 4 bytes, remaining: 4 bytes)
+      └── seed (25.0%, total: 4 bytes, current: 4 bytes, remaining: 0 bytes)

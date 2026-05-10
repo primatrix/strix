@@ -1,0 +1,4 @@
+buffer_id,buffer_name,alt_mem_benefit,size,definition_time,use_times,use_names,is_scoped
+-1,"scoped allocation for copy.1",0,11744052,1,"","",1
+-2,"scoped allocation for copy",0,67108864,3,"","",1
+-2,"scoped allocation for copy",0,67108864,4,"","",1

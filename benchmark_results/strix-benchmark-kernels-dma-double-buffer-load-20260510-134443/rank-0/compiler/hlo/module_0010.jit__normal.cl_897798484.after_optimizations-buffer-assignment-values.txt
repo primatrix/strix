@@ -1,0 +1,87 @@
+
+Total bytes used: 100714496 (96.05MiB)
+
+Used values:
+<323 key.1 @0>
+ positions:
+  key.1
+ uses:
+  fusion.32, operand 0
+ from instruction: %key.1 = u32[2]{0:T(128)} parameter(0), metadata={op_name="key"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"0"}],"used_scoped_memory_configs":[]}
+<324 fusion.32{} @0>
+ positions:
+  fusion.32 {}
+ uses:
+  get-tuple-element, operand 0 {}
+  get-tuple-element.1, operand 0 {}
+ from instruction: %fusion.32 = (u32[1]{0:T(128)}, u32[1]{0:T(128)}) fusion(%key.1), kind=kLoop, calls=%fused_computation.43, metadata={op_name="jit(_normal)/jit(_normal_real)/jit(_uniform)/slice"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"11744052"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
+<325 fusion.32{0} @0>
+ positions:
+  fusion.32 {0}
+  bitcast.1
+  get-tuple-element
+ uses:
+  fusion.18, operand 1
+  xor.72, operand 1
+  bitcast.1, operand 0
+ from instruction: %fusion.32 = (u32[1]{0:T(128)}, u32[1]{0:T(128)}) fusion(%key.1), kind=kLoop, calls=%fused_computation.43, metadata={op_name="jit(_normal)/jit(_normal_real)/jit(_uniform)/slice"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"11744052"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
+<326 fusion.32{1} @0>
+ positions:
+  fusion.32 {1}
+  bitcast
+  get-tuple-element.1
+ uses:
+  fusion.18, operand 2
+  xor.72, operand 0
+  bitcast, operand 0
+ from instruction: %fusion.32 = (u32[1]{0:T(128)}, u32[1]{0:T(128)}) fusion(%key.1), kind=kLoop, calls=%fused_computation.43, metadata={op_name="jit(_normal)/jit(_normal_real)/jit(_uniform)/slice"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"11744052"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
+<327 xor.72 @6>
+ positions:
+  xor.72
+ uses:
+  xor.73, operand 0
+ from instruction: %xor.72 = u32[]{:T(128)S(6)} xor(%bitcast, %bitcast.1), metadata={op_name="jit(_normal)/jit(_normal_real)/jit(_uniform)/xor"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"67108864"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
+<328 constant.46 @0>
+ positions:
+  constant.46
+ uses:
+  xor.73, operand 1
+ from instruction: %constant.46 = u32[]{:T(128)} constant(466688986), metadata={op_name="jit(_normal)/jit(_normal_real)/jit(_uniform)"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"0"}],"used_scoped_memory_configs":[]}
+<329 xor.73 @6>
+ positions:
+  xor.73
+ uses:
+  fusion.18, operand 0
+ from instruction: %xor.73 = u32[]{:T(128)S(6)} xor(%xor.72, %constant.46), metadata={op_name="jit(_normal)/jit(_normal_real)/jit(_uniform)/xor"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"67108864"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[{"indices":["0","2"]}]}}
+<330 fusion.25{} @0>
+ positions:
+  fusion.25 {}
+ uses:
+  get-tuple-element.2, operand 0 {}
+  get-tuple-element.3, operand 0 {}
+ from instruction: %fusion.25 = (u32[8192]{0:T(1024)S(1)}, u32[8192]{0:T(1024)S(1)}) fusion(), kind=kLoop, calls=%fused_computation.35, metadata={op_name="jit(_normal)/jit(_normal_real)/jit(_uniform)/iota_2x32_shape"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"11744052"}],"used_scoped_memory_configs":[],"fusion_formation_source":{"fusion_creating_compiler_pass":"TpuAdvancedMOF","fusion_id":"42"},"aliasing_operands":{"lists":[]}}
+<331 fusion.25{0} @1>
+ positions:
+  fusion.25 {0}
+  get-tuple-element.2
+ uses:
+  fusion.18, operand 5
+ from instruction: %fusion.25 = (u32[8192]{0:T(1024)S(1)}, u32[8192]{0:T(1024)S(1)}) fusion(), kind=kLoop, calls=%fused_computation.35, metadata={op_name="jit(_normal)/jit(_normal_real)/jit(_uniform)/iota_2x32_shape"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"11744052"}],"used_scoped_memory_configs":[],"fusion_formation_source":{"fusion_creating_compiler_pass":"TpuAdvancedMOF","fusion_id":"42"},"aliasing_operands":{"lists":[]}}
+<332 fusion.25{1} @1>
+ positions:
+  fusion.25 {1}
+  get-tuple-element.3
+ uses:
+  fusion.18, operand 3
+ from instruction: %fusion.25 = (u32[8192]{0:T(1024)S(1)}, u32[8192]{0:T(1024)S(1)}) fusion(), kind=kLoop, calls=%fused_computation.35, metadata={op_name="jit(_normal)/jit(_normal_real)/jit(_uniform)/iota_2x32_shape"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"11744052"}],"used_scoped_memory_configs":[],"fusion_formation_source":{"fusion_creating_compiler_pass":"TpuAdvancedMOF","fusion_id":"42"},"aliasing_operands":{"lists":[]}}
+<333 broadcast_add_fusion @1>
+ positions:
+  broadcast_add_fusion
+ uses:
+  fusion.18, operand 4
+ from instruction: %broadcast_add_fusion = u32[8192]{0:T(1024)S(1)} fusion(), kind=kLoop, calls=%fused_computation.42, metadata={op_name="jit(_normal)/jit(_normal_real)/jit(_uniform)/iota_2x32_shape"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"11744052"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
+<334 fusion.18 @0>
+ positions:
+  fusion.18
+ uses:
+ from instruction: %fusion.18 = bf16[8192,2048]{1,0:T(8,128)(2,1)} fusion(%xor.73, %bitcast.1, %bitcast, %get-tuple-element.3, %broadcast_add_fusion, /*index=5*/%get-tuple-element.2), kind=kLoop, calls=%fused_computation.25, metadata={op_name="jit(_normal)/jit(_normal_real)/mul"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"20132660"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}

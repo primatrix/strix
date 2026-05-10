@@ -1,0 +1,21 @@
+
+Total bytes used: 67110400 (64.00MiB)
+
+Used values:
+<0 args_0_.1 @0>
+ positions:
+  args_0_.1
+ uses:
+  copy.1, operand 0
+ from instruction: %args_0_.1 = s32[]{:T(128)} parameter(0), metadata={op_name="args[0]"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"0"}],"used_scoped_memory_configs":[]}
+<1 copy.1 @6>
+ positions:
+  copy.1
+ uses:
+  copy, operand 0
+ from instruction: %copy.1 = s32[]{:T(128)S(6)} copy(%args_0_.1), backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"67108864"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
+<2 copy @0>
+ positions:
+  copy
+ uses:
+ from instruction: %copy = s32[]{:T(128)} copy(%copy.1), backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"67108864"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}

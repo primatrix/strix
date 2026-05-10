@@ -1,0 +1,4 @@
+buffer_id,buffer_name,alt_mem_benefit,size,definition_time,use_times,use_names,is_scoped
+-1,"scoped allocation for tpu_custom_call.1",0,67108864,1,"","",1
+-1,"scoped allocation for tpu_custom_call.1",0,67108864,2,"","",1
+0,"<0 args_0_.1>",1.08042e-09,33554432,0,"1","tpu_custom_call.1, operand 0",0

@@ -1,0 +1,7 @@
+program_id: 0
+executable_size: 0
+optimized_hlo_instruction_count: 3
+module_name: "jit_convert_element_type"
+executable_fingerprint: ""
+borg_cell: ""
+borg_uid: 0

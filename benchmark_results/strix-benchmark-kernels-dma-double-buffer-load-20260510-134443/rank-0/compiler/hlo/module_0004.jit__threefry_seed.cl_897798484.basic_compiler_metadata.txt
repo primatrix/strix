@@ -1,0 +1,7 @@
+program_id: 0
+executable_size: 0
+optimized_hlo_instruction_count: 15
+module_name: "jit__threefry_seed"
+executable_fingerprint: ""
+borg_cell: ""
+borg_uid: 0

@@ -1,0 +1,218 @@
+// [Enable stack traces via -xla_jf_collect_llo_stack_trace or -xla_jf_debug_level=2]
+$region0:
+  #allocation0 [shape = 'u32[1]{0}', space=smem, size = 0x4, tag = 'Program registry']
+  #allocation1 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xfff98, fixed_abs, tag = 'smem constant byte address 0xfff98 - program shared registry']
+  #allocation2 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xfffa8, fixed_abs, tag = 'smem constant byte address 0xfffa8 - program descriptor state']
+  #allocation4 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xfff90, fixed_abs, tag = 'smem constant byte address 0xfff90 - output ptr']
+  #allocation7 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xfff80, fixed_abs, tag = 'smem constant byte address 0xfff80 - rng seed']
+  #allocation8 [shape = 'u32[]', space=smem, size = 0x4, offset = 0, fixed_abs, tag = 'smem constant byte address 0x0 - chip ID']
+  #allocation9 [shape = 'u32[]', space=smem, size = 0x4, offset = 0x4, fixed_abs, tag = 'smem constant byte address 0x4 - core index']
+  #allocation10 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xffff4, fixed_abs, tag = 'smem constant byte address 0xffff4 - program id location']
+  #allocation11 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xffff8, fixed_abs, tag = 'smem constant byte address 0xffff8 - program id location']
+  #allocation12 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xffffc, fixed_abs, tag = 'smem constant byte address 0xffffc - program id location']
+  #allocation13 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xfffe8, fixed_abs, tag = 'smem constant byte address 0xfffe8 - run id low location']
+  // region range: [0, 199)
+  $region185: parent=0
+    // region range: [0, 30)
+    %s167_s0 = sld [smem:[#allocation13]]
+    %s168_s1 = sand.u32 134217727, %s167_s0
+    %s169_s2 = sor.u32 4026531840, %s168_s1
+    %170 = vtrace %s169_s2
+    %s161_s3 = sld [smem:[#allocation10]]
+    %162 = vtrace %s161_s3
+    %s163_s4 = sld [smem:[#allocation11]]
+    %164 = vtrace %s163_s4
+    %s165_s5 = sld [smem:[#allocation12]]
+    %166 = vtrace %s165_s5
+  %160 = inlined_call /* <late-initialization> */
+  $region186: parent=0
+    // region range: [31, 174)
+    %v147_v0 = vlaneseq
+    %v184_v1 = vshrl.u32 %v147_v0, 7
+    %v149_v2 = vshrl.u32 %v184_v1, 1
+    %v150_v3 = vand.u32 1, %v184_v1
+    %v151_v4 = vshll.u32 %v150_v3, 2
+    %v152_v5 = vadd.s32 %v151_v4, %v149_v2
+    %v158_v6 = vsub.s32 %v149_v2, %v184_v1
+    %v153_v7 = vsub.s32 %v152_v5, %v184_v1
+    %154 = vsetiar.raw.iar0 %v153_v7 /* EvenOdd Store IAR initialization */
+    %159 = vsetiar.raw.iar1 %v158_v6 /* EvenOdd Load IAR initialization */
+    %s23_s6 = sld [smem:[#allocation7]]
+    // Predicated region
+    $region19: parent=186 // pred_check
+      // region range: [31, 52)
+      %p172_p0 = scmp.eq.s32.totalorder %s23_s6, 0
+    $region20: parent=186 // pred_check_branch
+      // region range: [31, 60)
+      %27 = sbr.rel (%p172_p0) target bundleno = 166 (0xa6), region = 22
+    $region21: parent=186 // pred_region
+      // region range: [31, 166)
+      %s28_s7 = sld [smem:[#allocation8]] (!%p172_p0) /* logical chip id */
+      %s29_s8 = sld [smem:[#allocation9]] (!%p172_p0) /* core id */
+      %s173_s9 = sshll.u32 (!%p172_p0), %s28_s7, 1
+      %s31_s10 = sadd.s32 (!%p172_p0), %s173_s9, %s29_s8
+      %v33_v8 = vand.u32 (!%p172_p0), 127, %v147_v0
+      %v36_v9 = vstv %s31_s10
+      %v37_v10 = vshll.u32 %v36_v9, 7
+      %v38_v11 = vor.u32 %v37_v10, %v33_v8
+      %s44_s11 = sxor.u32 (!%p172_p0), 2925155241, %s23_s6
+      %v40_v12 = vxor.u32 1135663077, %v38_v11
+      %s45_s12 = smul.u32 (!%p172_p0), 2223506493, %s44_s11
+      %v41_v13 = vmul.u32 2925155241, %v40_v12
+      %v42_v14 = vshrl.u32 %v41_v13, 16
+      %s46_s13 = sshrl.u32 (!%p172_p0), %s45_s12, 16
+      %v43_v15 = vxor.u32 %v42_v14, %v41_v13
+      %s47_s14 = sxor.u32 (!%p172_p0), %s46_s13, %s45_s12
+      %v48_v16 = vxor.u32 2223506493, %v43_v15
+      %v49_v17 = vmul.u32 1519409121, %v48_v16
+      %s52_s15 = smul.u32 (!%p172_p0), 3389127133, %s47_s14
+      %v50_v18 = vshrl.u32 %v49_v17, 16
+      %v51_v19 = vxor.u32 %v50_v18, %v49_v17
+      %v54_v20 = vstv %s52_s15
+      %v53_v21 = vmul.u32 1232336661, %v51_v19
+      %v55_v22 = vsub.s32 %v54_v20, %v53_v21
+      %v56_v23 = vshrl.u32 %v55_v22, 16
+      %v57_v24 = vxor.u32 %v56_v23, %v55_v22
+      %v58_v25 = vxor.u32 1519409121, %v57_v24
+      %v59_v26 = vmul.u32 2449846741, %v58_v25
+      %v60_v27 = vshrl.u32 %v59_v26, 16
+      %v61_v28 = vxor.u32 %v60_v27, %v59_v26
+      %v62_v29 = vmul.u32 3389127133, %v43_v15
+      %v63_v30 = vmul.u32 1232336661, %v61_v28
+      %v64_v31 = vsub.s32 %v62_v29, %v63_v30
+      %v65_v32 = vshrl.u32 %v64_v31, 16
+      %v66_v33 = vxor.u32 %v65_v32, %v64_v31
+      %v71_v34 = vxor.u32 2925155241, %v57_v24
+      %v67_v35 = vxor.u32 1135663077, %v66_v33
+      %v68_v36 = vmul.u32 2925155241, %v67_v35
+      %v72_v37 = vmul.u32 2223506493, %v71_v34
+      %v69_v38 = vshrl.u32 %v68_v36, 16
+      %v70_v39 = vxor.u32 %v69_v38, %v68_v36
+      %v73_v40 = vshrl.u32 %v72_v37, 16
+      %v75_v41 = vxor.u32 2223506493, %v70_v39
+      %v74_v42 = vxor.u32 %v73_v40, %v72_v37
+      %v76_v43 = vmul.u32 1519409121, %v75_v41
+      %v77_v44 = vshrl.u32 %v76_v43, 16
+      %v78_v45 = vxor.u32 %v77_v44, %v76_v43
+      %v79_v46 = vmul.u32 3389127133, %v74_v42
+      %v80_v47 = vmul.u32 1232336661, %v78_v45
+      %v81_v48 = vsub.s32 %v79_v46, %v80_v47
+      %v82_v49 = vshrl.u32 %v81_v48, 16
+      %v83_v50 = vxor.u32 %v82_v49, %v81_v48
+      %v84_v51 = vxor.u32 1519409121, %v83_v50
+      %v85_v52 = vmul.u32 2449846741, %v84_v51
+      %v86_v53 = vshrl.u32 %v85_v52, 16
+      %v87_v54 = vxor.u32 %v86_v53, %v85_v52
+      %v88_v55 = vmul.u32 3389127133, %v70_v39
+      %v101_v56 = vxor.u32 1179257497, %v83_v50
+      %v89_v57 = vmul.u32 1232336661, %v87_v54
+      %v90_v58 = vsub.s32 %v88_v55, %v89_v57
+      %v102_v59 = vmul.u32 2174555301, %v101_v56
+      %v117_v60 = vxor.u32 3546938817, %v83_v50
+      %v91_v61 = vshrl.u32 %v90_v58, 16
+      %v105_v62 = vxor.u32 461070425, %v83_v50
+      %v121_v63 = vxor.u32 728804945, %v83_v50
+      %v92_v0 = vxor.u32 %v91_v61, %v90_v58
+      %v103_v2 = vshrl.u32 %v102_v59, 16
+      %v118_v3 = vmul.u32 1343633581, %v117_v60
+      %v93_v4 = vxor.u32 2337405405, %v92_v0
+      %v97_v5 = vxor.u32 747796405, %v92_v0
+      %v109_v6 = vxor.u32 2174555301, %v92_v0
+      %v106_v7 = vmul.u32 702470093, %v105_v62
+      %v113_v8 = vxor.u32 702470093, %v92_v0
+      %v122_v9 = vmul.u32 1920080165, %v121_v63
+      %v94_v10 = vmul.u32 1179257497, %v93_v4
+      %v98_v11 = vmul.u32 461070425, %v97_v5
+      %v110_v12 = vmul.u32 3546938817, %v109_v6
+      %v114_v13 = vmul.u32 728804945, %v113_v8
+      %v95_v14 = vshrl.u32 %v94_v10, 16
+      %v104_v15 = vxor.u32 %v103_v2, %v102_v59
+      %v119_v16 = vshrl.u32 %v118_v3, 16
+      %v111_v17 = vshrl.u32 %v110_v12, 16
+      %v96_v18 = vxor.u32 %v95_v14, %v94_v10
+      %v107_v19 = vshrl.u32 %v106_v7, 16
+      %v99_v20 = vshrl.u32 %v98_v11, 16
+      %v112_v21 = vxor.u32 %v111_v17, %v110_v12
+      %v115_v22 = vshrl.u32 %v114_v13, 16
+      %v123_v23 = vshrl.u32 %v122_v9, 16
+      %v120_v24 = vxor.u32 %v119_v16, %v118_v3
+      %v125_v25 = vor.u32 %v104_v15, %v96_v18
+      %v126_v26 = vor.u32 %v125_v25, %v112_v21
+      %v100_v27 = vxor.u32 %v99_v20, %v98_v11
+      %v108_v28 = vxor.u32 %v107_v19, %v106_v7
+      %v116_v29 = vxor.u32 %v115_v22, %v114_v13
+      %v124_v30 = vxor.u32 %v123_v23, %v122_v9
+      %v127_v31 = vor.u32 %v126_v26, %v120_v24
+      %vm174_vm0 = vcmp.eq.s32.totalorder (!%p172_p0), %v184_v1, 1
+      %vm128_vm1 = vcmp.eq.s32.totalorder %v127_v31, 0
+      %vm175_vm2 = vcmp.eq.s32.totalorder (!%p172_p0), %v184_v1, 2
+      %vm176_vm3 = vcmp.eq.s32.totalorder (!%p172_p0), %v184_v1, 3
+      %v138_v32 = vsel /*vm=*/%vm128_vm1, /*on_true_vy=*/%v100_v27, /*on_false_vx=*/%v96_v18
+      %v139_v33 = vsel /*vm=*/%vm128_vm1, /*on_true_vy=*/%v108_v28, /*on_false_vx=*/%v104_v15
+      %v141_v34 = vsel /*vm=*/%vm128_vm1, /*on_true_vy=*/%v116_v29, /*on_false_vx=*/%v112_v21
+      %v143_v35 = vsel /*vm=*/%vm128_vm1, /*on_true_vy=*/%v124_v30, /*on_false_vx=*/%v120_v24
+      %v140_v36 = vsel /*vm=*/%vm174_vm0, /*on_true_vy=*/%v139_v33, /*on_false_vx=*/%v138_v32
+      %v142_v37 = vsel /*vm=*/%vm175_vm2, /*on_true_vy=*/%v141_v34, /*on_false_vx=*/%v140_v36
+      %v144_v38 = vsel /*vm=*/%vm176_vm3, /*on_true_vy=*/%v143_v35, /*on_false_vx=*/%v142_v37
+      %145 = set.rngseed %v144_v38 /* Rng seed initialization */
+      %v146_v39 = vrng /* Rng seed initialization */
+    $region22: parent=186 // pred_fallthru
+      // region range: [166, 166)
+    %21 = vsettm 1
+    %s181_s16 = smov 2147483646 /* materialized constant */
+    %20 = vsettm %s181_s16
+    %18 = vtrace 2415919103
+    %s182_s17 = smov [#allocation0] /* materialized constant */
+    %0 = sst [smem:[#allocation1]] %s182_s17
+    %1 = compiler-scheduling-barrier /* program-shared-registry-initialized */
+    %s2_s18 = sld [smem:[#allocation2]]
+  // Predicated region
+  $region1: parent=0 // pred_check
+    // region range: [173, 180)
+    %p177_p1 = scmp.ne.s32.totalorder %s2_s18, 1
+  $region2: parent=0 // pred_check_branch
+    // region range: [173, 188)
+    %6 = sbr.rel (%p177_p1) target bundleno = 193 (0xc1), region = 4
+  $region3: parent=0 // pred_region
+    // region range: [173, 193)
+    $region187: parent=3
+      // region range: [173, 190)
+      $region6: parent=187
+        #allocation3 [shape = 'u32[1]{0}', space=smem, size = 0x4, offset = 0xfff6c, scoped, fixed_abs, tag = 'Program parameters guard allocation']
+        // region range: [188, 188)
+      %s193_s1 = sld [smem:[#allocation4]]
+      %s8_s1 = int_to_ptr.hbm [resolvable:$false] %s193_s1
+      $region7: parent=187
+        #allocation5 [shape = 's32[1]{0}', space=sflag, size = 0x4, offset = 0xcc, scoped, tag = 'scoped memory for <no-hlo-instruction>']
+        // region range: [189, 189)
+      %s9_s0 = scalar_parameter_address 0
+      $region8: parent=187
+        #allocation6 [shape = 's32[1]{0}', space=sflag, size = 0x4, offset = 0xcc, scoped, tag = 'scoped memory for <no-hlo-instruction>']
+        // region range: [190, 190)
+      $region9: #{args_0_.1} parent=187
+        // region range: [190, 190)
+        %10 = compiler-scheduling-barrier
+        %12 = compiler-scheduling-barrier
+    $region10: #{tpu_custom_call.1} parent=3
+      // region range: [190, 193)
+      $region188: #{tpu_custom_call.1} parent=10
+        // region range: [190, 191)
+        %16 = vtrace 2147483648
+        %13 = compiler-scheduling-barrier
+      %14 = inlined_call %s9_s0, %s8_s1 /* %tpu_custom_call.1 = custom-call(%args_0_.1) */
+      $region189: #{tpu_custom_call.1} parent=10
+        // region range: [192, 193)
+        %15 = compiler-scheduling-barrier
+        %17 = vtrace 2415919104
+    $region190: parent=3
+      // region range: [193, 193)
+  $region4: parent=0 // pred_fallthru
+    // region range: [193, 193)
+  $region191: parent=0
+    // region range: [193, 196)
+    %19 = vtrace 2684354559
+    %s183_s19 = smov 2147483647 /* materialized constant */
+    %22 = vsettm %s183_s19
+  %171 = inlined_call /* <late-finalization> */
+  $region192: parent=0
+    // region range: [199, 199)

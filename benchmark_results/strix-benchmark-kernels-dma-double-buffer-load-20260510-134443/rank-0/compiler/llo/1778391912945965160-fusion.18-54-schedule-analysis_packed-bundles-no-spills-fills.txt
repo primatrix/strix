@@ -1,0 +1,6 @@
+Schedule analysis:
+	total scheduled bundles:    12238
+	empty scheduled bundles:    97
+	non empty scheduled bundles: 12141
+	12141.00 scheduled bundles (100.00%): %fusion.18 = bf16[8192,2048]{1,0:T(8,128)(2,1)} fusion(%xor.73, %bitcast.1, %bitcast, %get-tuple-element.3, %broadcast_add_fusion, /*index=5*/%get-tuple-element.2), kind=kLoop, calls=%fused_computation.25, metadata={op_name="jit(_normal)/jit(_normal_real)/mul"}, backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"20132660"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
+	[opcode]   12141 scheduled bundles (100.00%): fusion               (1 instances, 12141.00 avg)

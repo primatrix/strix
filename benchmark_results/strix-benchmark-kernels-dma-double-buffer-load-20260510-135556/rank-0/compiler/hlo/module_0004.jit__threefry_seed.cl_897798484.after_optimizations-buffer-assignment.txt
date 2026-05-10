@@ -1,0 +1,14 @@
+BufferAssignment:
+allocation 0: size 512, constant:
+ value: <9 constant.1 @0> (size=512,offset=0): s32[]{:T(128)}
+allocation 1: size 512, output shape is |u32[2]|, maybe-live-out:
+ value: <12 pad_add_fusion @0> (size=512,offset=0): u32[2]{0:T(128)}
+allocation 2: size 512, parameter 0, shape |s32[]| at ShapeIndex {}:
+ value: <6 seed.1 @0> (size=512,offset=0): s32[]{:T(128)}
+allocation 3: size 67108864, color 1, preallocated-temp:
+allocation 4: size 16896, preallocated-temp:
+ value: <8 convert_element_type.3 @0> (size=512,offset=0): u32[]{:T(128)}
+ value: <11 convert_element_type.2 @0> (size=512,offset=16384): u32[]{:T(128)}
+allocation 5: size 1024, color 6, preallocated-temp:
+ value: <7 copy @6> (size=512,offset=0): s32[]{:T(128)S(6)}
+ value: <10 shift_right_logical.1 @6> (size=512,offset=512): s32[]{:T(128)S(6)}

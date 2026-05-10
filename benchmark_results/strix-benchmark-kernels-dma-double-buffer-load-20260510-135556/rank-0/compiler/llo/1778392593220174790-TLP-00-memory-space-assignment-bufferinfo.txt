@@ -1,0 +1,13 @@
+buffer_id,buffer_name,alt_mem_benefit,size,definition_time,use_times,use_names,is_scoped
+-327,"scoped allocation for xor.72",0,67108864,7,"","",1
+-333,"scoped allocation for broadcast_add_fusion",0,11744052,9,"","",1
+-334,"scoped allocation for fusion.18",0,20132660,13,"","",1
+-324,"scoped allocation for fusion.32",0,11744052,2,"","",1
+-329,"scoped allocation for xor.73",0,67108864,8,"","",1
+-330,"scoped allocation for fusion.25",0,11744052,10,"","",1
+-334,"scoped allocation for fusion.18",0,67108864,14,"","",1
+333,"<333 broadcast_add_fusion>",3.37631e-11,32768,9,"13","fusion.18, operand 4",0
+331,"<331 fusion.25{0}>",3.37631e-11,32768,10,"13","fusion.18, operand 5",0
+332,"<332 fusion.25{1}>",3.37631e-11,32768,10,"13","fusion.18, operand 3",0
+323,"<323 key.1>",8.44077e-12,512,1,"2","fusion.32, operand 0",0
+334,"<334 fusion.18>",-1.4011e-09,33554432,13,"","",0

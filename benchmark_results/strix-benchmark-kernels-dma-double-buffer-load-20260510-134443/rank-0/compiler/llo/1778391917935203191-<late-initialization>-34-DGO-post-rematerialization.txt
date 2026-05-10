@@ -1,0 +1,42 @@
+
+%s0 = sld [smem:[#allocation0]]
+%s1 = sand.u32 1023, %s0 /* smod.u32 w/div 1024 */
+
+%p54 = scmp.ne.s32.totalorder %s1, 0
+
+%5 = sbr.rel (%p54) target = $region5
+
+%s12 = sld [smem:[#allocation3]]
+%s13 = sld [smem:[#allocation4]]
+%s14 = sshrl.u32 %s13, 20
+%s15 = sshll.u32 %s13, 12
+%s55 = sshll.u32 %s12, 5
+%s29 = sadd.s32 1, %s12
+%s23 = sadd.s32 %s55, %s15
+%p24 = sc.u32 %s15, %s55
+%s30 = sand.u32 1023, %s29
+%s31 = sand.u32 127, %s12
+%s26 = scalar_select /*predicate=*/%p24, /*on_true=*/1, /*on_false=*/0
+%s56 = smul.u32 3, %s31
+%s27 = sadd.s32 %s26, %s14
+%s33 = scalar_lea.smem [#allocation5], %s56
+
+%34 = vwait.ge [#allocation6], 4294967169 /* ProgramChange */
+
+%35 = vsyncadd [#allocation6], 4294967295
+%s57 = smov 4278190080 /* materialized constant */
+%36 = sst [smem:[%s33]] %s57
+%s38 = sld [smem:[#allocation0]]
+%s41 = sld [smem:[#allocation8]]
+%s37 = scalar_lea.smem %s33, 1 [#allocation5]
+%s40 = scalar_lea.smem %s33, 2 [#allocation5]
+%39 = sst [smem:[%s37]] %s38
+%42 = sst [smem:[%s40]] %s41
+
+%43 = vwait.ne [#allocation9], %s30
+%s44 = sld [smem:[#allocation11]]
+%s45 = sor.u32 8192, %s44
+%s46 = sshll.u32 %s45, 16
+%s47 = sor.u32 [#allocation6], %s46
+%50 = dma.smem_to_host_iova [thread:$0]  /*src_address=*/%s33, /*host_iova_low=*/%s23, /*host_iova_high=*/%s27, /*dst_syncflagno=*/%s47, /*size_in_granules=*/1
+%51 = sst [smem:[#allocation3]] %s30

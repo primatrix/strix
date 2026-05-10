@@ -1,0 +1,7 @@
+
+%0 = vdelay 1
+
+%1 = sfence
+
+%s3 = smov 0 /* materialized constant */
+%2 = sst [smem:[#allocation0]] %s3

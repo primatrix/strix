@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>VMEM Usage Breakdown</title>
+    <style>
+        body {
+            background-color: black;
+            font-family: "Fira Mono", monospace;
+            color: white;
+            margin: 8px;
+        }
+
+        /* --- TOP BAR (Controls + Legend) --- */
+        .top-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            align-items: center;
+            margin-bottom: 12px;
+            background-color: #222;
+            border: 1px solid #4a4a4a;
+            padding: 8px 16px;
+        }
+
+        /* --- CONTROLS --- */
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        label {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        /* --- LEGEND --- */
+        .legend {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            font-size: 0.9em;
+            border-left: 1px solid #555;
+            padding-left: 20px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-box {
+            width: 16px;
+            height: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            box-sizing: border-box;
+        }
+
+        /* Legend specific colors */
+        .leg-scoped {
+            background-color: #2196F3;
+        }
+
+        .leg-spill {
+            background-color: #FFC107;
+        }
+
+        .leg-temp {
+            background-color: #9C27B0;
+        }
+
+        .leg-unknown {
+            background-color: #607D8B;
+        }
+
+        /* Legend Hatching pattern (using same logic as bars) */
+        .leg-padding {
+            background-image: repeating-linear-gradient(45deg,
+                    #607D8B,
+                    #607D8B 2px,
+                    transparent 2px,
+                    transparent 6px);
+        }
+
+        /* --- TABLE STYLES --- */
+        table {
+            border: 1px solid white;
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        th,
+        td {
+            border: 1px solid white;
+            padding: 8px;
+            text-align: left;
+            vertical-align: middle;
+        }
+
+        td.op-name-cell {
+            max-width: 400px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        th:nth-child(-n+3),
+        td:nth-child(-n+3) {
+            width: 1%;
+            white-space: nowrap;
+        }
+
+        th {
+            background-color: #4a4a4a;
+            cursor: pointer;
+        }
+
+        th:hover {
+            background-color: #5a5a5a;
+        }
+
+        td.viz-cell {
+            padding: 0;
+            height: 1px;
+            min-width: 200px;
+        }
+
+        .bar-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            min-height: 24px;
+        }
+
+        .bar-segment {
+            height: 100%;
+            transition: opacity 0.2s, width 0.3s ease;
+            box-sizing: border-box;
+            border-right: 1px solid white;
+
+            /* defaults */
+            --bg-color: #607D8B;
+            --useful-width: 100%;
+
+            background-image:
+                linear-gradient(to right, var(--bg-color) var(--useful-width), transparent 0),
+                repeating-linear-gradient(45deg,
+                    var(--bg-color),
+                    var(--bg-color) 2px,
+                    transparent 2px,
+                    transparent 6px);
+        }
+
+        .bar-segment:hover {
+            opacity: 0.8;
+        }
+
+        /* --- COLORS --- */
+        .bar-scoped {
+            --bg-color: #2196F3;
+        }
+
+        .bar-spill {
+            --bg-color: #FFC107;
+        }
+
+        .bar-temp {
+            --bg-color: #9C27B0;
+        }
+
+        .bar-unknown {
+            --bg-color: #607D8B;
+        }
+    </style>
+</head>
+
+<body>
+    <h1 id="title">VMEM Usage Breakdown</h1>
+    <div class="top-bar">
+        <div class="controls">
+            <input type="checkbox" id="scaleToggle">
+            <label for="scaleToggle">Scale viz to fit (Row Relative)</label>
+        </div>
+
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-box leg-scoped"></div>
+                <span>Scoped</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box leg-spill"></div>
+                <span>Spill</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box leg-temp"></div>
+                <span>Temporary</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box leg-unknown"></div>
+                <span>Unknown</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box leg-padding"></div>
+                <span>Padding</span>
+            </div>
+        </div>
+    </div>
+
+    <table id="mySortableTable">
+        <thead>
+            <tr>
+                <th>Opname</th>
+                <th>Size (KiB)</th>
+                <th>Spill (KiB)</th>
+                <th>Viz</th>
+            </tr>
+        </thead>
+        <tbody id="tableBody">
+        </tbody>
+    </table>
+
+    <script>
+        // --- 1. THE DATA SOURCE ---
+        const DATA ={
+  "global_info": {
+    "module_name": "jit__threefry_seed",
+    "vmem_capacity": 67108864
+  },
+  "hlo_breakdowns": {
+    "<top-inlining-caller>": {
+      "blocks": [
+        {
+          "allocations": [
+            {
+              "padding": 0,
+              "shape": "u32[8,128]",
+              "size": 4096,
+              "tag": "scoped memory for copy"
+            }
+          ],
+          "block_size": 4096,
+          "block_type": "SCOPED"
+        }
+      ],
+      "metadata": "",
+      "total_size": 4096
+    },
+    "pad_add_fusion": {
+      "blocks": [
+        {
+          "allocations": [
+            {
+              "padding": 512,
+              "shape": "u8[512]",
+              "size": 1024,
+              "tag": "operand span for operand 2"
+            }
+          ],
+          "block_size": 1024,
+          "block_type": "SCOPED"
+        }
+      ],
+      "metadata": "op_name=\"jit(_threefry_seed)/concatenate\" stack_frame_id=4",
+      "total_size": 1024
+    }
+  }
+};
+
+        const heading = document.getElementById("title");
+        const moduleName = DATA?.global_info?.module_name ?? "<Unnamed Module>";
+        heading.innerText += ` for ${moduleName}`;
+
+        // --- 2. CONSTANTS & HELPERS ---
+        const MAX_BYTES_GLOBAL = DATA.global_info.vmem_capacity;
+        const toKiB = (bytes) => (bytes / 1024).toFixed(0);
+        const isSpillTag = (tag) => tag && tag.toUpperCase() === "SPILL";
+
+        // --- 3. PREPARE DATA ---
+        let entries = Object.entries(DATA.hlo_breakdowns).map(([key, val]) => {
+            let spillSum = 0;
+            val.blocks.forEach(block => {
+                if (block.allocations && block.allocations.length > 0) {
+                    block.allocations.forEach(alloc => {
+                        if (isSpillTag(alloc.tag)) {
+                            spillSum += alloc.size;
+                        }
+                    });
+                }
+            });
+
+            return {
+                opName: key,
+                details: val,
+                totalSize: val.total_size,
+                spillSize: spillSum
+            };
+        });
+
+
+
+        // Default Sort
+        entries.sort((a, b) => b.totalSize - a.totalSize);
+
+        // --- 4. RENDER LOGIC ---
+        const tbody = document.getElementById('tableBody');
+        const scaleToggle = document.getElementById('scaleToggle');
+
+        function renderTable() {
+            tbody.innerHTML = '';
+            const isScaleToFit = scaleToggle.checked;
+
+            entries.forEach((item) => {
+                const { opName, details, totalSize, spillSize } = item;
+                let rowDenominator = isScaleToFit ? totalSize : MAX_BYTES_GLOBAL;
+                if (rowDenominator === 0) rowDenominator = 1;
+
+                const tr = document.createElement('tr');
+
+                // Name
+                const tdName = document.createElement('td');
+                tdName.innerText = opName;
+                tdName.className = 'op-name-cell';
+                tdName.title = details.metadata || "";
+
+                // Size
+                const tdSize = document.createElement('td');
+                tdSize.innerText = toKiB(totalSize);
+
+                // Spill
+                const tdSpill = document.createElement('td');
+                tdSpill.innerText = toKiB(spillSize);
+
+                // Viz
+                const tdViz = document.createElement('td');
+                tdViz.className = 'viz-cell';
+                const container = document.createElement('div');
+                container.className = 'bar-container';
+
+                const createSegment = (bytes, typeClass, metaObj) => {
+                    if (bytes <= 0) return null;
+
+                    const pctOfMax = (bytes / rowDenominator) * 100;
+                    const el = document.createElement('div');
+                    el.classList.add('bar-segment');
+                    if (typeClass) el.classList.add(typeClass);
+                    el.style.width = `${pctOfMax}%`;
+
+                    // Padding Logic
+                    const padding = metaObj.padding || 0;
+                    let usefulPct = 100;
+                    if (padding > 0 && padding < bytes) {
+                        usefulPct = ((bytes - padding) / bytes) * 100;
+                    } else if (padding >= bytes) {
+                        usefulPct = 0;
+                    }
+                    el.style.setProperty('--useful-width', `${usefulPct}%`);
+
+                    // Tooltip
+                    const kibLabel = toKiB(bytes);
+                    const pctLabel = pctOfMax.toFixed(1);
+                    let tooltip = `${kibLabel} KiB (${pctLabel}%)`;
+
+                    if (padding > 0) tooltip += ` Padding: ${padding}B`;
+
+                    const isSpill = isSpillTag(metaObj.tag);
+                    if (metaObj.shape && !isSpill) tooltip += `\n${metaObj.shape}`;
+                    if (metaObj.tag) tooltip += `\ntag: ${metaObj.tag}`;
+
+                    el.title = tooltip;
+                    return el;
+                };
+
+                details.blocks.forEach(block => {
+                    const bType = block.block_type;
+                    if (block.allocations && block.allocations.length > 0) {
+                        block.allocations.forEach(alloc => {
+                            let colorClass = 'bar-unknown';
+                            if (bType === 'HLO_TEMPORARY') colorClass = 'bar-temp';
+                            else if (bType === 'SCOPED') {
+                                if (isSpillTag(alloc.tag)) colorClass = 'bar-spill';
+                                else colorClass = 'bar-scoped';
+                            }
+                            const seg = createSegment(alloc.size, colorClass, alloc);
+                            if (seg) container.appendChild(seg);
+                        });
+                    } else {
+                        let colorClass = 'bar-unknown';
+                        if (bType === 'HLO_TEMPORARY') colorClass = 'bar-temp';
+                        else if (bType === 'SCOPED') colorClass = 'bar-scoped';
+                        const seg = createSegment(block.block_size, colorClass, {});
+                        if (seg) container.appendChild(seg);
+                    }
+                });
+
+                tdViz.appendChild(container);
+                tr.appendChild(tdName);
+                tr.appendChild(tdSize);
+                tr.appendChild(tdSpill);
+                tr.appendChild(tdViz);
+                tbody.appendChild(tr);
+            });
+        }
+
+        // --- 5. EVENTS & INIT ---
+        scaleToggle.addEventListener('change', renderTable);
+        renderTable();
+
+        // --- 6. SORTING LOGIC ---
+        const getCellValue = (tr, idx) => {
+            const cell = tr.children[idx];
+            const text = cell.textContent || cell.innerText;
+            const numValue = parseFloat(text);
+            return isNaN(numValue) || text.trim() === '' ? text : numValue;
+        };
+        const comparer = (idx, asc) => (a, b) => {
+            const v1 = getCellValue(asc ? a : b, idx);
+            const v2 = getCellValue(asc ? b : a, idx);
+            if (typeof v1 === 'number' && typeof v2 === 'number') return v1 - v2;
+            return v1.toString().localeCompare(v2.toString(), undefined, { numeric: true, sensitivity: 'base' });
+        };
+        document.querySelectorAll('#mySortableTable th').forEach(headerCell => {
+            headerCell.addEventListener('click', () => {
+                const table = headerCell.closest('table');
+                const tbody = table.querySelector('tbody');
+                const rows = Array.from(tbody.querySelectorAll('tr'));
+                const headerIndex = Array.from(headerCell.parentNode.children).indexOf(headerCell);
+                if (headerIndex === 3) return;
+                const currentIsAsc = headerCell.asc === undefined ? true : headerCell.asc;
+                const newAsc = headerCell.asc = !currentIsAsc;
+                rows.sort(comparer(headerIndex, newAsc));
+                tbody.append(...rows);
+            });
+        });
+    </script>
+</body>
+</html>

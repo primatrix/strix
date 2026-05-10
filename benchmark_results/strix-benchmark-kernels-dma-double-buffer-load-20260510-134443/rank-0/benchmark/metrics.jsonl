@@ -1,0 +1,37 @@
+{
+  "kernel": "kernels.dma_double_buffer_load",
+  "shape": "8192,2048,64",
+  "job_name": "strix-benchmark-kernels-dma-double-buffer-load-20260510-134443",
+  "num_runs": 10,
+  "timings_ms": [
+    266.9041920000268,
+    268.3531109999535,
+    274.5539649999955,
+    258.57442799997443,
+    261.79635900001585,
+    264.0578360000063,
+    262.52282100000457,
+    255.71689200000947,
+    256.24464599997054,
+    263.4214749999728
+  ],
+  "statistics": {
+    "mean_ms": 263.214572499993,
+    "median_ms": 262.9721479999887,
+    "stdev_ms": 5.755861487412702,
+    "min_ms": 255.71689200000947,
+    "max_ms": 274.5539649999955
+  },
+  "config": {
+    "default_shape": {
+      "hidden_size": 8192,
+      "intermediate_size": 2048,
+      "num_loads": 64
+    },
+    "dtype": "bfloat16",
+    "weight_dtype": "bfloat16",
+    "tpu_type": "v7x",
+    "tpu_topology": "1x1",
+    "description": "Double-buffer VMEM load \u2014 DMA efficiency test for expert weights"
+  }
+}

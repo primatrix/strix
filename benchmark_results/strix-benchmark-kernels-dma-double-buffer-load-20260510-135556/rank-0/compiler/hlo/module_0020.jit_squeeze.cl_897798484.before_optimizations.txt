@@ -1,0 +1,33 @@
+HloModule jit_squeeze, entry_computation_layout={(f32[1]{0:T(128)})->f32[]{:T(128)}}, allow_spmd_sharding_propagation_to_parameters={true}, allow_spmd_sharding_propagation_to_output={true}
+
+FileNames
+1 "/workspace/scripts/benchmark_runner.py"
+2 "/workspace/kernels/dma_double_buffer_load.py"
+
+FunctionNames
+1 "<module>"
+2 "main"
+3 "run_sweep"
+4 "kernel_fn.<locals>.run"
+5 "dma_double_buffer_load"
+
+FileLocations
+1 {file_name_id=1 function_name_id=1 line=696 end_line=696 column=4 end_column=10}
+2 {file_name_id=1 function_name_id=2 line=635 end_line=641 column=18 end_column=10}
+3 {file_name_id=1 function_name_id=3 line=459 end_line=459 column=25 end_column=33}
+4 {file_name_id=2 function_name_id=4 line=195 end_line=200 column=15 end_column=9}
+5 {file_name_id=2 function_name_id=5 line=177 end_line=177 column=11 end_column=20}
+
+StackFrames
+1 {file_location_id=1 parent_frame_id=1}
+2 {file_location_id=2 parent_frame_id=2}
+3 {file_location_id=3 parent_frame_id=3}
+4 {file_location_id=4 parent_frame_id=4}
+5 {file_location_id=5 parent_frame_id=5}
+
+
+ENTRY %main.1 (args_0_.1: f32[1]) -> f32[] {
+  %args_0_.1 = f32[1]{0} parameter(0), metadata={op_name="args[0]"}
+  ROOT %squeeze.1 = f32[] reshape(%args_0_.1), metadata={op_name="jit(squeeze)/squeeze" stack_frame_id=5}
+}
+

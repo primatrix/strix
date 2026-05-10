@@ -1,0 +1,896 @@
+
+%s0 = inlined_call_operand.hbm [shape: bf16[8192,2048], index: 0, kind: input, shape index: {}] /* operand 0 */
+%s1 = inlined_call_operand.hbm [shape: f32[1], index: 1, kind: output, shape index: {}] /* output window allocation for operator output 0. The window shape is f32[1], while the full shape is f32[1]. The u8 shape/size shown above represents the raw byte size of this window in VMEM.  */
+
+%6 = vsyncpa [#allocation5], 0 /* loc("/workspace/kernels/dma_double_buffer_load.py":126:4 to :20) */
+%s11 = sld [smem:[#allocation0]] /* core id */
+%s2355 = sshll.u32 %s11, 26 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%s2356 = sadd.s32 134217728, %s2355 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%s2485 = smov [#allocation2] /* materialized constant */
+%s19 = sshll.u32 %s2485, 4 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%s20 = int_to_ptr.vmem [resolvable:$true] %s19 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%s2486 = smov 2048 /* materialized constant */
+%23 = sst [smem:[#allocation7]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%s2487 = smov 8192 /* materialized constant */
+%25 = sst [smem:[#allocation7 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%s2488 = smov 64 /* materialized constant */
+%27 = sst [smem:[#allocation7 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%29 = sst [smem:[#allocation7 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%s2489 = smov 128 /* materialized constant */
+%31 = sst [smem:[#allocation7 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%s2490 = smov 2 /* materialized constant */
+%33 = sst [smem:[#allocation7 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%s2491 = smov 1024 /* materialized constant */
+%35 = sst [smem:[#allocation7 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%37 = sst [smem:[#allocation7 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%s2492 = smov 4 /* materialized constant */
+%39 = sst [smem:[#allocation7 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%s2493 = smov [#allocation3] /* materialized constant */
+%s2494 = smov [#allocation6] /* materialized constant */
+%41 = dma.general /*src=*/%s0, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2494, /*stridedescaddr=*/[#allocation7], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":94:4 to :18) */
+%60 = sst [smem:[#allocation9]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%62 = sst [smem:[#allocation9 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%64 = sst [smem:[#allocation9 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%66 = sst [smem:[#allocation9 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%68 = sst [smem:[#allocation9 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%70 = sst [smem:[#allocation9 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%72 = sst [smem:[#allocation9 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%74 = sst [smem:[#allocation9 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%76 = sst [smem:[#allocation9 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%s42 = scalar_lea.hbm %s0, 131072 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%s2495 = smov [#allocation2 + $0x8000] /* materialized constant */
+%s56 = sshll.u32 %s2495, 4 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%s57 = int_to_ptr.vmem [resolvable:$true] %s56 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%s2496 = smov [#allocation3 + $0x1] /* materialized constant */
+%s2497 = smov [#allocation8] /* materialized constant */
+%78 = dma.general /*src=*/%s42, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2497, /*stridedescaddr=*/[#allocation9], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":99:8 to :22) */
+%s2498 = smov 524288 /* materialized constant */
+
+%82 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%99 = sst [smem:[#allocation11]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%101 = sst [smem:[#allocation11 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%103 = sst [smem:[#allocation11 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%105 = sst [smem:[#allocation11 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%107 = sst [smem:[#allocation11 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%109 = sst [smem:[#allocation11 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%111 = sst [smem:[#allocation11 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%113 = sst [smem:[#allocation11 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%115 = sst [smem:[#allocation11 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s83 = scalar_lea.hbm %s0, 262144 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2499 = smov [#allocation10] /* materialized constant */
+%117 = dma.general /*src=*/%s83, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2499, /*stridedescaddr=*/[#allocation11], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%119 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%136 = sst [smem:[#allocation13]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%138 = sst [smem:[#allocation13 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%140 = sst [smem:[#allocation13 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%142 = sst [smem:[#allocation13 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%144 = sst [smem:[#allocation13 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%146 = sst [smem:[#allocation13 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%148 = sst [smem:[#allocation13 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%150 = sst [smem:[#allocation13 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%152 = sst [smem:[#allocation13 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s120 = scalar_lea.hbm %s0, 393216 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2500 = smov [#allocation12] /* materialized constant */
+%154 = dma.general /*src=*/%s120, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2500, /*stridedescaddr=*/[#allocation13], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%156 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%173 = sst [smem:[#allocation15]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%175 = sst [smem:[#allocation15 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%177 = sst [smem:[#allocation15 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%179 = sst [smem:[#allocation15 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%181 = sst [smem:[#allocation15 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%183 = sst [smem:[#allocation15 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%185 = sst [smem:[#allocation15 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%187 = sst [smem:[#allocation15 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%189 = sst [smem:[#allocation15 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s157 = scalar_lea.hbm %s0, 524288 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2501 = smov [#allocation14] /* materialized constant */
+%191 = dma.general /*src=*/%s157, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2501, /*stridedescaddr=*/[#allocation15], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%193 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%210 = sst [smem:[#allocation17]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%212 = sst [smem:[#allocation17 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%214 = sst [smem:[#allocation17 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%216 = sst [smem:[#allocation17 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%218 = sst [smem:[#allocation17 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%220 = sst [smem:[#allocation17 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%222 = sst [smem:[#allocation17 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%224 = sst [smem:[#allocation17 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%226 = sst [smem:[#allocation17 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s194 = scalar_lea.hbm %s0, 655360 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2502 = smov [#allocation16] /* materialized constant */
+%228 = dma.general /*src=*/%s194, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2502, /*stridedescaddr=*/[#allocation17], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%230 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%247 = sst [smem:[#allocation19]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%249 = sst [smem:[#allocation19 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%251 = sst [smem:[#allocation19 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%253 = sst [smem:[#allocation19 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%255 = sst [smem:[#allocation19 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%257 = sst [smem:[#allocation19 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%259 = sst [smem:[#allocation19 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%261 = sst [smem:[#allocation19 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%263 = sst [smem:[#allocation19 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s231 = scalar_lea.hbm %s0, 786432 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2503 = smov [#allocation18] /* materialized constant */
+%265 = dma.general /*src=*/%s231, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2503, /*stridedescaddr=*/[#allocation19], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%267 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%284 = sst [smem:[#allocation21]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%286 = sst [smem:[#allocation21 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%288 = sst [smem:[#allocation21 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%290 = sst [smem:[#allocation21 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%292 = sst [smem:[#allocation21 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%294 = sst [smem:[#allocation21 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%296 = sst [smem:[#allocation21 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%298 = sst [smem:[#allocation21 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%300 = sst [smem:[#allocation21 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s268 = scalar_lea.hbm %s0, 917504 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2504 = smov [#allocation20] /* materialized constant */
+%302 = dma.general /*src=*/%s268, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2504, /*stridedescaddr=*/[#allocation21], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%304 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%320 = sst [smem:[#allocation23]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%322 = sst [smem:[#allocation23 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%324 = sst [smem:[#allocation23 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%326 = sst [smem:[#allocation23 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%328 = sst [smem:[#allocation23 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%330 = sst [smem:[#allocation23 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%332 = sst [smem:[#allocation23 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%334 = sst [smem:[#allocation23 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%336 = sst [smem:[#allocation23 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2505 = smov [#allocation22] /* materialized constant */
+%338 = dma.general /*src=*/%s0, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2505, /*stridedescaddr=*/[#allocation23], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%340 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%356 = sst [smem:[#allocation25]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%358 = sst [smem:[#allocation25 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%360 = sst [smem:[#allocation25 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%362 = sst [smem:[#allocation25 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%364 = sst [smem:[#allocation25 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%366 = sst [smem:[#allocation25 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%368 = sst [smem:[#allocation25 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%370 = sst [smem:[#allocation25 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%372 = sst [smem:[#allocation25 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2506 = smov [#allocation24] /* materialized constant */
+%374 = dma.general /*src=*/%s42, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2506, /*stridedescaddr=*/[#allocation25], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%376 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%392 = sst [smem:[#allocation27]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%394 = sst [smem:[#allocation27 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%396 = sst [smem:[#allocation27 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%398 = sst [smem:[#allocation27 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%400 = sst [smem:[#allocation27 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%402 = sst [smem:[#allocation27 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%404 = sst [smem:[#allocation27 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%406 = sst [smem:[#allocation27 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%408 = sst [smem:[#allocation27 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2507 = smov [#allocation26] /* materialized constant */
+%410 = dma.general /*src=*/%s83, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2507, /*stridedescaddr=*/[#allocation27], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%412 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%428 = sst [smem:[#allocation29]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%430 = sst [smem:[#allocation29 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%432 = sst [smem:[#allocation29 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%434 = sst [smem:[#allocation29 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%436 = sst [smem:[#allocation29 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%438 = sst [smem:[#allocation29 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%440 = sst [smem:[#allocation29 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%442 = sst [smem:[#allocation29 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%444 = sst [smem:[#allocation29 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2508 = smov [#allocation28] /* materialized constant */
+%446 = dma.general /*src=*/%s120, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2508, /*stridedescaddr=*/[#allocation29], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%448 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%464 = sst [smem:[#allocation31]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%466 = sst [smem:[#allocation31 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%468 = sst [smem:[#allocation31 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%470 = sst [smem:[#allocation31 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%472 = sst [smem:[#allocation31 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%474 = sst [smem:[#allocation31 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%476 = sst [smem:[#allocation31 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%478 = sst [smem:[#allocation31 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%480 = sst [smem:[#allocation31 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2509 = smov [#allocation30] /* materialized constant */
+%482 = dma.general /*src=*/%s157, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2509, /*stridedescaddr=*/[#allocation31], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%484 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%500 = sst [smem:[#allocation33]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%502 = sst [smem:[#allocation33 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%504 = sst [smem:[#allocation33 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%506 = sst [smem:[#allocation33 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%508 = sst [smem:[#allocation33 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%510 = sst [smem:[#allocation33 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%512 = sst [smem:[#allocation33 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%514 = sst [smem:[#allocation33 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%516 = sst [smem:[#allocation33 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2510 = smov [#allocation32] /* materialized constant */
+%518 = dma.general /*src=*/%s194, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2510, /*stridedescaddr=*/[#allocation33], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%520 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%536 = sst [smem:[#allocation35]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%538 = sst [smem:[#allocation35 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%540 = sst [smem:[#allocation35 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%542 = sst [smem:[#allocation35 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%544 = sst [smem:[#allocation35 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%546 = sst [smem:[#allocation35 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%548 = sst [smem:[#allocation35 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%550 = sst [smem:[#allocation35 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%552 = sst [smem:[#allocation35 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2511 = smov [#allocation34] /* materialized constant */
+%554 = dma.general /*src=*/%s231, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2511, /*stridedescaddr=*/[#allocation35], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%556 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%572 = sst [smem:[#allocation37]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%574 = sst [smem:[#allocation37 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%576 = sst [smem:[#allocation37 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%578 = sst [smem:[#allocation37 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%580 = sst [smem:[#allocation37 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%582 = sst [smem:[#allocation37 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%584 = sst [smem:[#allocation37 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%586 = sst [smem:[#allocation37 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%588 = sst [smem:[#allocation37 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2512 = smov [#allocation36] /* materialized constant */
+%590 = dma.general /*src=*/%s268, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2512, /*stridedescaddr=*/[#allocation37], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%592 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%608 = sst [smem:[#allocation39]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%610 = sst [smem:[#allocation39 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%612 = sst [smem:[#allocation39 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%614 = sst [smem:[#allocation39 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%616 = sst [smem:[#allocation39 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%618 = sst [smem:[#allocation39 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%620 = sst [smem:[#allocation39 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%622 = sst [smem:[#allocation39 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%624 = sst [smem:[#allocation39 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2513 = smov [#allocation38] /* materialized constant */
+%626 = dma.general /*src=*/%s0, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2513, /*stridedescaddr=*/[#allocation39], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%628 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%644 = sst [smem:[#allocation41]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%646 = sst [smem:[#allocation41 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%648 = sst [smem:[#allocation41 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%650 = sst [smem:[#allocation41 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%652 = sst [smem:[#allocation41 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%654 = sst [smem:[#allocation41 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%656 = sst [smem:[#allocation41 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%658 = sst [smem:[#allocation41 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%660 = sst [smem:[#allocation41 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2514 = smov [#allocation40] /* materialized constant */
+%662 = dma.general /*src=*/%s42, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2514, /*stridedescaddr=*/[#allocation41], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%664 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%680 = sst [smem:[#allocation43]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%682 = sst [smem:[#allocation43 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%684 = sst [smem:[#allocation43 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%686 = sst [smem:[#allocation43 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%688 = sst [smem:[#allocation43 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%690 = sst [smem:[#allocation43 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%692 = sst [smem:[#allocation43 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%694 = sst [smem:[#allocation43 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%696 = sst [smem:[#allocation43 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2515 = smov [#allocation42] /* materialized constant */
+%698 = dma.general /*src=*/%s83, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2515, /*stridedescaddr=*/[#allocation43], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%700 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%716 = sst [smem:[#allocation45]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%718 = sst [smem:[#allocation45 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%720 = sst [smem:[#allocation45 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%722 = sst [smem:[#allocation45 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%724 = sst [smem:[#allocation45 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%726 = sst [smem:[#allocation45 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%728 = sst [smem:[#allocation45 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%730 = sst [smem:[#allocation45 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%732 = sst [smem:[#allocation45 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2516 = smov [#allocation44] /* materialized constant */
+%734 = dma.general /*src=*/%s120, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2516, /*stridedescaddr=*/[#allocation45], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%736 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%752 = sst [smem:[#allocation47]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%754 = sst [smem:[#allocation47 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%756 = sst [smem:[#allocation47 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%758 = sst [smem:[#allocation47 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%760 = sst [smem:[#allocation47 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%762 = sst [smem:[#allocation47 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%764 = sst [smem:[#allocation47 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%766 = sst [smem:[#allocation47 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%768 = sst [smem:[#allocation47 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2517 = smov [#allocation46] /* materialized constant */
+%770 = dma.general /*src=*/%s157, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2517, /*stridedescaddr=*/[#allocation47], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%772 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%788 = sst [smem:[#allocation49]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%790 = sst [smem:[#allocation49 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%792 = sst [smem:[#allocation49 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%794 = sst [smem:[#allocation49 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%796 = sst [smem:[#allocation49 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%798 = sst [smem:[#allocation49 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%800 = sst [smem:[#allocation49 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%802 = sst [smem:[#allocation49 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%804 = sst [smem:[#allocation49 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2518 = smov [#allocation48] /* materialized constant */
+%806 = dma.general /*src=*/%s194, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2518, /*stridedescaddr=*/[#allocation49], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%808 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%824 = sst [smem:[#allocation51]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%826 = sst [smem:[#allocation51 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%828 = sst [smem:[#allocation51 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%830 = sst [smem:[#allocation51 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%832 = sst [smem:[#allocation51 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%834 = sst [smem:[#allocation51 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%836 = sst [smem:[#allocation51 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%838 = sst [smem:[#allocation51 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%840 = sst [smem:[#allocation51 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2519 = smov [#allocation50] /* materialized constant */
+%842 = dma.general /*src=*/%s231, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2519, /*stridedescaddr=*/[#allocation51], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%844 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%860 = sst [smem:[#allocation53]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%862 = sst [smem:[#allocation53 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%864 = sst [smem:[#allocation53 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%866 = sst [smem:[#allocation53 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%868 = sst [smem:[#allocation53 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%870 = sst [smem:[#allocation53 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%872 = sst [smem:[#allocation53 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%874 = sst [smem:[#allocation53 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%876 = sst [smem:[#allocation53 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2520 = smov [#allocation52] /* materialized constant */
+%878 = dma.general /*src=*/%s268, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2520, /*stridedescaddr=*/[#allocation53], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%880 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%896 = sst [smem:[#allocation55]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%898 = sst [smem:[#allocation55 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%900 = sst [smem:[#allocation55 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%902 = sst [smem:[#allocation55 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%904 = sst [smem:[#allocation55 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%906 = sst [smem:[#allocation55 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%908 = sst [smem:[#allocation55 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%910 = sst [smem:[#allocation55 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%912 = sst [smem:[#allocation55 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2521 = smov [#allocation54] /* materialized constant */
+%914 = dma.general /*src=*/%s0, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2521, /*stridedescaddr=*/[#allocation55], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%916 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%932 = sst [smem:[#allocation57]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%934 = sst [smem:[#allocation57 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%936 = sst [smem:[#allocation57 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%938 = sst [smem:[#allocation57 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%940 = sst [smem:[#allocation57 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%942 = sst [smem:[#allocation57 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%944 = sst [smem:[#allocation57 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%946 = sst [smem:[#allocation57 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%948 = sst [smem:[#allocation57 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2522 = smov [#allocation56] /* materialized constant */
+%950 = dma.general /*src=*/%s42, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2522, /*stridedescaddr=*/[#allocation57], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%952 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%968 = sst [smem:[#allocation59]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%970 = sst [smem:[#allocation59 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%972 = sst [smem:[#allocation59 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%974 = sst [smem:[#allocation59 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%976 = sst [smem:[#allocation59 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%978 = sst [smem:[#allocation59 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%980 = sst [smem:[#allocation59 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%982 = sst [smem:[#allocation59 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%984 = sst [smem:[#allocation59 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2523 = smov [#allocation58] /* materialized constant */
+%986 = dma.general /*src=*/%s83, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2523, /*stridedescaddr=*/[#allocation59], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%988 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1004 = sst [smem:[#allocation61]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1006 = sst [smem:[#allocation61 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1008 = sst [smem:[#allocation61 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1010 = sst [smem:[#allocation61 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1012 = sst [smem:[#allocation61 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1014 = sst [smem:[#allocation61 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1016 = sst [smem:[#allocation61 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1018 = sst [smem:[#allocation61 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1020 = sst [smem:[#allocation61 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2524 = smov [#allocation60] /* materialized constant */
+%1022 = dma.general /*src=*/%s120, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2524, /*stridedescaddr=*/[#allocation61], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1024 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1040 = sst [smem:[#allocation63]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1042 = sst [smem:[#allocation63 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1044 = sst [smem:[#allocation63 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1046 = sst [smem:[#allocation63 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1048 = sst [smem:[#allocation63 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1050 = sst [smem:[#allocation63 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1052 = sst [smem:[#allocation63 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1054 = sst [smem:[#allocation63 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1056 = sst [smem:[#allocation63 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2525 = smov [#allocation62] /* materialized constant */
+%1058 = dma.general /*src=*/%s157, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2525, /*stridedescaddr=*/[#allocation63], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1060 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1076 = sst [smem:[#allocation65]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1078 = sst [smem:[#allocation65 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1080 = sst [smem:[#allocation65 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1082 = sst [smem:[#allocation65 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1084 = sst [smem:[#allocation65 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1086 = sst [smem:[#allocation65 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1088 = sst [smem:[#allocation65 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1090 = sst [smem:[#allocation65 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1092 = sst [smem:[#allocation65 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2526 = smov [#allocation64] /* materialized constant */
+%1094 = dma.general /*src=*/%s194, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2526, /*stridedescaddr=*/[#allocation65], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1096 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1112 = sst [smem:[#allocation67]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1114 = sst [smem:[#allocation67 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1116 = sst [smem:[#allocation67 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1118 = sst [smem:[#allocation67 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1120 = sst [smem:[#allocation67 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1122 = sst [smem:[#allocation67 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1124 = sst [smem:[#allocation67 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1126 = sst [smem:[#allocation67 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1128 = sst [smem:[#allocation67 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2527 = smov [#allocation66] /* materialized constant */
+%1130 = dma.general /*src=*/%s231, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2527, /*stridedescaddr=*/[#allocation67], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1132 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1148 = sst [smem:[#allocation69]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1150 = sst [smem:[#allocation69 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1152 = sst [smem:[#allocation69 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1154 = sst [smem:[#allocation69 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1156 = sst [smem:[#allocation69 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1158 = sst [smem:[#allocation69 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1160 = sst [smem:[#allocation69 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1162 = sst [smem:[#allocation69 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1164 = sst [smem:[#allocation69 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2528 = smov [#allocation68] /* materialized constant */
+%1166 = dma.general /*src=*/%s268, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2528, /*stridedescaddr=*/[#allocation69], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1168 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1184 = sst [smem:[#allocation71]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1186 = sst [smem:[#allocation71 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1188 = sst [smem:[#allocation71 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1190 = sst [smem:[#allocation71 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1192 = sst [smem:[#allocation71 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1194 = sst [smem:[#allocation71 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1196 = sst [smem:[#allocation71 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1198 = sst [smem:[#allocation71 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1200 = sst [smem:[#allocation71 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2529 = smov [#allocation70] /* materialized constant */
+%1202 = dma.general /*src=*/%s0, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2529, /*stridedescaddr=*/[#allocation71], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1204 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1220 = sst [smem:[#allocation73]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1222 = sst [smem:[#allocation73 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1224 = sst [smem:[#allocation73 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1226 = sst [smem:[#allocation73 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1228 = sst [smem:[#allocation73 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1230 = sst [smem:[#allocation73 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1232 = sst [smem:[#allocation73 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1234 = sst [smem:[#allocation73 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1236 = sst [smem:[#allocation73 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2530 = smov [#allocation72] /* materialized constant */
+%1238 = dma.general /*src=*/%s42, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2530, /*stridedescaddr=*/[#allocation73], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1240 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1256 = sst [smem:[#allocation75]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1258 = sst [smem:[#allocation75 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1260 = sst [smem:[#allocation75 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1262 = sst [smem:[#allocation75 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1264 = sst [smem:[#allocation75 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1266 = sst [smem:[#allocation75 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1268 = sst [smem:[#allocation75 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1270 = sst [smem:[#allocation75 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1272 = sst [smem:[#allocation75 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2531 = smov [#allocation74] /* materialized constant */
+%1274 = dma.general /*src=*/%s83, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2531, /*stridedescaddr=*/[#allocation75], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1276 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1292 = sst [smem:[#allocation77]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1294 = sst [smem:[#allocation77 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1296 = sst [smem:[#allocation77 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1298 = sst [smem:[#allocation77 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1300 = sst [smem:[#allocation77 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1302 = sst [smem:[#allocation77 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1304 = sst [smem:[#allocation77 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1306 = sst [smem:[#allocation77 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1308 = sst [smem:[#allocation77 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2532 = smov [#allocation76] /* materialized constant */
+%1310 = dma.general /*src=*/%s120, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2532, /*stridedescaddr=*/[#allocation77], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1312 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1328 = sst [smem:[#allocation79]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1330 = sst [smem:[#allocation79 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1332 = sst [smem:[#allocation79 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1334 = sst [smem:[#allocation79 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1336 = sst [smem:[#allocation79 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1338 = sst [smem:[#allocation79 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1340 = sst [smem:[#allocation79 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1342 = sst [smem:[#allocation79 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1344 = sst [smem:[#allocation79 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2533 = smov [#allocation78] /* materialized constant */
+%1346 = dma.general /*src=*/%s157, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2533, /*stridedescaddr=*/[#allocation79], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1348 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1364 = sst [smem:[#allocation81]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1366 = sst [smem:[#allocation81 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1368 = sst [smem:[#allocation81 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1370 = sst [smem:[#allocation81 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1372 = sst [smem:[#allocation81 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1374 = sst [smem:[#allocation81 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1376 = sst [smem:[#allocation81 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1378 = sst [smem:[#allocation81 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1380 = sst [smem:[#allocation81 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2534 = smov [#allocation80] /* materialized constant */
+%1382 = dma.general /*src=*/%s194, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2534, /*stridedescaddr=*/[#allocation81], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1384 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1400 = sst [smem:[#allocation83]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1402 = sst [smem:[#allocation83 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1404 = sst [smem:[#allocation83 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1406 = sst [smem:[#allocation83 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1408 = sst [smem:[#allocation83 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1410 = sst [smem:[#allocation83 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1412 = sst [smem:[#allocation83 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1414 = sst [smem:[#allocation83 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1416 = sst [smem:[#allocation83 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2535 = smov [#allocation82] /* materialized constant */
+%1418 = dma.general /*src=*/%s231, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2535, /*stridedescaddr=*/[#allocation83], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1420 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1436 = sst [smem:[#allocation85]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1438 = sst [smem:[#allocation85 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1440 = sst [smem:[#allocation85 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1442 = sst [smem:[#allocation85 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1444 = sst [smem:[#allocation85 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1446 = sst [smem:[#allocation85 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1448 = sst [smem:[#allocation85 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1450 = sst [smem:[#allocation85 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1452 = sst [smem:[#allocation85 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2536 = smov [#allocation84] /* materialized constant */
+%1454 = dma.general /*src=*/%s268, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2536, /*stridedescaddr=*/[#allocation85], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1456 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1472 = sst [smem:[#allocation87]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1474 = sst [smem:[#allocation87 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1476 = sst [smem:[#allocation87 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1478 = sst [smem:[#allocation87 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1480 = sst [smem:[#allocation87 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1482 = sst [smem:[#allocation87 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1484 = sst [smem:[#allocation87 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1486 = sst [smem:[#allocation87 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1488 = sst [smem:[#allocation87 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2537 = smov [#allocation86] /* materialized constant */
+%1490 = dma.general /*src=*/%s0, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2537, /*stridedescaddr=*/[#allocation87], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1492 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1508 = sst [smem:[#allocation89]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1510 = sst [smem:[#allocation89 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1512 = sst [smem:[#allocation89 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1514 = sst [smem:[#allocation89 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1516 = sst [smem:[#allocation89 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1518 = sst [smem:[#allocation89 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1520 = sst [smem:[#allocation89 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1522 = sst [smem:[#allocation89 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1524 = sst [smem:[#allocation89 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2538 = smov [#allocation88] /* materialized constant */
+%1526 = dma.general /*src=*/%s42, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2538, /*stridedescaddr=*/[#allocation89], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1528 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1544 = sst [smem:[#allocation91]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1546 = sst [smem:[#allocation91 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1548 = sst [smem:[#allocation91 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1550 = sst [smem:[#allocation91 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1552 = sst [smem:[#allocation91 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1554 = sst [smem:[#allocation91 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1556 = sst [smem:[#allocation91 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1558 = sst [smem:[#allocation91 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1560 = sst [smem:[#allocation91 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2539 = smov [#allocation90] /* materialized constant */
+%1562 = dma.general /*src=*/%s83, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2539, /*stridedescaddr=*/[#allocation91], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1564 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1580 = sst [smem:[#allocation93]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1582 = sst [smem:[#allocation93 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1584 = sst [smem:[#allocation93 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1586 = sst [smem:[#allocation93 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1588 = sst [smem:[#allocation93 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1590 = sst [smem:[#allocation93 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1592 = sst [smem:[#allocation93 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1594 = sst [smem:[#allocation93 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1596 = sst [smem:[#allocation93 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2540 = smov [#allocation92] /* materialized constant */
+%1598 = dma.general /*src=*/%s120, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2540, /*stridedescaddr=*/[#allocation93], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1600 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1616 = sst [smem:[#allocation95]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1618 = sst [smem:[#allocation95 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1620 = sst [smem:[#allocation95 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1622 = sst [smem:[#allocation95 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1624 = sst [smem:[#allocation95 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1626 = sst [smem:[#allocation95 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1628 = sst [smem:[#allocation95 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1630 = sst [smem:[#allocation95 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1632 = sst [smem:[#allocation95 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2541 = smov [#allocation94] /* materialized constant */
+%1634 = dma.general /*src=*/%s157, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2541, /*stridedescaddr=*/[#allocation95], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1636 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1652 = sst [smem:[#allocation97]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1654 = sst [smem:[#allocation97 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1656 = sst [smem:[#allocation97 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1658 = sst [smem:[#allocation97 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1660 = sst [smem:[#allocation97 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1662 = sst [smem:[#allocation97 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1664 = sst [smem:[#allocation97 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1666 = sst [smem:[#allocation97 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1668 = sst [smem:[#allocation97 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2542 = smov [#allocation96] /* materialized constant */
+%1670 = dma.general /*src=*/%s194, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2542, /*stridedescaddr=*/[#allocation97], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1672 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1688 = sst [smem:[#allocation99]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1690 = sst [smem:[#allocation99 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1692 = sst [smem:[#allocation99 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1694 = sst [smem:[#allocation99 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1696 = sst [smem:[#allocation99 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1698 = sst [smem:[#allocation99 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1700 = sst [smem:[#allocation99 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1702 = sst [smem:[#allocation99 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1704 = sst [smem:[#allocation99 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2543 = smov [#allocation98] /* materialized constant */
+%1706 = dma.general /*src=*/%s231, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2543, /*stridedescaddr=*/[#allocation99], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1708 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1724 = sst [smem:[#allocation101]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1726 = sst [smem:[#allocation101 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1728 = sst [smem:[#allocation101 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1730 = sst [smem:[#allocation101 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1732 = sst [smem:[#allocation101 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1734 = sst [smem:[#allocation101 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1736 = sst [smem:[#allocation101 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1738 = sst [smem:[#allocation101 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1740 = sst [smem:[#allocation101 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2544 = smov [#allocation100] /* materialized constant */
+%1742 = dma.general /*src=*/%s268, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2544, /*stridedescaddr=*/[#allocation101], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1744 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1760 = sst [smem:[#allocation103]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1762 = sst [smem:[#allocation103 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1764 = sst [smem:[#allocation103 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1766 = sst [smem:[#allocation103 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1768 = sst [smem:[#allocation103 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1770 = sst [smem:[#allocation103 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1772 = sst [smem:[#allocation103 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1774 = sst [smem:[#allocation103 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1776 = sst [smem:[#allocation103 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2545 = smov [#allocation102] /* materialized constant */
+%1778 = dma.general /*src=*/%s0, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2545, /*stridedescaddr=*/[#allocation103], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1780 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1796 = sst [smem:[#allocation105]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1798 = sst [smem:[#allocation105 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1800 = sst [smem:[#allocation105 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1802 = sst [smem:[#allocation105 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1804 = sst [smem:[#allocation105 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1806 = sst [smem:[#allocation105 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1808 = sst [smem:[#allocation105 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1810 = sst [smem:[#allocation105 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1812 = sst [smem:[#allocation105 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2546 = smov [#allocation104] /* materialized constant */
+%1814 = dma.general /*src=*/%s42, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2546, /*stridedescaddr=*/[#allocation105], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1816 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1832 = sst [smem:[#allocation107]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1834 = sst [smem:[#allocation107 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1836 = sst [smem:[#allocation107 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1838 = sst [smem:[#allocation107 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1840 = sst [smem:[#allocation107 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1842 = sst [smem:[#allocation107 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1844 = sst [smem:[#allocation107 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1846 = sst [smem:[#allocation107 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1848 = sst [smem:[#allocation107 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2547 = smov [#allocation106] /* materialized constant */
+%1850 = dma.general /*src=*/%s83, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2547, /*stridedescaddr=*/[#allocation107], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1852 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1868 = sst [smem:[#allocation109]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1870 = sst [smem:[#allocation109 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1872 = sst [smem:[#allocation109 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1874 = sst [smem:[#allocation109 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1876 = sst [smem:[#allocation109 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1878 = sst [smem:[#allocation109 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1880 = sst [smem:[#allocation109 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1882 = sst [smem:[#allocation109 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1884 = sst [smem:[#allocation109 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2548 = smov [#allocation108] /* materialized constant */
+%1886 = dma.general /*src=*/%s120, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2548, /*stridedescaddr=*/[#allocation109], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1888 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1904 = sst [smem:[#allocation111]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1906 = sst [smem:[#allocation111 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1908 = sst [smem:[#allocation111 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1910 = sst [smem:[#allocation111 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1912 = sst [smem:[#allocation111 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1914 = sst [smem:[#allocation111 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1916 = sst [smem:[#allocation111 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1918 = sst [smem:[#allocation111 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1920 = sst [smem:[#allocation111 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2549 = smov [#allocation110] /* materialized constant */
+%1922 = dma.general /*src=*/%s157, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2549, /*stridedescaddr=*/[#allocation111], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1924 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%1940 = sst [smem:[#allocation113]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1942 = sst [smem:[#allocation113 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1944 = sst [smem:[#allocation113 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1946 = sst [smem:[#allocation113 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1948 = sst [smem:[#allocation113 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1950 = sst [smem:[#allocation113 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1952 = sst [smem:[#allocation113 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1954 = sst [smem:[#allocation113 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1956 = sst [smem:[#allocation113 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2550 = smov [#allocation112] /* materialized constant */
+%1958 = dma.general /*src=*/%s194, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2550, /*stridedescaddr=*/[#allocation113], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1960 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%1976 = sst [smem:[#allocation115]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1978 = sst [smem:[#allocation115 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1980 = sst [smem:[#allocation115 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1982 = sst [smem:[#allocation115 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1984 = sst [smem:[#allocation115 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1986 = sst [smem:[#allocation115 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1988 = sst [smem:[#allocation115 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1990 = sst [smem:[#allocation115 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%1992 = sst [smem:[#allocation115 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2551 = smov [#allocation114] /* materialized constant */
+%1994 = dma.general /*src=*/%s231, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2551, /*stridedescaddr=*/[#allocation115], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%1996 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%2012 = sst [smem:[#allocation117]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2014 = sst [smem:[#allocation117 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2016 = sst [smem:[#allocation117 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2018 = sst [smem:[#allocation117 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2020 = sst [smem:[#allocation117 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2022 = sst [smem:[#allocation117 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2024 = sst [smem:[#allocation117 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2026 = sst [smem:[#allocation117 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2028 = sst [smem:[#allocation117 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2552 = smov [#allocation116] /* materialized constant */
+%2030 = dma.general /*src=*/%s268, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2552, /*stridedescaddr=*/[#allocation117], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%2032 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%2048 = sst [smem:[#allocation119]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2050 = sst [smem:[#allocation119 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2052 = sst [smem:[#allocation119 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2054 = sst [smem:[#allocation119 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2056 = sst [smem:[#allocation119 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2058 = sst [smem:[#allocation119 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2060 = sst [smem:[#allocation119 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2062 = sst [smem:[#allocation119 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2064 = sst [smem:[#allocation119 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2553 = smov [#allocation118] /* materialized constant */
+%2066 = dma.general /*src=*/%s0, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2553, /*stridedescaddr=*/[#allocation119], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%2068 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%2084 = sst [smem:[#allocation121]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2086 = sst [smem:[#allocation121 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2088 = sst [smem:[#allocation121 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2090 = sst [smem:[#allocation121 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2092 = sst [smem:[#allocation121 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2094 = sst [smem:[#allocation121 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2096 = sst [smem:[#allocation121 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2098 = sst [smem:[#allocation121 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2100 = sst [smem:[#allocation121 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2554 = smov [#allocation120] /* materialized constant */
+%2102 = dma.general /*src=*/%s42, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2554, /*stridedescaddr=*/[#allocation121], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%2104 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%2120 = sst [smem:[#allocation123]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2122 = sst [smem:[#allocation123 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2124 = sst [smem:[#allocation123 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2126 = sst [smem:[#allocation123 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2128 = sst [smem:[#allocation123 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2130 = sst [smem:[#allocation123 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2132 = sst [smem:[#allocation123 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2134 = sst [smem:[#allocation123 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2136 = sst [smem:[#allocation123 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2555 = smov [#allocation122] /* materialized constant */
+%2138 = dma.general /*src=*/%s83, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2555, /*stridedescaddr=*/[#allocation123], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%2140 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%2156 = sst [smem:[#allocation125]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2158 = sst [smem:[#allocation125 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2160 = sst [smem:[#allocation125 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2162 = sst [smem:[#allocation125 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2164 = sst [smem:[#allocation125 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2166 = sst [smem:[#allocation125 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2168 = sst [smem:[#allocation125 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2170 = sst [smem:[#allocation125 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2172 = sst [smem:[#allocation125 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2556 = smov [#allocation124] /* materialized constant */
+%2174 = dma.general /*src=*/%s120, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2556, /*stridedescaddr=*/[#allocation125], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%2176 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%2192 = sst [smem:[#allocation127]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2194 = sst [smem:[#allocation127 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2196 = sst [smem:[#allocation127 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2198 = sst [smem:[#allocation127 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2200 = sst [smem:[#allocation127 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2202 = sst [smem:[#allocation127 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2204 = sst [smem:[#allocation127 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2206 = sst [smem:[#allocation127 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2208 = sst [smem:[#allocation127 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2557 = smov [#allocation126] /* materialized constant */
+%2210 = dma.general /*src=*/%s157, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2557, /*stridedescaddr=*/[#allocation127], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%2212 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%2228 = sst [smem:[#allocation129]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2230 = sst [smem:[#allocation129 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2232 = sst [smem:[#allocation129 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2234 = sst [smem:[#allocation129 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2236 = sst [smem:[#allocation129 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2238 = sst [smem:[#allocation129 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2240 = sst [smem:[#allocation129 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2242 = sst [smem:[#allocation129 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2244 = sst [smem:[#allocation129 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2558 = smov [#allocation128] /* materialized constant */
+%2246 = dma.general /*src=*/%s194, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2558, /*stridedescaddr=*/[#allocation129], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%2248 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+%2264 = sst [smem:[#allocation131]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2266 = sst [smem:[#allocation131 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2268 = sst [smem:[#allocation131 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2270 = sst [smem:[#allocation131 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2272 = sst [smem:[#allocation131 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2274 = sst [smem:[#allocation131 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2276 = sst [smem:[#allocation131 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2278 = sst [smem:[#allocation131 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2280 = sst [smem:[#allocation131 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2559 = smov [#allocation130] /* materialized constant */
+%2282 = dma.general /*src=*/%s231, /*size_in_granules=*/524288, /*dst=*/%s20, /*dst_syncflagno=*/%s2493, /*src_syncflagno=*/%s2559, /*stridedescaddr=*/[#allocation131], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%2284 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%2300 = sst [smem:[#allocation133]] %s2486 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2302 = sst [smem:[#allocation133 + $0x1]] %s2487 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2304 = sst [smem:[#allocation133 + $0x2]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2306 = sst [smem:[#allocation133 + $0x3]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2308 = sst [smem:[#allocation133 + $0x4]] %s2489 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2310 = sst [smem:[#allocation133 + $0x5]] %s2490 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2312 = sst [smem:[#allocation133 + $0x6]] %s2491 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2314 = sst [smem:[#allocation133 + $0x7]] %s2488 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%2316 = sst [smem:[#allocation133 + $0x8]] %s2492 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+%s2560 = smov [#allocation132] /* materialized constant */
+%2318 = dma.general /*src=*/%s268, /*size_in_granules=*/524288, /*dst=*/%s57, /*dst_syncflagno=*/%s2496, /*src_syncflagno=*/%s2560, /*stridedescaddr=*/[#allocation133], /*overrides=*/%s2356, /*dst_syncflagno_1=*/0 /* loc("/workspace/kernels/dma_double_buffer_load.py":116:12 to :29) */
+
+%2320 = dma.done [#allocation3], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":106:12 to :25) */
+
+%2322 = dma.done [#allocation3 + $0x1], %s2498 /* loc("/workspace/kernels/dma_double_buffer_load.py":108:12 to :25) */
+%v2323 = vlaneseq /* loc("/workspace/kernels/dma_double_buffer_load.py":126:4 to :20) */
+%vm2325 = vcmp.lt.s32.totalorder %v2323, 1 /* loc("/workspace/kernels/dma_double_buffer_load.py":126:4 to :20) */
+%v2561 = vmov 64.0 /* materialized constant */
+%2327 = vst.msk [vmem:[#allocation4] sm:$0x1] /*vm=*/%vm2325, /*vst_source=*/%v2561 /* loc("/workspace/kernels/dma_double_buffer_load.py":126:4 to :20) */
+%s2562 = smov [#allocation4] /* materialized constant */
+%s2334 = sshll.u32 %s2562, 4
+%s2335 = int_to_ptr.vmem [resolvable:$true] %s2334
+%2337 = dma.vmem_to_hbm [thread:$0]  /*vmem=*/%s2335, /*size_in_granules=*/16, /*hbm=*/%s1, /*dst_syncflagno=*/[#allocation5] /* 
+base_bounds: (1)
+dynamic_base_bounds: (1)
+window_bounds: (1)
+iteration_bounds: (1)
+strides: (1)
+pad_low: (0)
+pad_high: (0)
+element_size_in_bytes: 512
+second_minor_factor: 1 */
+
+%2340 = dma.done [#allocation5], 16 /* pipeline-emitter-dma-wait */
+
+%2341 = vsyncpa [#allocation5], 1
+
+%2342 = vsyncmov [#allocation3]
+%s2343 = vpop.sfrf %2342
+%p2483 = scmp.ne.s32.totalorder %s2343, 0
+
+%2347 = shalt.err (%p2483) /* Semaphore (scratch argument 1) has a nonzero value upon exit from a Mosaic kernel. Make sure every DMA is awaited, and every semaphore signal is paired with a wait. */
+
+%2349 = vsyncmov [#allocation3 + $0x1]
+%s2350 = vpop.sfrf %2349
+%p2484 = scmp.ne.s32.totalorder %s2350, 0
+
+%2354 = shalt.err (%p2484) /* Semaphore (scratch argument 1) has a nonzero value upon exit from a Mosaic kernel. Make sure every DMA is awaited, and every semaphore signal is paired with a wait. */

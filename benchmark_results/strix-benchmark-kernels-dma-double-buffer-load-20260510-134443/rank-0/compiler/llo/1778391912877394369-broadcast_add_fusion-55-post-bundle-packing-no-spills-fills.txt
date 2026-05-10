@@ -1,0 +1,109 @@
+// [Enable stack traces via -xla_jf_collect_llo_stack_trace or -xla_jf_debug_level=2]
+$region0: #{broadcast_add_fusion}
+  #allocation0 [shape = 's32[1]{0}', space=sflag, size = 0x4, offset = 0, scoped, tag = 'scoped memory for broadcast_add_fusion']
+  // region range: [0, 37)
+  %s321_s0 = inlined_call_operand.vmem [shape: u32[8192], index: 0, kind: output, shape index: {}] /* operand 0 */
+  %v1_v0 = vlaneseq
+  %v4_v1 = vshrl.u32 %v1_v0, 16
+  %v12_v2 = vand.u32 65535, %v1_v0
+  %v36_v3 = vadd.s32 1024, %v1_v0
+  %v70_v4 = vadd.s32 2048, %v1_v0
+  %v104_v5 = vadd.s32 3072, %v1_v0
+  %v138_v6 = vadd.s32 4096, %v1_v0
+  %v172_v7 = vadd.s32 5120, %v1_v0
+  %v292_v8 = vadd.s32 6144, %v1_v0
+  %v7_v9 = vmul.u32 2048, %v4_v1
+  %v15_v10 = vmul.u32 2048, %v12_v2
+  %v37_v11 = vshrl.u32 %v36_v3, 16
+  %v45_v12 = vand.u32 65535, %v36_v3
+  %v71_v13 = vshrl.u32 %v70_v4, 16
+  %v79_v14 = vand.u32 65535, %v70_v4
+  %v105_v15 = vshrl.u32 %v104_v5, 16
+  %v113_v16 = vand.u32 65535, %v104_v5
+  %v17_v17 = vshrl.u32 %v15_v10, 16
+  %v40_v18 = vmul.u32 2048, %v37_v11
+  %v48_v19 = vmul.u32 2048, %v45_v12
+  %v139_v20 = vshrl.u32 %v138_v6, 16
+  %v74_v21 = vmul.u32 2048, %v71_v13
+  %v82_v22 = vmul.u32 2048, %v79_v14
+  %v147_v23 = vand.u32 65535, %v138_v6
+  %v173_v24 = vshrl.u32 %v172_v7, 16
+  %v20_v25 = vadd.s32 %v17_v17, %v7_v9
+  %v50_v26 = vshrl.u32 %v48_v19, 16
+  %v108_v27 = vmul.u32 2048, %v105_v15
+  %v116_v28 = vmul.u32 2048, %v113_v16
+  %v84_v29 = vshrl.u32 %v82_v22, 16
+  %v142_v30 = vmul.u32 2048, %v139_v20
+  %v150_v31 = vmul.u32 2048, %v147_v23
+  %v181_v32 = vand.u32 65535, %v172_v7
+  %v22_v33 = vshrl.u32 %v20_v25, 16
+  %v23_v34 = vand.u32 65535, %v20_v25
+  %v53_v35 = vadd.s32 %v50_v26, %v40_v18
+  %v118_v36 = vshrl.u32 %v116_v28, 16
+  %v87_v37 = vadd.s32 %v84_v29, %v74_v21
+  %v152_v38 = vshrl.u32 %v150_v31, 16
+  %v176_v39 = vmul.u32 2048, %v173_v24
+  %v184_v40 = vmul.u32 2048, %v181_v32
+  %v24_v41 = vshrl.u32 %v23_v34, 16
+  %v55_v42 = vshrl.u32 %v53_v35, 16
+  %v56_v43 = vand.u32 65535, %v53_v35
+  %v121_v44 = vadd.s32 %v118_v36, %v108_v27
+  %v89_v45 = vshrl.u32 %v87_v37, 16
+  %v90_v46 = vand.u32 65535, %v87_v37
+  %v155_v47 = vadd.s32 %v152_v38, %v142_v30
+  %v186_v48 = vshrl.u32 %v184_v40, 16
+  %v27_v49 = vadd.s32 %v24_v41, %v22_v33
+  %v57_v50 = vshrl.u32 %v56_v43, 16
+  %v123_v51 = vshrl.u32 %v121_v44, 16
+  %v124_v52 = vand.u32 65535, %v121_v44
+  %v91_v53 = vshrl.u32 %v90_v46, 16
+  %v157_v54 = vshrl.u32 %v155_v47, 16
+  %v158_v55 = vand.u32 65535, %v155_v47
+  %v189_v56 = vadd.s32 %v186_v48, %v176_v39
+  %v31_v57 = vadd.s32 1, %v27_v49
+  %v60_v58 = vadd.s32 %v57_v50, %v55_v42
+  %v125_v59 = vshrl.u32 %v124_v52, 16
+  %v207_v60 = vshrl.u32 %v292_v8, 16
+  %v94_v61 = vadd.s32 %v91_v53, %v89_v45
+  %v159_v62 = vshrl.u32 %v158_v55, 16
+  %v191_v63 = vshrl.u32 %v189_v56, 16
+  %v192_v1 = vand.u32 65535, %v189_v56
+  %33 = vst [vmem:[%s321_s0] sm:$0xff] /*vst_source=*/%v31_v57
+  %v64_v2 = vadd.s32 1, %v60_v58
+  %v128_v3 = vadd.s32 %v125_v59, %v123_v51
+  %v215_v4 = vand.u32 65535, %v292_v8
+  %v98_v5 = vadd.s32 1, %v94_v61
+  %v162_v6 = vadd.s32 %v159_v62, %v157_v54
+  %v193_v7 = vshrl.u32 %v192_v1, 16
+  %v240_v0 = vadd.s32 7168, %v1_v0
+  %272 = vst [vmem:[%s321_s0 + $0x8] sm:$0xff] /*vst_source=*/%v64_v2
+  %v132_v8 = vadd.s32 1, %v128_v3
+  %v210_v9 = vmul.u32 2048, %v207_v60
+  %v218_v10 = vmul.u32 2048, %v215_v4
+  %273 = vst [vmem:[%s321_s0 + $0x10] sm:$0xff] /*vst_source=*/%v98_v5
+  %v166_v11 = vadd.s32 1, %v162_v6
+  %v196_v12 = vadd.s32 %v193_v7, %v191_v63
+  %v241_v13 = vshrl.u32 %v240_v0, 16
+  %v249_v14 = vand.u32 65535, %v240_v0
+  %274 = vst [vmem:[%s321_s0 + $0x18] sm:$0xff] /*vst_source=*/%v132_v8
+  %v220_v15 = vshrl.u32 %v218_v10, 16
+  %275 = vst [vmem:[%s321_s0 + $0x20] sm:$0xff] /*vst_source=*/%v166_v11
+  %v200_v16 = vadd.s32 1, %v196_v12
+  %v244_v17 = vmul.u32 2048, %v241_v13
+  %v252_v18 = vmul.u32 2048, %v249_v14
+  %v223_v19 = vadd.s32 %v220_v15, %v210_v9
+  %276 = vst [vmem:[%s321_s0 + $0x28] sm:$0xff] /*vst_source=*/%v200_v16
+  %v254_v20 = vshrl.u32 %v252_v18, 16
+  %v225_v21 = vshrl.u32 %v223_v19, 16
+  %v226_v22 = vand.u32 65535, %v223_v19
+  %v257_v23 = vadd.s32 %v254_v20, %v244_v17
+  %v227_v24 = vshrl.u32 %v226_v22, 16
+  %v259_v25 = vshrl.u32 %v257_v23, 16
+  %v260_v26 = vand.u32 65535, %v257_v23
+  %v230_v27 = vadd.s32 %v227_v24, %v225_v21
+  %v261_v28 = vshrl.u32 %v260_v26, 16
+  %v234_v29 = vadd.s32 1, %v230_v27
+  %v264_v30 = vadd.s32 %v261_v28, %v259_v25
+  %277 = vst [vmem:[%s321_s0 + $0x30] sm:$0xff] /*vst_source=*/%v234_v29
+  %v268_v31 = vadd.s32 1, %v264_v30
+  %278 = vst [vmem:[%s321_s0 + $0x38] sm:$0xff] /*vst_source=*/%v268_v31

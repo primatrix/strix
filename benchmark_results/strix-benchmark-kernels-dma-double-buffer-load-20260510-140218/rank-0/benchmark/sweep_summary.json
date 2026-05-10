@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "job_name": "strix-benchmark-kernels-dma-double-buffer-load-20260510-140218",
+  "kernel": "kernels.dma_double_buffer_load",
+  "total_bytes": 2147483648,
+  "num_configs": 2,
+  "failed_count": 0,
+  "rows": [
+    {
+      "bf": 8192,
+      "bd": 1024,
+      "num_loads": 128,
+      "tile_bytes": 16777216,
+      "median_ms": 210.11813199993412,
+      "stdev_ms": 11.989999512942322,
+      "gib_per_s_median": 9.518455075550676
+    },
+    {
+      "bf": 1024,
+      "bd": 8192,
+      "num_loads": 128,
+      "tile_bytes": 16777216,
+      "median_ms": 215.16960049996214,
+      "stdev_ms": 9.008506314391491,
+      "gib_per_s_median": 9.294993323187175
+    }
+  ],
+  "sorted_by": "gib_per_s_median_desc"
+}
