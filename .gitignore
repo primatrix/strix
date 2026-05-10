@@ -2,3 +2,4 @@ __pycache__/
 strix.egg-info/
 .venv/
 .worktrees/
+benchmark_results/
