@@ -1,8 +1,0 @@
-xla_cpu_enable_fast_min_max: false
-xla_gpu_enable_libnvptxcompiler: false
-xla_gpu_experimental_enable_split_k_rewrite: false
-xla_gpu_unsupported_use_all_reduce_one_shot_kernel: false
-xla_gpu_use_embeded_device_lib: true
-xla_gpu_use_inprocess_lld: true
-xla_dump_to: "/tmp/operator-artifact/rank-0/compiler/hlo"
-xla_dump_hlo_as_text: true

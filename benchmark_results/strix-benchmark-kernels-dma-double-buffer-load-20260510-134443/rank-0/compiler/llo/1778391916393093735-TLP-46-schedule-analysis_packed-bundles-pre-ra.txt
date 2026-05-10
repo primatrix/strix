@@ -1,7 +1,0 @@
-Schedule analysis:
-	total scheduled bundles:    282
-	empty scheduled bundles:    144
-	non empty scheduled bundles: 138
-	 126.50 scheduled bundles (91.67%): <no hlo>
-	  11.50 scheduled bundles ( 8.33%): %copy.1 = f32[1]{0:T(128)} copy(%args_0_.1), backend_config={"flag_configs":[],"scoped_memory_configs":[{"memory_space":"1","offset":"0","size":"11744052"}],"used_scoped_memory_configs":[],"aliasing_operands":{"lists":[]}}
-	[opcode]      15 scheduled bundles (10.87%): copy                 (1 instances,  15.00 avg)

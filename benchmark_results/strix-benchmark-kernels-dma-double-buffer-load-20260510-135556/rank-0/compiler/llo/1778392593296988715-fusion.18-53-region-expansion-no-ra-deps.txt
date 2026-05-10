@@ -1,3 +1,0 @@
-ordinal=0 before=12068 after=12084 expansion=1.00133
-ordinal=1 before=12066 after=12081 expansion=1.00124
-ordinal=551 before=12041 after=12056 expansion=1.00125

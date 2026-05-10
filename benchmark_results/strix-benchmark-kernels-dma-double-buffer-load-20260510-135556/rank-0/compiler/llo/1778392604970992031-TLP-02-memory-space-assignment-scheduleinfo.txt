@@ -1,3 +1,0 @@
-time,instruction_name
-0,args_0_.1
-1,tpu_custom_call.1

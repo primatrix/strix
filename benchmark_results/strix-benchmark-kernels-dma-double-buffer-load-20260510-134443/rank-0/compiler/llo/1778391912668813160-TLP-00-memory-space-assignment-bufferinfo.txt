@@ -1,8 +1,0 @@
-buffer_id,buffer_name,alt_mem_benefit,size,definition_time,use_times,use_names,is_scoped
--7,"scoped allocation for copy",0,67108864,2,"","",1
--8,"scoped allocation for convert_element_type.3",0,67108864,3,"","",1
--11,"scoped allocation for convert_element_type.2",0,67108864,6,"","",1
--12,"scoped allocation for pad_add_fusion",0,11744052,8,"","",1
--10,"scoped allocation for shift_right_logical.1",0,67108864,5,"","",1
--12,"scoped allocation for pad_add_fusion",0,67108864,9,"","",1
-12,"<12 pad_add_fusion>",-4.84385e-12,512,8,"","",0

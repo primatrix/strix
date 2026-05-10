@@ -1,8 +1,0 @@
-BufferAssignment:
-allocation 0: size 512, parameter 0, shape |s32[]| at ShapeIndex {}:
- value: <0 args_0_.1 @0> (size=512,offset=0): s32[]{:T(128)}
-allocation 1: size 512, output shape is |s32[]|, maybe-live-out:
- value: <2 copy @0> (size=512,offset=0): s32[]{:T(128)}
-allocation 2: size 67108864, color 1, preallocated-temp:
-allocation 3: size 512, color 6, preallocated-temp:
- value: <1 copy.1 @6> (size=512,offset=0): s32[]{:T(128)S(6)}

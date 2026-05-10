@@ -1,6 +1,0 @@
-// [Enable stack traces via -xla_jf_collect_llo_stack_trace or -xla_jf_debug_level=2]
-$region0:
-  #allocation0 [shape = 'u32[]', space=smem, size = 0x4, offset = 0xfff98, fixed_abs, tag = 'smem constant byte address 0xfff98 - program shared registry']
-  %0 = vdelay 1
-  %1 = sfence
-  %2 = sst [smem:[#allocation0]] 0

@@ -1,7 +1,0 @@
-program_id: 0
-executable_size: 0
-optimized_hlo_instruction_count: 344
-module_name: "jit__normal"
-executable_fingerprint: ""
-borg_cell: ""
-borg_uid: 0
