@@ -30,7 +30,7 @@ config = {
     "weight_dtype": "bfloat16",
     "tpu_type": "v7x",
     "tpu_topology": "1x1",
-    "description": "Double-buffer VMEM load — DMA with pre-computed indices in SMEM (no runtime address calculation)",
+    "description": "Double-buffer VMEM load — DMA with descriptor pool (reuse 8 pre-created descriptors)",
 }
 
 
@@ -65,32 +65,52 @@ def _dma_double_buffer_load_kernel(
         bf: Intermediate dimension block size
         bd: Hidden dimension block size
         num_loads: Number of weight tiles to load (simulates expert iteration)
+
+    Strategy:
+        Create a pool of 8 descriptors (4 per buffer) with different addresses,
+        then cycle through them in the loop. This provides address diversity
+        (avoiding cache issues) while maintaining descriptor reuse benefits.
     """
-    # -- Weight DMA helpers --
+    # -- Pre-create descriptor pool with diverse addresses --
+    # Pool size: 8 descriptors (4 addresses × 2 buffers)
+    POOL_SIZE = 4  # Number of different addresses per buffer
 
-    def make_w_copy(buf, tile_idx):
-        """Create async copy descriptor for HBM→VMEM weight tile transfer."""
-        bf_id = bf_indices_smem[tile_idx]
-        bd_id = bd_indices_smem[tile_idx]
-        return pltpu.make_async_copy(
+    # Create descriptor pool for buffer 0
+    descriptors_0 = []
+    for i in range(POOL_SIZE):
+        idx = min(i, num_loads - 1)  # Clamp to valid range
+        bf_id = bf_indices_smem[idx]
+        bd_id = bd_indices_smem[idx]
+        desc = pltpu.make_async_copy(
             src_ref=w_hbm.at[pl.ds(bd_id * bd, bd), pl.ds(bf_id * bf, bf)],
-            dst_ref=b_w_x2_vmem.at[buf],
-            sem=weight_sems.at[buf],
+            dst_ref=b_w_x2_vmem.at[0],
+            sem=weight_sems.at[0],
         )
+        descriptors_0.append(desc)
 
-    # -- Double-buffered load loop --
-    # Pipeline: prefetch 2 tiles, then wait → start(i+2, same buf) → compute.
-    # Keeps 2 DMAs in flight at all times for maximum HBM bandwidth utilization.
+    # Create descriptor pool for buffer 1
+    descriptors_1 = []
+    for i in range(POOL_SIZE):
+        idx = min(i + POOL_SIZE, num_loads - 1)  # Offset by POOL_SIZE
+        bf_id = bf_indices_smem[idx]
+        bd_id = bd_indices_smem[idx]
+        desc = pltpu.make_async_copy(
+            src_ref=w_hbm.at[pl.ds(bd_id * bd, bd), pl.ds(bf_id * bf, bf)],
+            dst_ref=b_w_x2_vmem.at[1],
+            sem=weight_sems.at[1],
+        )
+        descriptors_1.append(desc)
 
+    # -- Double-buffered load loop with descriptor cycling --
     checksum = jnp.float32(0.0)
 
     # Prefetch tile 0 → buf 0
-    copy_0 = make_w_copy(0, 0)
+    copy_0 = descriptors_0[0]
     copy_0.start()
 
     # Prefetch tile 1 → buf 1
+    copy_1 = descriptors_1[0] if num_loads > 1 else descriptors_0[0]
     if num_loads > 1:
-        copy_1 = make_w_copy(1, 1)
         copy_1.start()
 
     for load_idx in range(num_loads):
@@ -103,13 +123,15 @@ def _dma_double_buffer_load_kernel(
             copy_1.wait()
 
         # Immediately start next DMA into same buffer (2 tiles ahead)
+        # Cycle through descriptor pool
         if load_idx + 2 < num_loads:
-            next_copy = make_w_copy(buf, load_idx + 2)
-            next_copy.start()
+            pool_idx = (load_idx + 2) % POOL_SIZE
             if buf == 0:
-                copy_0 = next_copy
+                copy_0 = descriptors_0[pool_idx]
+                copy_0.start()
             else:
-                copy_1 = next_copy
+                copy_1 = descriptors_1[pool_idx]
+                copy_1.start()
 
         # Compute on arrived data
         checksum = checksum + jnp.float32(1.0)
