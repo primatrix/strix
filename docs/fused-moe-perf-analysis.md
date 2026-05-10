@@ -256,45 +256,123 @@ for b in 0..B-1:
     flush y_acc
 ```
 
-**HBM 流量对比（单专家，bt_total = 1024，B = 2）**：
+**Strategy A 的 x 放置方式又分两种**：
+- **A-1 持久 x**：所有 B 批 x 常驻 VMEM（B × bt_tile × d × 2B）
+- **A-2 轮换 x**：仅 1 批 x 在 VMEM（+ 预取缓冲），进入下一权重 tile 时**重读** x
 
-| 项 | Strategy A | Strategy B |
-|-----|-----------|-----------|
-| W1 | 32 × 1 = 32 MB | 32 × 2 = 64 MB |
-| W3 | 32 × 1 = 32 MB | 32 × 2 = 64 MB |
-| W2 | 32 × 1 = 32 MB | 32 × 2 = 64 MB |
-| x  | 16 MB | 16 MB |
-| y  | 16 MB | 16 MB |
-| **合计** | **128 MB** | **224 MB** |
+x 是否持久驻留决定了 HBM 上 x 是读 1 次还是 N_w 次——因为在 A-2 中进入 tile `i+1` 时必须回到 batch 0，而 x_0 已被覆盖。
 
-**A 节省 96 MB，HBM 流量下降 ~43%**。
+**HBM 流量对比（单专家，bt_total = 1024，B = 2，4 MB tile → N_w = 8）**：
 
-**VMEM 占用对比（4 MB tile）**：
+| 项 | A-1 持久 x | A-2 轮换 x | Strategy B |
+|-----|-----------|-----------|-----------|
+| W1 | 32 × 1 | 32 × 1 | 32 × 2 = 64 |
+| W3 | 32 × 1 | 32 × 1 | 32 × 2 = 64 |
+| W2 | 32 × 1 | 32 × 1 | 32 × 2 = 64 |
+| x  | 16 × 1 = 16 | 16 × N_w = **128** | 16 |
+| y  | 16 | 16 | 16 |
+| **合计** | **128 MB** | **240 MB** | **224 MB** |
 
-| 项 | Strategy A | Strategy B |
-|-----|-----------|-----------|
-| x | 16 MB（两批） | 8 MB（一批） |
-| W tile × 3（单缓冲） | 12 MB | 12 MB |
-| y_acc | 16 MB（两份） | 8 MB（一份） |
-| **单缓冲合计** | **44 MB** | **28 MB** |
-| **双缓冲合计** | **56 MB** | **40 MB** |
+（若换 8 MB tile → N_w = 4：A-2 的 x 读变为 64 MB，总计 176 MB）
+
+**关键观察**：A-2 为节省 VMEM 付出 HBM 代价——x 被每个权重 tile 重读一次；当 `(N_w - 1) × bt_total × d × 2B > (B - 1) × W_total` 时，**A-2 甚至比 B 更差**。当前参数：`7 × 16 = 112 MB > 1 × 96 = 96 MB`，轮换 x 劣于重载权重。
+
+**VMEM 占用（4 MB tile 单缓冲权重）**：
+
+| 项 | A-1 持久 x | A-2 轮换 x（单缓冲） | A-2 轮换 x（双缓冲） | Strategy B |
+|-----|-----------|-----------|-----------|-----------|
+| x | 16 MB（两批常驻） | 8 MB（一批） | 16 MB（当前+预取） | 8 MB |
+| W tile × 3 | 12 MB | 12 MB | 12 MB | 12 MB |
+| y_acc | 16 MB（两份） | 16 MB（两份） | 16 MB（两份） | 8 MB（一份） |
+| **合计** | **44 MB** | **36 MB** | **44 MB** | **28 MB** |
 
 **一般化规则**：
-- HBM(Strategy A) ≈ `W_total + bt_total × (d_in + d_out) × 2B`
-- HBM(Strategy B) ≈ `W_total × ⌈bt_total / bt_tile⌉ + bt_total × (d_in + d_out) × 2B`
-- 只要权重体积大于单批 I/O（`W_total > bt_tile × (d_in + d_out) × 2B`，MoE 几乎总成立），**Strategy A 更省**。
+- HBM(A-1) ≈ `W_total + bt_total × (d_in + d_out) × 2B`
+- HBM(A-2) ≈ `W_total + N_w × bt_total × d × 2B + bt_total × d × 2B`
+- HBM(B)  ≈ `B × W_total + bt_total × (d_in + d_out) × 2B`
+- 只要 VMEM 装得下 **A-1**，它就是最优：`B × bt_tile × d × 2B`（x）+ `3 × tile`（W）+ `B × bt_tile × d × 2B`（y_acc）≤ VMEM。
 
-**何时不得不用 B**：
-- bt_total ↑ 到 ~4096 以上时，多份 y_acc 加 x 超出 VMEM（例如 bt_total=8192 时 y_acc 需 128 MB）；
-- 8 MB tile + 双缓冲 + 2 份 y_acc：16 + 48 + 16 = 80 MB，超 VMEM 上限。
+**选择决策树**：
+1. 若 A-1 VMEM 能装下 → **选 A-1**（当前 B=2 正好符合，44 MB < 64 MB）。
+2. 若 A-1 装不下（B ↑ 导致 x + y_acc 超限）→ 在 A-2 和 B 中比较：
+   - `(N_w - 1) × bt_total × d × 2B` 小于 `(B - 1) × W_total` → 选 A-2；
+   - 否则选 B。
+3. 极端大 B 时，B 更可控（y_acc 只需一份 8 MB，随时 flush）。
 
-### 5.7 结论
+### 5.7 具体流水：单槽 x 滚动 + 双槽权重预取（B = 2）
+
+在 §5.6 的基础上，进一步把"权重外循环"展开成具体的 DMA/MXU 流水，观察到：
+- **x 只需单槽**——在 x1 完成 `x1 @ W1_a` / `x1 @ W3_a` 后（gate_1a、up_1a 入 VREG），x1 的 VMEM 地址即可立刻被 x2 覆盖；
+- **权重双槽交替**（slot_0 装 tile a、c、e…，slot_1 装 tile b、d、f…），使下一权重 tile 的 DMA 与当前计算重叠；
+- **W2 低优先级预取**——与 W1、W3 同槽但 DMA 优先级最低，只需在该 tile 的 `act_up @ W2` 阶段之前到达即可；
+- **y_acc × B 持久**——跨所有权重 tile 累加。
+
+#### 流水阶段
+
+| 阶段 | 操作 | 槽位变化 |
+|-----|-----|---------|
+| 1 | load (x1, W1_a, W3_a, W2_a[低优先级]) | x_slot ← x1; W_slot_0 ← W_a |
+| 2 | compute gate_1a = x1 @ W1_a, up_1a = x1 @ W3_a | 结果入 VREG |
+| 3 | load (x2, W1_b, W3_b, W2_b) | x_slot ← x2（覆盖 x1）; W_slot_1 ← W_b |
+| 4 | y1_acc ← silu(gate_1a) * up_1a @ W2_a | y1_acc 首次写入 VMEM |
+| 5 | compute gate_2a = x2 @ W1_a, up_2a = x2 @ W3_a | 仍用 W_slot_0 |
+| 6 | y2_acc ← silu(gate_2a) * up_2a @ W2_a | y2_acc 首次写入 VMEM |
+| 7 | compute gate_2b = x2 @ W1_b, up_2b = x2 @ W3_b | 切到 W_slot_1 |
+| 8 | load (x1, W1_c, W3_c, W2_c) — 复用 x_slot 与 W_slot_0 | x_slot ← x1; W_slot_0 ← W_c（覆盖 W_a） |
+| 9 | y2_acc += silu(gate_2b) * up_2b @ W2_b | 累加到 y2_acc |
+| 10+ | compute x1 @ W_b、y1_acc += ... @ W2_b；再 x1 @ W_c …… 循环至 N_w 完 | 稳态 |
+
+每两个权重 tile 吞下一对 (x1, x2)；每两对 tile 中 x_slot、W_slot_0、W_slot_1 各被覆盖一次。
+
+#### 阶段 VMEM 占用（4 MB tile）
+
+tile 权重 bundle = W1 + W3 + W2 = 3 × 4 = 12 MB；x 单批 = 8 MB；y_acc 单份 = 8 MB。
+
+| 阶段 | x | W_slot_0 | W_slot_1 | y1_acc | y2_acc | **合计** |
+|-----|---|----------|----------|--------|--------|---------|
+| 1 | 8 | 12 (a) | – | – | – | **20 MB** |
+| 2 | 8 | 12 | – | – | – | **20 MB** |
+| 3 | 8 | 12 | 12 (b) | – | – | **32 MB** |
+| 4 | 8 | 12 | 12 | 8 | – | **40 MB** |
+| 5 | 8 | 12 | 12 | 8 | – | **40 MB** |
+| 6 | 8 | 12 | 12 | 8 | 8 | **48 MB** |
+| 7 | 8 | 12 | 12 | 8 | 8 | **48 MB** |
+| 8 | 8 | 12 (c) | 12 (b) | 8 | 8 | **48 MB** |
+| 9 | 8 | 12 | 12 | 8 | 8 | **48 MB** |
+| 稳态 | 8 | 12 | 12 | 8 | 8 | **48 MB** |
+
+**峰值 48 MB，在 64 MB VMEM 之内**，可完整支持"双权重 tile 预取 + x 滚动 + 2 份 y_acc"。
+
+#### 阶段 VMEM 占用（8 MB tile）
+
+tile 权重 bundle = 3 × 8 = 24 MB；x 与 y_acc 同前。
+
+| 阶段 | x | W_slot_0 | W_slot_1 | y1_acc | y2_acc | **合计** |
+|-----|---|----------|----------|--------|--------|---------|
+| 1 | 8 | 24 (a) | – | – | – | **32 MB** |
+| 2 | 8 | 24 | – | – | – | **32 MB** |
+| 3 | 8 | 24 | 24 (b) | – | – | **56 MB** |
+| 4 | 8 | 24 | 24 | 8 | – | **64 MB** ⚠️ 满额 |
+| 5 | 8 | 24 | 24 | 8 | – | **64 MB** |
+| 6 | 8 | 24 | 24 | 8 | 8 | **72 MB** ❌ 超限 |
+
+**8 MB tile 无法容纳此流水**。若坚持 8 MB tile，只能退到权重**单槽**（放弃下一 tile 预取）：
+- 稳态：x (8) + W_current (24) + y1_acc (8) + y2_acc (8) = **48 MB** ✓，但失去权重 DMA 与计算重叠。
+
+#### 结论
+
+- **4 MB tile** 是此流水的最优 tile 尺寸：峰值 48 MB，可同时容纳两组权重 tile + x + 2 份 y_acc，权重 DMA 与 MXU 计算完全重叠；
+- **8 MB tile** 只能做权重单槽调度（稳态 48 MB），失去预取窗口，HBM 延迟无法隐藏；
+- 4 MB tile 的 N_w = 8 意味着更频繁的 DMA 启动开销，但 DMA 启动可被两组权重槽的交替启动分摊（每两个 tile 一次切换），实际影响小。
+
+### 5.8 结论
 
 1. 三个权重**必须**沿 f 维度分 tile 流式加载（全量 = 96 MB，远超 VMEM）。
 2. W1/W3 的输出维切分与 W2 的 reduction 维切分**对齐**，是 SwiGLU + 下降流水的前提。
 3. W2 分片产出 y 的**部分和**，非完整切片；`y_acc` (bt, d) 必须作为 VMEM 中的累加器驻留。
 4. 多批 token 场景下采用 **权重外循环 + y_acc 分批累加**（Strategy A），权重加载摊薄到所有批次。
-5. **推荐**：4 MB tile + 三权重双缓冲 + VREG 流式 SwiGLU + y_acc 累加 ≈ 40 MB（单批）/ 56 MB（双批），留余量用于下一专家权重预取或共享专家权重驻留。
+5. **单槽 x 滚动 + 双槽权重交替**（§5.7）是 4 MB tile 下的推荐流水——峰值 48 MB，留 16 MB 余量给下一专家权重预取或共享专家权重驻留。
+6. 8 MB tile 会让同样的流水峰值超 64 MB，必须降格为权重单槽；所以 **4 MB tile 为 decode 阶段首选**。
 
 ---
 
