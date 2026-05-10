@@ -83,32 +83,43 @@ def _dma_double_buffer_load_kernel(
         tile_sum = jnp.sum(b_w_x2_vmem[buf].astype(jnp.float32))
         return tile_sum
 
-    # -- Double-buffered load loop (fully unrolled, paired descriptors) --
-    # Each make_async_copy descriptor is used for both .start() and .wait()
-    # to ensure the Mosaic lowering sees consistent HBM→VMEM refs.
+    # -- Double-buffered load loop (fully unrolled) --
+    # Pipeline: prefetch 2 tiles, then wait → start(i+2, same buf) → compute.
+    # Keeps 2 DMAs in flight at all times for maximum HBM bandwidth utilization.
 
     checksum = jnp.float32(0.0)
 
-    # Prefetch first tile into buffer 0
-    prev_copy = make_w_copy(0, 0, 0)
-    prev_copy.start()
+    # Prefetch tile 0 → buf 0
+    copy_0 = make_w_copy(0, 0, 0)
+    copy_0.start()
+
+    # Prefetch tile 1 → buf 1
+    if num_loads > 1:
+        copy_1 = make_w_copy(1, 1 % num_bf, (1 // num_bf) % num_bd)
+        copy_1.start()
 
     for load_idx in range(num_loads):
         buf = load_idx % 2
 
-        # Wait for the DMA into the current buffer (same descriptor as start)
-        prev_copy.wait()
+        # Wait for current buffer's DMA to complete
+        if buf == 0:
+            copy_0.wait()
+        else:
+            copy_1.wait()
 
-        # Start next DMA into the alternate buffer (skip on last iteration
-        # to keep DMA semaphores balanced at kernel exit)
-        if load_idx < num_loads - 1:
-            next_idx = load_idx + 1
-            next_buf = next_idx % 2
-            next_bf_id = next_idx % num_bf
-            next_bd_id = (next_idx // num_bf) % num_bd
-            prev_copy = make_w_copy(next_buf, next_bf_id, next_bd_id)
-            prev_copy.start()
+        # Immediately start next DMA into same buffer (2 tiles ahead)
+        if load_idx + 2 < num_loads:
+            next_tile = load_idx + 2
+            next_bf_id = next_tile % num_bf
+            next_bd_id = (next_tile // num_bf) % num_bd
+            next_copy = make_w_copy(buf, next_bf_id, next_bd_id)
+            next_copy.start()
+            if buf == 0:
+                copy_0 = next_copy
+            else:
+                copy_1 = next_copy
 
+        # Compute on arrived data
         checksum = checksum + jnp.float32(1.0)
 
     # Write checksum to output (rank-1 to satisfy Pallas TPU block rank constraint)
