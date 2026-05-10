@@ -64,13 +64,10 @@ def _dma_double_buffer_load_kernel(
         bd: Hidden dimension block size
         num_loads: Number of weight tiles to load
     """
-    bf_offsets = bf_offsets_ref[:]
-    bd_offsets = bd_offsets_ref[:]
-
     def make_w_copy(buf, load_idx):
-        """Create async copy descriptor using pre-computed offsets."""
-        bf_off = bf_offsets[load_idx]
-        bd_off = bd_offsets[load_idx]
+        """Create async copy descriptor using pre-computed offsets from SMEM."""
+        bf_off = bf_offsets_ref[load_idx]
+        bd_off = bd_offsets_ref[load_idx]
         return pltpu.make_async_copy(
             src_ref=w_hbm.at[pl.ds(bd_off, bd), pl.ds(bf_off, bf)],
             dst_ref=b_w_x2_vmem.at[buf],
