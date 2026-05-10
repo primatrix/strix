@@ -51,6 +51,8 @@ spec:
               value: "${TOTAL_BYTES}"
             - name: NO_IR_DUMP
               value: "${NO_IR_DUMP}"
+            - name: LIBTPU_INIT_ARGS
+              value: "--xla_jf_bounds_check=false --xla_tpu_dvfs_p_state=7"
           resources:
             limits:
               google.com/tpu: ${TPU_CHIPS}

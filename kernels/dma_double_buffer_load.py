@@ -35,8 +35,6 @@ config = {
 
 
 def _dma_double_buffer_load_kernel(
-    bf_indices_ref,
-    bd_indices_ref,
     w_hbm,
     output_vmem,
     # Scratch buffers (VMEM).
@@ -50,58 +48,81 @@ def _dma_double_buffer_load_kernel(
 ):
     """Pallas kernel body — double-buffered weight loading from HBM to VMEM.
 
-    Uses pre-computed tile indices passed as scalar prefetch to avoid
-    per-DMA modular arithmetic in the kernel body.
+    Simulates the weight loading pattern used in expert FFN kernels:
+    - Load weight tiles from HBM into VMEM using double-buffering
+    - Ping-pong between two VMEM buffers (bw_sem_id = 0/1)
+    - Measure pure DMA throughput without compute
 
     Args:
-        bf_indices_ref: Pre-computed bf tile indices [num_loads] (SMEM)
-        bd_indices_ref: Pre-computed bd tile indices [num_loads] (SMEM)
         w_hbm: Weight matrix in HBM [hidden_size, intermediate_size]
         output_vmem: Scalar output ref for checksum (VMEM)
         b_w_x2_vmem: Double-buffer VMEM scratch [2, bd, bf]
         weight_sems: DMA semaphores [2]
         bf: Intermediate dimension block size
         bd: Hidden dimension block size
-        num_loads: Number of weight tiles to load
+        num_loads: Number of weight tiles to load (simulates expert iteration)
     """
-    def make_w_copy(buf, load_idx):
-        """Create async copy descriptor using pre-computed tile indices."""
-        bf_off = bf_indices_ref[load_idx] * bf
-        bd_off = bd_indices_ref[load_idx] * bd
+    hidden_size = w_hbm.shape[0]
+    intermediate_size = w_hbm.shape[1]
+
+    num_bf = cdiv(intermediate_size, bf)
+    num_bd = cdiv(hidden_size, bd)
+
+    # -- Weight DMA helpers --
+
+    def make_w_copy(buf, bf_id, bd_id):
+        """Create async copy descriptor for HBM→VMEM weight tile transfer."""
         return pltpu.make_async_copy(
-            src_ref=w_hbm.at[pl.ds(bd_off, bd), pl.ds(bf_off, bf)],
+            src_ref=w_hbm.at[pl.ds(bd_id * bd, bd), pl.ds(bf_id * bf, bf)],
             dst_ref=b_w_x2_vmem.at[buf],
             sem=weight_sems.at[buf],
         )
 
+    def consume_weight(buf):
+        """Simulate weight consumption (read from VMEM, write checksum to HBM)."""
+        tile_sum = jnp.sum(b_w_x2_vmem[buf].astype(jnp.float32))
+        return tile_sum
+
     # -- Double-buffered load loop (fully unrolled) --
+    # Pipeline: prefetch 2 tiles, then wait → start(i+2, same buf) → compute.
+    # Keeps 2 DMAs in flight at all times for maximum HBM bandwidth utilization.
+
     checksum = jnp.float32(0.0)
 
-    copy_0 = make_w_copy(0, 0)
+    # Prefetch tile 0 → buf 0
+    copy_0 = make_w_copy(0, 0, 0)
     copy_0.start()
 
+    # Prefetch tile 1 → buf 1
     if num_loads > 1:
-        copy_1 = make_w_copy(1, 1)
+        copy_1 = make_w_copy(1, 1 % num_bf, (1 // num_bf) % num_bd)
         copy_1.start()
 
     for load_idx in range(num_loads):
         buf = load_idx % 2
 
+        # Wait for current buffer's DMA to complete
         if buf == 0:
             copy_0.wait()
         else:
             copy_1.wait()
 
+        # Immediately start next DMA into same buffer (2 tiles ahead)
         if load_idx + 2 < num_loads:
-            next_copy = make_w_copy(buf, load_idx + 2)
+            next_tile = load_idx + 2
+            next_bf_id = next_tile % num_bf
+            next_bd_id = (next_tile // num_bf) % num_bd
+            next_copy = make_w_copy(buf, next_bf_id, next_bd_id)
             next_copy.start()
             if buf == 0:
                 copy_0 = next_copy
             else:
                 copy_1 = next_copy
 
+        # Compute on arrived data
         checksum = checksum + jnp.float32(1.0)
 
+    # Write checksum to output (rank-1 to satisfy Pallas TPU block rank constraint)
     output_vmem[...] = jnp.expand_dims(checksum, 0)
 
 
@@ -123,31 +144,16 @@ def dma_double_buffer_load(
     Returns:
         Scalar checksum for verification
     """
-    import numpy as np
-
     hidden_size, intermediate_size = w.shape
     w_dtype = w.dtype
 
-    num_bf = cdiv(intermediate_size, bf)
-    num_bd = cdiv(hidden_size, bd)
-
-    # Pre-compute tile indices (not offsets) — compiler proves alignment via * bf/bd
-    bf_indices = np.zeros(num_loads, dtype=np.int32)
-    bd_indices = np.zeros(num_loads, dtype=np.int32)
-    for i in range(num_loads):
-        bf_indices[i] = i % num_bf
-        bd_indices[i] = (i // num_bf) % num_bd
-
-    bf_indices_jax = jnp.array(bf_indices)
-    bd_indices_jax = jnp.array(bd_indices)
-
     grid_spec = pltpu.PrefetchScalarGridSpec(
-        num_scalar_prefetch=2,
+        num_scalar_prefetch=0,
         grid=(1,),
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
         ],
-        out_specs=pl.BlockSpec((1,), lambda *_: (0,)),
+        out_specs=pl.BlockSpec((1,), lambda i: (0,)),
         scratch_shapes=[
             pltpu.VMEM((2, bd, bf), w_dtype),  # b_w_x2_vmem
             pltpu.SemaphoreType.DMA((2,)),  # weight_sems
@@ -166,7 +172,7 @@ def dma_double_buffer_load(
         compiler_params=pltpu.CompilerParams(
             dimension_semantics=("arbitrary",),
         ),
-    )(bf_indices_jax, bd_indices_jax, w)
+    )(w)
 
     return result[0]
 
