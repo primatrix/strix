@@ -68,25 +68,20 @@ def _dma_double_buffer_load_kernel(
     num_bf = cdiv(intermediate_size, bf)
     num_bd = cdiv(hidden_size, bd)
 
-    # -- Weight DMA helpers --
+    # -- Create DMA descriptors once (outside loop) --
+    # Following tokamax pattern: create descriptors once, reuse via .start()/.wait()
+    copy_0 = pltpu.make_async_copy(
+        src_ref=w_hbm.at[pl.ds(0, bd), pl.ds(0, bf)],
+        dst_ref=b_w_x2_vmem.at[0],
+        sem=weight_sems.at[0],
+    )
+    copy_1 = pltpu.make_async_copy(
+        src_ref=w_hbm.at[pl.ds(0, bd), pl.ds(0, bf)],
+        dst_ref=b_w_x2_vmem.at[1],
+        sem=weight_sems.at[1],
+    )
 
-    def make_w_copy(buf):
-        """Create async copy descriptor for HBM→VMEM weight tile transfer.
-
-        Always reads from fixed position (0, 0) to eliminate address offset calculations.
-        """
-        return pltpu.make_async_copy(
-            src_ref=w_hbm.at[pl.ds(0, bd), pl.ds(0, bf)],
-            dst_ref=b_w_x2_vmem.at[buf],
-            sem=weight_sems.at[buf],
-        )
-
-    def consume_weight(buf):
-        """Simulate weight consumption (read from VMEM, write checksum to HBM)."""
-        tile_sum = jnp.sum(b_w_x2_vmem[buf].astype(jnp.float32))
-        return tile_sum
-
-    # -- Double-buffered load loop (fully unrolled) --
+    # -- Double-buffered load loop --
     # Pipeline: prefetch 2 tiles, then wait → start(i+2, same buf) → compute.
     # Keeps 2 DMAs in flight at all times for maximum HBM bandwidth utilization.
     # NOTE: All DMAs read from fixed position (0, 0) to isolate address calculation overhead.
@@ -94,12 +89,10 @@ def _dma_double_buffer_load_kernel(
     checksum = jnp.float32(0.0)
 
     # Prefetch tile 0 → buf 0
-    copy_0 = make_w_copy(0)
     copy_0.start()
 
     # Prefetch tile 1 → buf 1
     if num_loads > 1:
-        copy_1 = make_w_copy(1)
         copy_1.start()
 
     for load_idx in range(num_loads):
@@ -113,12 +106,10 @@ def _dma_double_buffer_load_kernel(
 
         # Immediately start next DMA into same buffer (2 tiles ahead)
         if load_idx + 2 < num_loads:
-            next_copy = make_w_copy(buf)
-            next_copy.start()
             if buf == 0:
-                copy_0 = next_copy
+                copy_0.start()
             else:
-                copy_1 = next_copy
+                copy_1.start()
 
         # Compute on arrived data
         checksum = checksum + jnp.float32(1.0)
