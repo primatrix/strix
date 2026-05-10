@@ -137,60 +137,77 @@ HBM 带宽（每芯片）:     820 GB/s
 VMEM 总容量:                64 MB
 权重单 Tile 最优大小:        4 MB / 8 MB
 每次运算 token 数上限 (bt):  512
-计算目标:                   y = act(x @ W1) * (x @ W2)
+计算目标:                   y = (silu(x @ W1) * (x @ W3)) @ W2
 ```
 
-**核心张量尺寸（bt = 512，BF16）**：
+**核心张量尺寸（bt = 512，BF16；命名遵循 §2）**：
 ```
 x:      (512, 8192)     = 8 MB
-W1:     (8192, 2048)    = 32 MB（全量）
-W2:     (8192, 2048)    = 32 MB（全量）
+W1:     (8192, 2048)    = 32 MB（门控，全量）
+W3:     (8192, 2048)    = 32 MB（上升，全量）
+W2:     (2048, 8192)    = 32 MB（下降，全量）
 gate:   (512, 2048)     = 2 MB（x @ W1 的结果）
-up:     (512, 2048)     = 2 MB（x @ W2 的结果）
-y:      (512, 2048)     = 2 MB（act(gate) * up）
+up:     (512, 2048)     = 2 MB（x @ W3 的结果）
+act_up: (512, 2048)     = 2 MB（silu(gate) * up）
+y:      (512, 8192)     = 8 MB（act_up @ W2，最终输出）
 ```
 
-**权重沿输出维度 f 切分**：
+**三个权重沿 f = 2048 同步切分**：
+- W1、W3：沿 **输出维 f** 切分，第 i 片形状 `(d, f_tile)`
+- W2：沿 **reduction 维 f** 切分，第 i 片形状 `(f_tile, d)`，与 W1/W3 的第 i 片对齐
+
 ```
-4 MB tile: f_tile = 4MB / (8192 × 2B) = 256     → 2048/256 = 8 轮
-8 MB tile: f_tile = 8MB / (8192 × 2B) = 512     → 2048/512 = 4 轮
-
-每轮中间切片: 512 × f_tile × 2B
-  - 4 MB tile: 256 KB / 张量
-  - 8 MB tile: 512 KB / 张量
+4 MB tile: f_tile = 256    → 2048/256 = 8 轮；W1/W3/W2 每片均 4 MB
+8 MB tile: f_tile = 512    → 2048/512 = 4 轮；W1/W3/W2 每片均 8 MB
 ```
 
-### 5.2 场景 A：中间结果全部驻留 VREG
+### 5.2 场景 A：SwiGLU 中间结果驻留 VREG + y 在 VMEM 累加
 
-按 f 维度流式迭代，`gate` / `act(gate)` / `up` / `act*up` 均在 VREG 中按 tile 完成，不经 VMEM；`y` 按 tile 直接 DMA 输出（或交由下游算子消费）。
+**伪代码**：
+```
+y_acc = zeros(bt, d)                        # 8 MB, 驻留 VMEM
+for i in 0..N-1:
+    load W1_i, W3_i, W2_i                   # 各一个 f_tile
+    gate_i   = x @ W1_i                     # (bt, f_tile)  VREG
+    up_i     = x @ W3_i                     # (bt, f_tile)  VREG
+    act_up_i = silu(gate_i) * up_i          # (bt, f_tile)  VREG
+    y_acc   += act_up_i @ W2_i              # (bt, d) 累加到 VMEM
+return y_acc
+```
+
+**关键性质**：
+- W1/W3 沿 f 切输出维，W2 沿 f 切 reduction 维——**对齐切分**使 `act_up_i` 能与 `W2_i` 直接相乘；
+- 每轮 `act_up_i @ W2_i` 产出 y 的**部分累加**（partial sum），非完整切片，必须累加 N 轮；
+- 累加器 `y_acc` (bt, d) = 8 MB 始终驻留 VMEM，无额外 HBM 往返。
 
 **VMEM 占用**：
 
 | 项 | 4 MB tile | 8 MB tile |
 |-----|-----------|-----------|
-| x（整块驻留） | 8 MB | 8 MB |
-| W1 tile（单缓冲） | 4 MB | 8 MB |
-| W2 tile（单缓冲） | 4 MB | 8 MB |
-| y_tile 输出缓冲 | 0.25 MB | 0.5 MB |
-| **小计（单缓冲）** | **~16.3 MB** | **~24.5 MB** |
-| **小计（W1/W2 双缓冲）** | **~24.5 MB** | **~41 MB** |
+| x（驻留） | 8 MB | 8 MB |
+| W1 tile | 4 MB | 8 MB |
+| W3 tile | 4 MB | 8 MB |
+| W2 tile | 4 MB | 8 MB |
+| y_acc（驻留累加器） | 8 MB | 8 MB |
+| **小计（单缓冲）** | **28 MB** | **40 MB** |
+| **小计（三权重双缓冲）** | **40 MB** | **64 MB**（恰满）|
 
 ### 5.3 场景 B：全部物化到 VMEM
 
-`gate` / `up` / `y` 各分配完整 (512, 2048) 缓冲，权重整块载入 VMEM（不分 tile）：
-
+权重、中间结果、输出全部整块驻留：
 ```
 x       : 8 MB
 W1 全量 : 32 MB
+W3 全量 : 32 MB
 W2 全量 : 32 MB
 gate    : 2 MB
 up      : 2 MB
-y       : 2 MB
+act_up  : 2 MB
+y       : 8 MB
 ---------
-总计    : 78 MB
+总计    : 118 MB
 ```
-
-**78 MB > 64 MB VMEM 上限，此方案不可行**，权重必须分 tile。
+**118 MB > 64 MB VMEM 上限，严重超限**，权重必须分 tile。
 
 ### 5.4 折中：权重分 Tile、中间结果物化到 VMEM
 
@@ -198,17 +215,28 @@ y       : 2 MB
 |-----|-----------|-----------|
 | x | 8 MB | 8 MB |
 | W1 tile | 4 MB | 8 MB |
+| W3 tile | 4 MB | 8 MB |
 | W2 tile | 4 MB | 8 MB |
 | gate（整块） | 2 MB | 2 MB |
 | up（整块） | 2 MB | 2 MB |
-| y（整块） | 2 MB | 2 MB |
-| **总计** | **22 MB** | **30 MB** |
+| act_up（整块） | 2 MB | 2 MB |
+| y_acc（驻留） | 8 MB | 8 MB |
+| **总计** | **34 MB** | **46 MB** |
 
-### 5.5 结论
+### 5.5 另一种方案：W2 沿 d 切（不与 f 对齐）
 
-1. 权重**必须**沿 f 维度分 tile 流式加载，否则 VMEM 不足（78 MB）。
-2. 中间结果驻留 VREG（场景 A）相比物化到 VMEM（场景 B 折中）仅节省 ~6 MB，但省出的空间可用于双缓冲或下游权重预取。
-3. **推荐**：4 MB tile + W1/W2 双缓冲 + VREG 流式 SwiGLU ≈ 24.5 MB，留出 ~40 MB 供下游 @W3 双缓冲及下一专家 W1/W2 的预取，形成跨专家连续流水。
+若将 W2 沿输出维 d 切片（而非 reduction 维 f），每轮可输出 y 的完整列切片 `(bt, d_tile)`，代价：
+- 必须先**物化完整 act_up** `(bt, 2048)` = 2 MB 到 VMEM；
+- SwiGLU 阶段与下降阶段串行化，无法流水。
+
+适合 prefill（大 bt、高算术强度），不适合 decode 流水。
+
+### 5.6 结论
+
+1. 三个权重**必须**沿 f 维度分 tile 流式加载（全量 = 96 MB，远超 VMEM）。
+2. W1/W3 的输出维切分与 W2 的 reduction 维切分**对齐**，是 SwiGLU + 下降流水的前提。
+3. W2 分片产出 y 的**部分和**，非完整切片；`y_acc` (bt, d) 必须作为 VMEM 中的累加器驻留。
+4. **推荐**：4 MB tile + 三权重双缓冲 + VREG 流式 SwiGLU + y_acc 累加 ≈ 40 MB，留 ~24 MB 余量用于下一专家权重预取或共享专家权重驻留。
 
 ---
 
