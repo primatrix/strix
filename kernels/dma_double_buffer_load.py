@@ -30,7 +30,7 @@ config = {
     "weight_dtype": "bfloat16",
     "tpu_type": "v7x",
     "tpu_topology": "1x1",
-    "description": "Double-buffer VMEM load — DMA efficiency test with static loop unrolling",
+    "description": "Double-buffer VMEM load — DMA efficiency test with JIT compilation",
 }
 
 
@@ -120,6 +120,7 @@ def _dma_double_buffer_load_kernel(
     output_vmem[...] = jnp.expand_dims(checksum, 0)
 
 
+@functools.partial(jax.jit, static_argnames=("bf", "bd"))
 def dma_double_buffer_load(
     w: jax.Array,
     *,
@@ -138,6 +139,7 @@ def dma_double_buffer_load(
 
     Note:
         num_loads is now hardcoded as NUM_LOADS=128 in the kernel for static loop unrolling.
+        JIT compilation is enabled to eliminate Python overhead and enable XLA optimizations.
     """
     hidden_size, intermediate_size = w.shape
     w_dtype = w.dtype
