@@ -24,13 +24,13 @@ config = {
     "default_shape": {
         "hidden_size": 8192,
         "intermediate_size": 2048,
-        "num_loads": 64,  # Number of weight tiles to load (simulates expert iteration)
+        "num_loads": 128,  # Hardcoded in kernel as NUM_LOADS for static loop unrolling
     },
     "dtype": "bfloat16",
     "weight_dtype": "bfloat16",
     "tpu_type": "v7x",
     "tpu_topology": "1x1",
-    "description": "Double-buffer VMEM load — DMA efficiency test for expert weights",
+    "description": "Double-buffer VMEM load — DMA efficiency test with static loop unrolling",
 }
 
 
@@ -44,7 +44,6 @@ def _dma_double_buffer_load_kernel(
     *,
     bf: int,
     bd: int,
-    num_loads: int,
 ):
     """Pallas kernel body — double-buffered weight loading from HBM to VMEM.
 
@@ -60,13 +59,14 @@ def _dma_double_buffer_load_kernel(
         weight_sems: DMA semaphores [2]
         bf: Intermediate dimension block size
         bd: Hidden dimension block size
-        num_loads: Number of weight tiles to load (simulates expert iteration)
-    """
-    hidden_size = w_hbm.shape[0]
-    intermediate_size = w_hbm.shape[1]
 
-    num_bf = cdiv(intermediate_size, bf)
-    num_bd = cdiv(hidden_size, bd)
+    Note:
+        num_loads is now a compile-time constant (NUM_LOADS) for static loop unrolling.
+        This follows tpu-inference pattern: "utilize static for loop instead of dynamic
+        for loop" to enable better DMA pipeline optimization.
+    """
+    # Compile-time constant for static loop unrolling
+    NUM_LOADS = 128
 
     # -- Create DMA descriptors once (outside loop) --
     # Following tokamax pattern: create descriptors once, reuse via .start()/.wait()
@@ -85,6 +85,8 @@ def _dma_double_buffer_load_kernel(
     # Pipeline: prefetch 2 tiles, then wait → start(i+2, same buf) → compute.
     # Keeps 2 DMAs in flight at all times for maximum HBM bandwidth utilization.
     # NOTE: All DMAs read from fixed position (0, 0) to isolate address calculation overhead.
+    # IMPORTANT: Static loop (range(NUM_LOADS)) allows compile-time unrolling for better
+    # DMA pipelining, following tpu-inference best practices.
 
     checksum = jnp.float32(0.0)
 
@@ -92,10 +94,10 @@ def _dma_double_buffer_load_kernel(
     copy_0.start()
 
     # Prefetch tile 1 → buf 1
-    if num_loads > 1:
-        copy_1.start()
+    copy_1.start()
 
-    for load_idx in range(num_loads):
+    # Static loop - will be unrolled at compile time
+    for load_idx in range(NUM_LOADS):
         buf = load_idx % 2
 
         # Wait for current buffer's DMA to complete
@@ -105,7 +107,7 @@ def _dma_double_buffer_load_kernel(
             copy_1.wait()
 
         # Immediately start next DMA into same buffer (2 tiles ahead)
-        if load_idx + 2 < num_loads:
+        if load_idx + 2 < NUM_LOADS:
             if buf == 0:
                 copy_0.start()
             else:
@@ -123,7 +125,6 @@ def dma_double_buffer_load(
     *,
     bf: int = 2048,
     bd: int = 1024,
-    num_loads: int = 64,
 ) -> jax.Array:
     """Double-buffered weight loading benchmark.
 
@@ -131,10 +132,12 @@ def dma_double_buffer_load(
         w: Weight matrix [hidden_size, intermediate_size]
         bf: Intermediate dimension block size
         bd: Hidden dimension block size
-        num_loads: Number of weight tiles to load
 
     Returns:
         Scalar checksum for verification
+
+    Note:
+        num_loads is now hardcoded as NUM_LOADS=128 in the kernel for static loop unrolling.
     """
     hidden_size, intermediate_size = w.shape
     w_dtype = w.dtype
@@ -157,7 +160,6 @@ def dma_double_buffer_load(
             _dma_double_buffer_load_kernel,
             bf=bf,
             bd=bd,
-            num_loads=num_loads,
         ),
         grid_spec=grid_spec,
         out_shape=jax.ShapeDtypeStruct((1,), jnp.float32),
@@ -172,7 +174,7 @@ def dma_double_buffer_load(
 def kernel_fn(
     hidden_size: int = 8192,
     intermediate_size: int = 2048,
-    num_loads: int = 64,
+    num_loads: int = 64,  # Ignored - NUM_LOADS=128 is hardcoded in kernel
     dtype: jnp.dtype = jnp.bfloat16,
     weight_dtype: jnp.dtype = jnp.bfloat16,
     bf: int = 2048,
@@ -188,7 +190,6 @@ def kernel_fn(
             w,
             bf=bf,
             bd=bd,
-            num_loads=num_loads,
         )
 
     return run
@@ -199,14 +200,13 @@ if __name__ == "__main__":
 
     hidden_size = int(sys.argv[1]) if len(sys.argv) > 1 else 8192
     intermediate_size = int(sys.argv[2]) if len(sys.argv) > 2 else 2048
-    num_loads = int(sys.argv[3]) if len(sys.argv) > 3 else 64
 
     key = jax.random.key(0)
     w = jax.random.normal(key, (hidden_size, intermediate_size), dtype=jnp.bfloat16)
 
     try:
-        result = dma_double_buffer_load(w, num_loads=num_loads)
-        print(f"hidden_size={hidden_size}, intermediate_size={intermediate_size}, num_loads={num_loads}")
+        result = dma_double_buffer_load(w)
+        print(f"hidden_size={hidden_size}, intermediate_size={intermediate_size}, NUM_LOADS=128")
         print(f"checksum={result:.6f}")
         print("PASS")
     except ValueError as e:
