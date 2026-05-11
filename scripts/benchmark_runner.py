@@ -100,6 +100,12 @@ def parse_args(argv=None):
         help="Hidden dimension block size (overrides kernel default)",
     )
     p.add_argument(
+        "--num-tokens",
+        type=int,
+        default=_int_or_none(os.environ.get("NUM_TOKENS")),
+        help="Override config default_shape.num_tokens (per-run override)",
+    )
+    p.add_argument(
         "--output-dir",
         default=os.environ.get("OUTPUT_DIR") or os.environ.get("ARTIFACT_LOCAL_DIR") or "/tmp/operator-artifact",
         help="Operator-optimization artifact root directory",
@@ -289,7 +295,7 @@ def check_kernel_compat(kernel_fn, *, module_name: str) -> None:
         )
 
 
-def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_size=None, bf=None, bd=None):
+def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_size=None, bf=None, bd=None, num_tokens=None):
     """Execute kernel benchmark and return list of timing values (seconds)."""
     kwargs = dict(config.get("default_shape", {}))
     if chunk_size is not None:
@@ -299,6 +305,8 @@ def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_s
         kwargs["bf"] = bf
     if bd is not None:
         kwargs["bd"] = bd
+    if num_tokens is not None:
+        kwargs["num_tokens"] = num_tokens
 
     run_fn = kernel_fn(**kwargs)
 
@@ -671,6 +679,7 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
         ep_size=args.ep_size,
         bf=args.bf,
         bd=args.bd,
+        num_tokens=args.num_tokens,
     )
 
     if not is_coordinator():
