@@ -311,3 +311,25 @@ def kernel_fn(
         )
 
     return run
+
+
+if __name__ == "__main__":
+    bt = int(sys.argv[1]) if len(sys.argv) > 1 else 256
+    bf_arg = 512 if bt == 256 else 256
+
+    key = jax.random.key(0)
+    k1, k2, k3, k4 = jax.random.split(key, 4)
+    tokens = jax.random.normal(k1, (bt, 8192), dtype=jnp.bfloat16)
+    w1 = jax.random.normal(k2, (8192, 2048), dtype=jnp.bfloat16)
+    w2 = jax.random.normal(k3, (2048, 8192), dtype=jnp.bfloat16)
+    w3 = jax.random.normal(k4, (8192, 2048), dtype=jnp.bfloat16)
+
+    result = double_buffer_expert(tokens, w1, w2, w3, bf=bf_arg)
+    ref = _ref_expert_ffn(tokens, w1, w2, w3)
+    result_f32 = result.astype(jnp.float32)
+    ref_f32 = ref.astype(jnp.float32)
+    max_err = jnp.max(jnp.abs(result_f32 - ref_f32))
+    rel_err = max_err / (jnp.max(jnp.abs(ref_f32)) + 1e-6)
+    print(f"bt={bt}, bf={bf_arg}, max_abs_err={max_err:.4f}, rel_err={rel_err:.4f}")
+    assert rel_err < 0.05, f"rel_err too high: {rel_err}"
+    print("PASS")
