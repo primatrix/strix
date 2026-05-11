@@ -14,6 +14,7 @@ from typing import Callable
 
 import jax
 import jax.numpy as jnp
+from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
@@ -121,7 +122,7 @@ def _double_buffer_expert_kernel(
         ).wait()
 
     # -- Compute function (W2 wait deferred inside) --
-    def compute_tile(slot, is_first_tile):
+    def compute_tile(slot):
         """Gate/up compute (W1, W3), then wait W2 (low-pri overlap), then accumulate."""
         x = b_x_vmem[...]
         w1 = b_w1_x2_vmem[slot]
@@ -134,44 +135,33 @@ def _double_buffer_expert_kernel(
 
         w2 = b_w2_x2_vmem[slot]
         partial = jnp.dot(act_up, w2, preferred_element_type=jnp.float32)
-        if is_first_tile:
-            b_y_acc_vmem[...] = partial
-        else:
-            b_y_acc_vmem[...] = b_y_acc_vmem[...] + partial
+        b_y_acc_vmem[...] = b_y_acc_vmem[...] + partial
 
-    # -- Prologue (§5.8 stages L1..C2) --
+    # -- Prologue: load x and first tile's weights --
     start_load_x()
     start_fetch_w1(0, 0)
     start_fetch_w3(0, 0)
     start_fetch_w2(0, 0)
     wait_load_x()
-    wait_fetch_w1(0)
-    wait_fetch_w3(0)
+    b_y_acc_vmem[...] = jnp.zeros(b_y_acc_vmem.shape, dtype=jnp.float32)
 
-    if n_w >= 2:
-        start_fetch_w1(1, 1)
-        start_fetch_w3(1, 1)
-        start_fetch_w2(1, 1)
-
-    compute_tile(slot=0, is_first_tile=True)
-
-    # -- Steady state: Python for-loop over tile in [1, n_w - 1) --
-    for tile in range(1, n_w - 1):
-        slot = tile % 2
+    # -- Tile loop (lax.fori_loop + @pl.when replaces manual unroll) --
+    def _tile_body(tile_idx, _):
+        slot = tile_idx % 2
         next_slot = 1 - slot
-        start_fetch_w1(next_slot, tile + 1)
-        start_fetch_w3(next_slot, tile + 1)
-        start_fetch_w2(next_slot, tile + 1)
+
+        @pl.when(tile_idx + 1 < n_w)
+        def _prefetch():
+            start_fetch_w1(next_slot, tile_idx + 1)
+            start_fetch_w3(next_slot, tile_idx + 1)
+            start_fetch_w2(next_slot, tile_idx + 1)
+
         wait_fetch_w1(slot)
         wait_fetch_w3(slot)
-        compute_tile(slot, is_first_tile=False)
+        compute_tile(slot)
+        return None
 
-    # -- Epilogue: last tile, no more loads --
-    if n_w >= 2:
-        last_slot = (n_w - 1) % 2
-        wait_fetch_w1(last_slot)
-        wait_fetch_w3(last_slot)
-        compute_tile(last_slot, is_first_tile=False)
+    lax.fori_loop(0, n_w, _tile_body, None)
 
     # -- Write-back: y_acc (fp32) → b_y_out_vmem (bf16) → output_hbm --
     b_y_out_vmem[...] = b_y_acc_vmem[...].astype(b_y_out_vmem.dtype)
@@ -253,6 +243,8 @@ def double_buffer_expert(
         ),
         compiler_params=pltpu.CompilerParams(
             vmem_limit_bytes=96 * 1024 * 1024,
+            disable_bounds_checks=True,
+            disable_semaphore_checks=True,
         ),
         name=scope_name,
     )
