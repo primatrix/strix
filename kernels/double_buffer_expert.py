@@ -26,7 +26,7 @@ config = {
     "default_shape": {
         "num_tokens": 256,
         "hidden_size": 8192,
-        "intermediate_size": 16384,
+        "intermediate_size": 2048,
     },
     "dtype": "bfloat16",
     "weight_dtype": "bfloat16",
