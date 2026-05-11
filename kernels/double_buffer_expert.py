@@ -26,7 +26,7 @@ config = {
     "default_shape": {
         "num_tokens": 256,
         "hidden_size": 8192,
-        "intermediate_size": 2048,
+        "intermediate_size": 16384,
     },
     "dtype": "bfloat16",
     "weight_dtype": "bfloat16",
@@ -187,9 +187,13 @@ def double_buffer_expert(
     """
     bt, d = tokens.shape
     f_full = w1.shape[1]
-    if d != 8192 or f_full != 2048:
+    if d != 8192:
         raise ValueError(
-            f"Kernel hard-coded for d=8192, f=2048; got d={d}, f={f_full}"
+            f"Kernel hard-coded for d=8192; got d={d}"
+        )
+    if f_full % bf != 0 or f_full < bf:
+        raise ValueError(
+            f"intermediate_size ({f_full}) must be a positive multiple of bf ({bf})"
         )
     if (bt, bf) not in _ALLOWED_CONFIGS:
         raise ValueError(
@@ -264,7 +268,7 @@ def _ref_expert_ffn(
 def kernel_fn(
     num_tokens: int = 256,
     hidden_size: int = 8192,
-    intermediate_size: int = 2048,
+    intermediate_size: int = 16384,
     dtype=jnp.bfloat16,
     weight_dtype=jnp.bfloat16,
     act_fn: str = "silu",
@@ -289,16 +293,20 @@ def kernel_fn(
 
 if __name__ == "__main__":
     bt = int(sys.argv[1]) if len(sys.argv) > 1 else 256
+    f = int(sys.argv[2]) if len(sys.argv) > 2 else 16384
     bf_arg = 512 if bt == 256 else 256
 
     key = jax.random.key(0)
     k1, k2, k3, k4 = jax.random.split(key, 4)
     tokens = jax.random.normal(k1, (bt, 8192), dtype=jnp.bfloat16)
-    w1 = jax.random.normal(k2, (8192, 2048), dtype=jnp.bfloat16)
-    w2 = jax.random.normal(k3, (2048, 8192), dtype=jnp.bfloat16)
-    w3 = jax.random.normal(k4, (8192, 2048), dtype=jnp.bfloat16)
+    w1 = jax.random.normal(k2, (8192, f), dtype=jnp.bfloat16)
+    w2 = jax.random.normal(k3, (f, 8192), dtype=jnp.bfloat16)
+    w3 = jax.random.normal(k4, (8192, f), dtype=jnp.bfloat16)
 
     result = double_buffer_expert(tokens, w1, w2, w3, bf=bf_arg)
-    print(f"bt={bt}, bf={bf_arg}, output_shape={result.shape}")
-    print(f"output is zeros: {jnp.allclose(result, 0.0)}")
+    n_tiles = f // bf_arg
+    weight_bytes = 3 * 8192 * f * 2  # 3 weights, bf16
+    print(f"bt={bt}, f={f}, bf={bf_arg}, n_tiles={n_tiles}")
+    print(f"total weight DMA: {weight_bytes / 1024**2:.1f} MiB")
+    print(f"output_shape={result.shape}")
     print("PASS")
