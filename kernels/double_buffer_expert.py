@@ -28,7 +28,7 @@ config = {
         "num_tokens": 256,
         "hidden_size": 8192,
         "intermediate_size": 2048,
-        "n_stages": 3,
+        "n_stages": 4,
     },
     "dtype": "bfloat16",
     "weight_dtype": "bfloat16",
