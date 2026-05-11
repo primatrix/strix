@@ -1,9 +1,10 @@
-"""Double-buffer expert FFN kernel — §5.8 decode pipeline for Ling 2.6.
+"""DMA-only double-buffer expert kernel — f-axis tiling, no compute.
 
-Single routed expert, B=1, persistent x, dual weight slots, low-priority
-W2 DMA, fp32 y_acc accumulator. Hard-coded for d=8192, f=2048, bf16.
+Isolates the DMA pipeline of the §5.8 f-axis tiling pattern:
+persistent x, dual weight slots (W1/W3/W2), prologue/steady/epilogue.
+All dot products and activation removed to measure pure DMA throughput.
 
-Spec: docs/superpowers/specs/2026-05-11-double-buffer-expert-design.md
+Based on: §5.8 B=1 decode pipeline, d=8192, f=2048, bf16.
 """
 
 from __future__ import annotations
@@ -17,10 +18,8 @@ import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from ._fused_moe_impl import activation_fn
 
-
-_ALLOWED_CONFIGS = {(256, 512), (512, 256)}  # (num_tokens, bf) pairs from §5.8
+_ALLOWED_CONFIGS = {(256, 512), (512, 256)}
 
 
 config = {
@@ -36,8 +35,8 @@ config = {
     "tpu_type": "v7x",
     "tpu_topology": "2x2x1",
     "description": (
-        "Double-buffer expert FFN — §5.8 B=1 decode "
-        "(persistent x, dual W slots, low-pri W2)"
+        "DMA-only double-buffer expert — f-axis tiling, no compute "
+        "(pure DMA pipeline throughput)"
     ),
 }
 
@@ -60,12 +59,11 @@ def _double_buffer_expert_kernel(
     x_sem,
     y_out_sem,
     *,
-    act_fn: str,
     bf: int,
     intermediate_size: int,
 ):
-    """Pallas kernel body — §5.8 B=1 decode pipeline."""
-    n_w = intermediate_size // bf  # 4 (bf=512) or 8 (bf=256)
+    """Pallas kernel body — DMA pipeline only, no compute."""
+    n_w = intermediate_size // bf
 
     # -- DMA helpers --
     def start_load_x():
@@ -120,26 +118,12 @@ def _double_buffer_expert_kernel(
             sem=weight_sems.at[slot, 2],
         ).wait()
 
-    # -- Compute function (W2 wait deferred inside) --
-    def compute_tile(slot, is_first_tile):
-        """Gate/up compute (W1, W3), then wait W2 (low-pri overlap), then accumulate."""
-        x = b_x_vmem[...]
-        w1 = b_w1_x2_vmem[slot]
-        w3 = b_w3_x2_vmem[slot]
-        gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)
-        up = jnp.dot(x, w3, preferred_element_type=jnp.float32)
-        act_up = activation_fn(gate, up, act_fn)
+    # -- Wait-only tile (no compute) --
+    def drain_tile(slot):
+        """Wait for all DMA of this tile to complete, no compute."""
+        wait_fetch_w2(slot)
 
-        wait_fetch_w2(slot)  # deferred — overlaps with gate/up MXU
-
-        w2 = b_w2_x2_vmem[slot]
-        partial = jnp.dot(act_up, w2, preferred_element_type=jnp.float32)
-        if is_first_tile:
-            b_y_acc_vmem[...] = partial
-        else:
-            b_y_acc_vmem[...] = b_y_acc_vmem[...] + partial
-
-    # -- Prologue (§5.8 stages L1..C2) --
+    # -- Prologue --
     start_load_x()
     start_fetch_w1(0, 0)
     start_fetch_w3(0, 0)
@@ -153,9 +137,9 @@ def _double_buffer_expert_kernel(
         start_fetch_w3(1, 1)
         start_fetch_w2(1, 1)
 
-    compute_tile(slot=0, is_first_tile=True)
+    drain_tile(slot=0)
 
-    # -- Steady state: Python for-loop over tile in [1, n_w - 1) --
+    # -- Steady state --
     for tile in range(1, n_w - 1):
         slot = tile % 2
         next_slot = 1 - slot
@@ -164,16 +148,17 @@ def _double_buffer_expert_kernel(
         start_fetch_w2(next_slot, tile + 1)
         wait_fetch_w1(slot)
         wait_fetch_w3(slot)
-        compute_tile(slot, is_first_tile=False)
+        drain_tile(slot)
 
-    # -- Epilogue: last tile, no more loads --
+    # -- Epilogue --
     if n_w >= 2:
         last_slot = (n_w - 1) % 2
         wait_fetch_w1(last_slot)
         wait_fetch_w3(last_slot)
-        compute_tile(last_slot, is_first_tile=False)
+        drain_tile(last_slot)
 
-    # -- Write-back: y_acc (fp32) → b_y_out_vmem (bf16) → output_hbm --
+    # -- Write-back: zero output --
+    b_y_acc_vmem[...] = jnp.zeros_like(b_y_acc_vmem)
     b_y_out_vmem[...] = b_y_acc_vmem[...].astype(b_y_out_vmem.dtype)
     pltpu.make_async_copy(
         src_ref=b_y_out_vmem, dst_ref=output_hbm, sem=y_out_sem.at[0],
@@ -183,17 +168,16 @@ def _double_buffer_expert_kernel(
     ).wait()
 
 
-@functools.partial(jax.jit, static_argnames=["act_fn", "bf"])
+@functools.partial(jax.jit, static_argnames=["bf"])
 def double_buffer_expert(
     tokens: jax.Array,
     w1: jax.Array,
     w2: jax.Array,
     w3: jax.Array,
     *,
-    act_fn: str = "silu",
     bf: int = 512,
 ) -> jax.Array:
-    """Run the double-buffer expert FFN kernel.
+    """Run the DMA-only double-buffer expert kernel (no compute).
 
     Shapes:
       tokens: (bt, d) bf16
@@ -201,7 +185,7 @@ def double_buffer_expert(
       w2:     (f, d)  bf16
       w3:     (d, f)  bf16
     Returns:
-      output: (bt, d) bf16
+      output: (bt, d) bf16  (zeros — no computation performed)
     """
     bt, d = tokens.shape
     f_full = w1.shape[1]
@@ -234,13 +218,12 @@ def double_buffer_expert(
         pltpu.SemaphoreType.DMA((1,)),                   # y_out_sem
     )
 
-    scope_name = f"double-buffer-expert-bt{bt}-bf{bf}"
+    scope_name = f"dma-only-expert-bt{bt}-bf{bf}"
     hbm = pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM)
 
     kernel = pl.pallas_call(
         functools.partial(
             _double_buffer_expert_kernel,
-            act_fn=act_fn,
             bf=bf,
             intermediate_size=f_full,
         ),
@@ -275,6 +258,7 @@ def _ref_expert_ffn(
     """Pure-JAX fp32 reference: (silu(x @ W1) * (x @ W3)) @ W2."""
     gate = tokens.astype(jnp.float32) @ w1.astype(jnp.float32)
     up = tokens.astype(jnp.float32) @ w3.astype(jnp.float32)
+    from ._fused_moe_impl import activation_fn
     act = activation_fn(gate, up, act_fn)
     return (act @ w2.astype(jnp.float32)).astype(tokens.dtype)
 
@@ -288,10 +272,7 @@ def kernel_fn(
     act_fn: str = "silu",
     bf: int = 512,
 ) -> Callable[[], jax.Array]:
-    """Build random inputs and return a zero-arg closure calling the kernel.
-
-    Contract matches scripts/benchmark_runner.py (see expert_ffn.py).
-    """
+    """Build random inputs and return a zero-arg closure calling the kernel."""
     key = jax.random.key(42)
     k1, k2, k3, k4 = jax.random.split(key, 4)
     tokens = jax.random.normal(k1, (num_tokens, hidden_size), dtype=dtype)
@@ -301,7 +282,7 @@ def kernel_fn(
 
     def run():
         return double_buffer_expert(
-            tokens, w1, w2, w3, act_fn=act_fn, bf=bf,
+            tokens, w1, w2, w3, bf=bf,
         )
 
     return run
@@ -319,11 +300,6 @@ if __name__ == "__main__":
     w3 = jax.random.normal(k4, (8192, 2048), dtype=jnp.bfloat16)
 
     result = double_buffer_expert(tokens, w1, w2, w3, bf=bf_arg)
-    ref = _ref_expert_ffn(tokens, w1, w2, w3)
-    result_f32 = result.astype(jnp.float32)
-    ref_f32 = ref.astype(jnp.float32)
-    max_err = jnp.max(jnp.abs(result_f32 - ref_f32))
-    rel_err = max_err / (jnp.max(jnp.abs(ref_f32)) + 1e-6)
-    print(f"bt={bt}, bf={bf_arg}, max_abs_err={max_err:.4f}, rel_err={rel_err:.4f}")
-    assert rel_err < 0.05, f"rel_err too high: {rel_err}"
+    print(f"bt={bt}, bf={bf_arg}, output_shape={result.shape}")
+    print(f"output is zeros: {jnp.allclose(result, 0.0)}")
     print("PASS")
