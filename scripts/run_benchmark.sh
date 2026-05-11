@@ -254,7 +254,7 @@ while [[ $ELAPSED -lt $JOB_TIMEOUT ]]; do
   STATUS=$(kubectl get job "${JOB_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)
   if echo "$STATUS" | grep -q True; then
     echo "Error: Job ${JOB_NAME} failed" >&2
-    kubectl logs "job/${JOB_NAME}" --tail=50 2>/dev/null || true
+    kubectl logs "job/${JOB_NAME}" --tail=500 2>/dev/null || true
     exit 1
   fi
   sleep $INTERVAL
