@@ -297,10 +297,19 @@ def check_kernel_compat(kernel_fn, *, module_name: str) -> None:
 
 def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_size=None, bf=None, bd=None, num_tokens=None):
     """Execute kernel benchmark and return list of timing values (seconds)."""
+    import inspect
+
+    sig_params = inspect.signature(kernel_fn).parameters
+    accepts_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig_params.values())
+
+    def accepts(name: str) -> bool:
+        return accepts_var_kw or name in sig_params
+
     kwargs = dict(config.get("default_shape", {}))
     if chunk_size is not None:
         kwargs["chunk_size"] = chunk_size
-    kwargs["ep_size"] = ep_size if ep_size is not None else config.get("ep_size", 4)
+    if accepts("ep_size"):
+        kwargs["ep_size"] = ep_size if ep_size is not None else config.get("ep_size", 4)
     if bf is not None:
         kwargs["bf"] = bf
     if bd is not None:
