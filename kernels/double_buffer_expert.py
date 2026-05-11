@@ -157,9 +157,7 @@ def _double_buffer_expert_kernel(
         wait_fetch_w3(last_slot)
         drain_tile(last_slot)
 
-    # -- Write-back: zero output --
-    b_y_acc_vmem[...] = jnp.zeros_like(b_y_acc_vmem)
-    b_y_out_vmem[...] = b_y_acc_vmem[...].astype(b_y_out_vmem.dtype)
+    # -- Write-back: raw VMEM content (skip zero-fill & type conversion) --
     pltpu.make_async_copy(
         src_ref=b_y_out_vmem, dst_ref=output_hbm, sem=y_out_sem.at[0],
     ).start()
