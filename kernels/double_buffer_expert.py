@@ -14,7 +14,6 @@ from typing import Callable
 
 import jax
 import jax.numpy as jnp
-from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
@@ -50,8 +49,7 @@ def _double_buffer_expert_kernel(
     w3_hbm,
     output_hbm,
     # Scratch buffers (VMEM).
-    b_w1_x2_vmem,
-    b_w3_x2_vmem,
+    b_w13_x2_vmem,
     b_w2_x2_vmem,
     b_x_vmem,
     b_y_acc_vmem,
@@ -79,54 +77,45 @@ def _double_buffer_expert_kernel(
             src_ref=b_x_vmem, dst_ref=b_x_vmem, sem=x_sem.at[0],
         ).wait()
 
-    def start_fetch_w1(slot, tile_idx):
+    def start_fetch_w13(slot, tile_idx):
+        sem = weight_sems.at[slot, 0]
         pltpu.make_async_copy(
             src_ref=w1_hbm.at[:, pl.ds(tile_idx * bf, bf)],
-            dst_ref=b_w1_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 0],
+            dst_ref=b_w13_x2_vmem.at[slot, 0],
+            sem=sem,
         ).start()
-
-    def wait_fetch_w1(slot):
-        pltpu.make_async_copy(
-            src_ref=b_w1_x2_vmem.at[slot],
-            dst_ref=b_w1_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 0],
-        ).wait()
-
-    def start_fetch_w3(slot, tile_idx):
         pltpu.make_async_copy(
             src_ref=w3_hbm.at[:, pl.ds(tile_idx * bf, bf)],
-            dst_ref=b_w3_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 1],
+            dst_ref=b_w13_x2_vmem.at[slot, 1],
+            sem=sem,
         ).start()
 
-    def wait_fetch_w3(slot):
+    def wait_fetch_w13(slot):
         pltpu.make_async_copy(
-            src_ref=b_w3_x2_vmem.at[slot],
-            dst_ref=b_w3_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 1],
+            src_ref=b_w13_x2_vmem.at[slot],
+            dst_ref=b_w13_x2_vmem.at[slot],
+            sem=weight_sems.at[slot, 0],
         ).wait()
 
     def start_fetch_w2(slot, tile_idx):
         pltpu.make_async_copy(
             src_ref=w2_hbm.at[pl.ds(tile_idx * bf, bf), :],
             dst_ref=b_w2_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 2],
+            sem=weight_sems.at[slot, 1],
         ).start()
 
     def wait_fetch_w2(slot):
         pltpu.make_async_copy(
             src_ref=b_w2_x2_vmem.at[slot],
             dst_ref=b_w2_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 2],
+            sem=weight_sems.at[slot, 1],
         ).wait()
 
     # -- Compute function (W2 wait deferred inside) --
     def compute_tile(slot):
-        """Gate/up compute (W1, W3), then wait W2 (low-pri overlap), then accumulate."""
         x = b_x_vmem[...]
-        w1 = b_w1_x2_vmem[slot]
-        w3 = b_w3_x2_vmem[slot]
+        w1 = b_w13_x2_vmem[slot, 0]
+        w3 = b_w13_x2_vmem[slot, 1]
         gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)
         up = jnp.dot(x, w3, preferred_element_type=jnp.float32)
         act_up = activation_fn(gate, up, act_fn)
@@ -139,29 +128,24 @@ def _double_buffer_expert_kernel(
 
     # -- Prologue: load x and first tile's weights --
     start_load_x()
-    start_fetch_w1(0, 0)
-    start_fetch_w3(0, 0)
+    start_fetch_w13(0, 0)
     start_fetch_w2(0, 0)
     wait_load_x()
     b_y_acc_vmem[...] = jnp.zeros(b_y_acc_vmem.shape, dtype=jnp.float32)
 
-    # -- Tile loop (lax.fori_loop + @pl.when replaces manual unroll) --
-    def _tile_body(tile_idx, _):
+    # -- Tile loop (pl.loop for tighter Mosaic DMA scheduling) --
+    @pl.loop(0, n_w, unroll=False)
+    def _tile_body(tile_idx):
         slot = tile_idx % 2
         next_slot = 1 - slot
 
         @pl.when(tile_idx + 1 < n_w)
         def _prefetch():
-            start_fetch_w1(next_slot, tile_idx + 1)
-            start_fetch_w3(next_slot, tile_idx + 1)
+            start_fetch_w13(next_slot, tile_idx + 1)
             start_fetch_w2(next_slot, tile_idx + 1)
 
-        wait_fetch_w1(slot)
-        wait_fetch_w3(slot)
+        wait_fetch_w13(slot)
         compute_tile(slot)
-        return None
-
-    lax.fori_loop(0, n_w, _tile_body, None)
 
     # -- Write-back: y_acc (fp32) → b_y_out_vmem (bf16) → output_hbm --
     b_y_out_vmem[...] = b_y_acc_vmem[...].astype(b_y_out_vmem.dtype)
@@ -213,13 +197,12 @@ def double_buffer_expert(
     weight_dtype = w1.dtype
 
     scratch_shapes = (
-        pltpu.VMEM((2, d, bf), weight_dtype),            # b_w1_x2_vmem
-        pltpu.VMEM((2, d, bf), weight_dtype),            # b_w3_x2_vmem
+        pltpu.VMEM((2, 2, d, bf), weight_dtype),         # b_w13_x2_vmem[slot, {W1,W3}]
         pltpu.VMEM((2, bf, d), weight_dtype),            # b_w2_x2_vmem
         pltpu.VMEM((bt, d), dtype),                      # b_x_vmem
         pltpu.VMEM((bt, d), jnp.float32),                # b_y_acc_vmem (fp32)
         pltpu.VMEM((bt, d), dtype),                      # b_y_out_vmem (bf16 stage)
-        pltpu.SemaphoreType.DMA((2, 3)),                 # weight_sems[slot, channel]
+        pltpu.SemaphoreType.DMA((2, 2)),                 # weight_sems[slot, {W13,W2}]
         pltpu.SemaphoreType.DMA((1,)),                   # x_sem
         pltpu.SemaphoreType.DMA((1,)),                   # y_out_sem
     )
