@@ -270,6 +270,47 @@ class TestRunSweep:
         assert calls[0]["bf"] == 2048 and calls[0]["bd"] == 1024 and calls[0]["num_loads"] == 16
         assert calls[1]["bf"] == 1024 and calls[1]["bd"] == 512 and calls[1]["num_loads"] == 128
 
+    def test_num_tokens_override_forwarded_to_kernel_fn(self):
+        runner = _import_runner()
+        calls = []
+
+        def fake_kernel_fn(**kwargs):
+            calls.append(kwargs)
+            return lambda: 0.0
+
+        fake_config = {"default_shape": {"num_tokens": 256, "hidden_size": 8192}}
+        sweep = [
+            {"bf": 2048, "bd": 1024, "num_loads": 16, "tile_bytes": 4194304},
+        ]
+
+        list(runner.run_sweep(
+            fake_kernel_fn, fake_config, sweep,
+            num_warmup=0, num_runs=1, total_bytes=_TOTAL, dtype="bfloat16",
+            kernel="k", shape="8192,2048", job_name="j",
+            num_tokens=512,
+        ))
+        assert calls[0]["num_tokens"] == 512
+
+    def test_num_tokens_none_preserves_default_shape(self):
+        runner = _import_runner()
+        calls = []
+
+        def fake_kernel_fn(**kwargs):
+            calls.append(kwargs)
+            return lambda: 0.0
+
+        fake_config = {"default_shape": {"num_tokens": 256, "hidden_size": 8192}}
+        sweep = [
+            {"bf": 2048, "bd": 1024, "num_loads": 16, "tile_bytes": 4194304},
+        ]
+
+        list(runner.run_sweep(
+            fake_kernel_fn, fake_config, sweep,
+            num_warmup=0, num_runs=1, total_bytes=_TOTAL, dtype="bfloat16",
+            kernel="k", shape="8192,2048", job_name="j",
+        ))
+        assert calls[0]["num_tokens"] == 256
+
     def test_failing_config_does_not_abort_sweep(self):
         runner = _import_runner()
         attempts = []

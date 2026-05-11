@@ -449,6 +449,7 @@ def run_sweep(
     shape: str,
     job_name: str,
     profile_dir: str | None = None,
+    num_tokens: int | None = None,
 ):
     """Execute each sweep config in sequence, yielding one JSONL record per config.
 
@@ -460,6 +461,8 @@ def run_sweep(
         kwargs["bf"] = cfg["bf"]
         kwargs["bd"] = cfg["bd"]
         kwargs["num_loads"] = cfg["num_loads"]
+        if num_tokens is not None:
+            kwargs["num_tokens"] = num_tokens
         try:
             run_fn = kernel_fn(**kwargs)
 
@@ -646,6 +649,7 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
             total_bytes=args.total_bytes, dtype=dtype,
             kernel=args.kernel, shape=args.shape, job_name=args.job_name,
             profile_dir=profile_dir,
+            num_tokens=args.num_tokens,
         ))
 
         if not is_coordinator():

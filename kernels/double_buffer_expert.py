@@ -183,6 +183,7 @@ def _double_buffer_expert_kernel(
     ).wait()
 
 
+@functools.partial(jax.jit, static_argnames=["act_fn", "bf"])
 def double_buffer_expert(
     tokens: jax.Array,
     w1: jax.Array,
@@ -236,38 +237,31 @@ def double_buffer_expert(
     scope_name = f"double-buffer-expert-bt{bt}-bf{bf}"
     hbm = pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM)
 
-    kernel = jax.named_scope(scope_name)(
-        pl.pallas_call(
-            functools.partial(
-                _double_buffer_expert_kernel,
-                act_fn=act_fn,
-                bf=bf,
-                intermediate_size=f_full,
-            ),
-            out_shape=jax.ShapeDtypeStruct((bt, d), dtype),
-            grid_spec=pltpu.PrefetchScalarGridSpec(
-                num_scalar_prefetch=0,
-                in_specs=[hbm, hbm, hbm, hbm],
-                out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
-                scratch_shapes=scratch_shapes,
-            ),
-            compiler_params=pltpu.CompilerParams(
-                vmem_limit_bytes=96 * 1024 * 1024,
-            ),
-            name=scope_name,
-        )
+    kernel = pl.pallas_call(
+        functools.partial(
+            _double_buffer_expert_kernel,
+            act_fn=act_fn,
+            bf=bf,
+            intermediate_size=f_full,
+        ),
+        out_shape=jax.ShapeDtypeStruct((bt, d), dtype),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[hbm, hbm, hbm, hbm],
+            out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
+            scratch_shapes=scratch_shapes,
+        ),
+        compiler_params=pltpu.CompilerParams(
+            vmem_limit_bytes=96 * 1024 * 1024,
+        ),
+        name=scope_name,
     )
-
-    @jax.jit
-    def run_kernel(tokens, w1, w2, w3):
-        return kernel(
-            pltpu.with_memory_space_constraint(tokens, pltpu.HBM),
-            pltpu.with_memory_space_constraint(w1, pltpu.HBM),
-            pltpu.with_memory_space_constraint(w2, pltpu.HBM),
-            pltpu.with_memory_space_constraint(w3, pltpu.HBM),
-        )
-
-    return run_kernel(tokens, w1, w2, w3)
+    return jax.named_scope(scope_name)(kernel)(
+        pltpu.with_memory_space_constraint(tokens, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w1, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w2, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w3, pltpu.HBM),
+    )
 
 
 def _ref_expert_ffn(
