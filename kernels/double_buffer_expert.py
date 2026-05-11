@@ -21,7 +21,7 @@ from jax.experimental.pallas import tpu as pltpu
 from ._fused_moe_impl import activation_fn
 
 
-_ALLOWED_CONFIGS = {(256, 512), (512, 256)}  # (num_tokens, bf) pairs from §5.8
+_ALLOWED_CONFIGS = {(256, 256), (256, 512), (512, 256)}  # (num_tokens, bf) pairs from §5.8
 
 
 config = {
@@ -33,7 +33,7 @@ config = {
     "dtype": "bfloat16",
     "weight_dtype": "bfloat16",
     "act_fn": "silu",
-    "bf": 512,
+    "bf": 256,
     "tpu_type": "v7x",
     "tpu_topology": "2x2x1",
     "description": (
