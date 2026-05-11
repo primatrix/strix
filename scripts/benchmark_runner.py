@@ -19,7 +19,7 @@ import time
 
 IR_DUMP_SUBDIRS = ("hlo", "llo", "mosaic")
 _GIB = 1024 ** 3
-_VMEM_LIMIT_KIB = 64 * 1024  # 64 MiB
+_VMEM_LIMIT_KIB = 96 * 1024  # 96 MiB
 _DTYPE_BYTES = {
     "bfloat16": 2,
     "float16": 2,
