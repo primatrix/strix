@@ -1,0 +1,29 @@
+# Double-buffer expert (§5.8 pipeline) — Ling 2.6 1T decode profile
+# ==================================================================
+# Stage:  Decode (autoregressive, B=1 per routed expert)
+# Model:  Ling-2.6-1T routed expert (d=8192, f=2048, bf16)
+# Pipeline: docs/fused-moe-perf-analysis.md §5.8
+#   persistent x, dual W slots, low-priority W2 DMA, fp32 y_acc
+#
+# Two recommended (num_tokens, bf) pairs from §5.8 "选择建议":
+#
+#   Variant A (bt=256, 8 MB tile):
+#     python scripts/benchmark_runner.py \
+#       --kernel kernels.double_buffer_expert \
+#       --shape "256,8192,2048" --job-name dbe_bt256_bf512 \
+#       --num-tokens 256 --bf 512 \
+#       --output-dir /tmp/bench
+#
+#   Variant B (bt=512, 4 MB tile):
+#     python scripts/benchmark_runner.py \
+#       --kernel kernels.double_buffer_expert \
+#       --shape "512,8192,2048" --job-name dbe_bt512_bf256 \
+#       --num-tokens 512 --bf 256 \
+#       --output-dir /tmp/bench
+#
+# Shape encoding (metadata): num_tokens,hidden_size,intermediate_size
+
+kernel: kernels.double_buffer_expert
+shape: "256,8192,2048"
+tpu_type: v7x
+tpu_topology: 2x2x1
