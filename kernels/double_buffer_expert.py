@@ -17,7 +17,7 @@ import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from kernels._fused_moe_impl import activation_fn
+from ._fused_moe_impl import activation_fn
 
 
 _ALLOWED_CONFIGS = {(256, 512), (512, 256)}  # (num_tokens, bf) pairs from §5.8

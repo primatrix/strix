@@ -105,12 +105,8 @@ class TestConfig:
 class TestKernelFnSignature:
     @pytest.fixture(autouse=True)
     def _import_module(self):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "double_buffer_expert", KERNEL_FILE,
-        )
-        self.module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(self.module)
+        import importlib
+        self.module = importlib.import_module("kernels.double_buffer_expert")
 
     def test_kernel_fn_accepts_required_kwargs(self):
         sig = inspect.signature(self.module.kernel_fn)
