@@ -28,6 +28,7 @@ config = {
         "num_tokens": 256,
         "hidden_size": 8192,
         "intermediate_size": 2048,
+        "n_stages": 3,
     },
     "dtype": "bfloat16",
     "weight_dtype": "bfloat16",
@@ -37,7 +38,7 @@ config = {
     "tpu_topology": "2x2x1",
     "description": (
         "Double-buffer expert FFN — §5.8 B=1 decode "
-        "(persistent x, d-axis tiling, dual W slots)"
+        "(persistent x, d-axis tiling, N-stage weight buffer)"
     ),
 }
 
@@ -64,6 +65,7 @@ def _double_buffer_expert_kernel(
     bd: int,
     intermediate_size: int,
     hidden_size: int,
+    n_stages: int,
 ):
     """Pallas kernel body — d-axis tiled, three-phase pipeline.
 
@@ -126,19 +128,20 @@ def _double_buffer_expert_kernel(
 
     # ==================== Phase 1: Accumulate gate/up ====================
     start_load_x()
-    start_fetch_w13(0, 0)
+    for s in range(min(n_stages - 1, n_d)):
+        start_fetch_w13(s, s)
     wait_load_x()
     gate_acc_vmem[...] = jnp.zeros(gate_acc_vmem.shape, dtype=jnp.float32)
     up_acc_vmem[...] = jnp.zeros(up_acc_vmem.shape, dtype=jnp.float32)
 
     @pl.loop(0, n_d, unroll=False)
     def _phase1(tile_idx):
-        slot = tile_idx % 2
-        next_slot = 1 - slot
+        slot = tile_idx % n_stages
 
-        @pl.when(tile_idx + 1 < n_d)
+        @pl.when(tile_idx + n_stages - 1 < n_d)
         def _prefetch():
-            start_fetch_w13(next_slot, tile_idx + 1)
+            pf_slot = (tile_idx + n_stages - 1) % n_stages
+            start_fetch_w13(pf_slot, tile_idx + n_stages - 1)
 
         wait_fetch_w13(slot)
 
@@ -159,16 +162,17 @@ def _double_buffer_expert_kernel(
     )
 
     # ==================== Phase 3: W2 output chunks ====================
-    start_fetch_w2(0, 0)
+    for s in range(min(n_stages - 1, n_d)):
+        start_fetch_w2(s, s)
 
     @pl.loop(0, n_d, unroll=False)
     def _phase3(tile_idx):
-        slot = tile_idx % 2
-        next_slot = 1 - slot
+        slot = tile_idx % n_stages
 
-        @pl.when(tile_idx + 1 < n_d)
+        @pl.when(tile_idx + n_stages - 1 < n_d)
         def _prefetch():
-            start_fetch_w2(next_slot, tile_idx + 1)
+            pf_slot = (tile_idx + n_stages - 1) % n_stages
+            start_fetch_w2(pf_slot, tile_idx + n_stages - 1)
 
         wait_fetch_w2(slot)
 
@@ -191,7 +195,7 @@ def _double_buffer_expert_kernel(
     wait_y_out()
 
 
-@functools.partial(jax.jit, static_argnames=["act_fn", "bd"])
+@functools.partial(jax.jit, static_argnames=["act_fn", "bd", "n_stages"])
 def double_buffer_expert(
     tokens: jax.Array,
     w1: jax.Array,
@@ -200,6 +204,7 @@ def double_buffer_expert(
     *,
     act_fn: str = "silu",
     bd: int = 256,
+    n_stages: int = 2,
 ) -> jax.Array:
     """Run the double-buffer expert FFN kernel (d-axis tiled).
 
@@ -233,18 +238,18 @@ def double_buffer_expert(
     weight_dtype = w1.dtype
 
     scratch_shapes = (
-        pltpu.VMEM((2, 2, bd, f_full), weight_dtype),   # b_w13_x2_vmem[slot, {W1,W3}]
-        pltpu.VMEM((2, f_full, bd), weight_dtype),       # b_w2_x2_vmem[slot]
-        pltpu.VMEM((bt, d), dtype),                      # b_x_vmem (persistent)
-        pltpu.VMEM((bt, f_full), jnp.float32),           # gate_acc_vmem (fp32)
-        pltpu.VMEM((bt, f_full), jnp.float32),           # up_acc_vmem (fp32)
-        pltpu.VMEM((bt, bd), dtype),                     # b_y_out_vmem (bf16 stage)
-        pltpu.SemaphoreType.DMA((2, 2)),                 # weight_sems[slot, {W13,W2}]
-        pltpu.SemaphoreType.DMA((1,)),                   # x_sem
-        pltpu.SemaphoreType.DMA((1,)),                   # y_out_sem
+        pltpu.VMEM((n_stages, 2, bd, f_full), weight_dtype),  # b_w13_vmem[slot, {W1,W3}]
+        pltpu.VMEM((n_stages, f_full, bd), weight_dtype),      # b_w2_vmem[slot]
+        pltpu.VMEM((bt, d), dtype),                            # b_x_vmem (persistent)
+        pltpu.VMEM((bt, f_full), jnp.float32),                 # gate_acc_vmem (fp32)
+        pltpu.VMEM((bt, f_full), jnp.float32),                 # up_acc_vmem (fp32)
+        pltpu.VMEM((bt, bd), dtype),                           # b_y_out_vmem (bf16 stage)
+        pltpu.SemaphoreType.DMA((n_stages, 2)),                # weight_sems[slot, {W13,W2}]
+        pltpu.SemaphoreType.DMA((1,)),                         # x_sem
+        pltpu.SemaphoreType.DMA((1,)),                         # y_out_sem
     )
 
-    scope_name = f"double-buffer-expert-bt{bt}-bd{bd}"
+    scope_name = f"double-buffer-expert-bt{bt}-bd{bd}-n{n_stages}"
     hbm = pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM)
 
     kernel = pl.pallas_call(
@@ -254,6 +259,7 @@ def double_buffer_expert(
             bd=bd,
             intermediate_size=f_full,
             hidden_size=d,
+            n_stages=n_stages,
         ),
         out_shape=jax.ShapeDtypeStruct((bt, d), dtype),
         grid_spec=pltpu.PrefetchScalarGridSpec(
@@ -300,6 +306,7 @@ def kernel_fn(
     weight_dtype=jnp.bfloat16,
     act_fn: str = "silu",
     bd: int = 256,
+    n_stages: int = 2,
     **_extra,
 ) -> Callable[[], jax.Array]:
     """Build random inputs and return a zero-arg closure calling the kernel."""
@@ -312,7 +319,7 @@ def kernel_fn(
 
     def run():
         return double_buffer_expert(
-            tokens, w1, w2, w3, act_fn=act_fn, bd=bd,
+            tokens, w1, w2, w3, act_fn=act_fn, bd=bd, n_stages=n_stages,
         )
 
     return run
@@ -321,6 +328,7 @@ def kernel_fn(
 if __name__ == "__main__":
     bt = int(sys.argv[1]) if len(sys.argv) > 1 else 256
     bd_arg = 256
+    n_stages_arg = int(sys.argv[2]) if len(sys.argv) > 2 else 2
 
     key = jax.random.key(0)
     k1, k2, k3, k4 = jax.random.split(key, 4)
@@ -329,12 +337,12 @@ if __name__ == "__main__":
     w2 = jax.random.normal(k3, (2048, 8192), dtype=jnp.bfloat16)
     w3 = jax.random.normal(k4, (8192, 2048), dtype=jnp.bfloat16)
 
-    result = double_buffer_expert(tokens, w1, w2, w3, bd=bd_arg)
+    result = double_buffer_expert(tokens, w1, w2, w3, bd=bd_arg, n_stages=n_stages_arg)
     ref = _ref_expert_ffn(tokens, w1, w2, w3)
     result_f32 = result.astype(jnp.float32)
     ref_f32 = ref.astype(jnp.float32)
     max_err = jnp.max(jnp.abs(result_f32 - ref_f32))
     rel_err = max_err / (jnp.max(jnp.abs(ref_f32)) + 1e-6)
-    print(f"bt={bt}, bd={bd_arg}, max_abs_err={max_err:.4f}, rel_err={rel_err:.4f}")
+    print(f"bt={bt}, bd={bd_arg}, n_stages={n_stages_arg}, max_abs_err={max_err:.4f}, rel_err={rel_err:.4f}")
     assert rel_err < 0.05, f"rel_err too high: {rel_err}"
     print("PASS")

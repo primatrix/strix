@@ -113,7 +113,7 @@ class TestKernelFnSignature:
         params = set(sig.parameters.keys())
         required = {
             "num_tokens", "hidden_size", "intermediate_size",
-            "dtype", "weight_dtype", "act_fn", "bd",
+            "dtype", "weight_dtype", "act_fn", "bd", "n_stages",
         }
         missing = required - params
         assert not missing, f"kernel_fn missing kwargs: {sorted(missing)}"
