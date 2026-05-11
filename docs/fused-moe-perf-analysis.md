@@ -372,41 +372,52 @@ tile 权重 bundle = 3 × 8 = 24 MB；x 与 y_acc 同前。
 - **只需 1 份 y_acc**：VMEM 开销减半；
 - 权重仍保持双槽交替，隐藏 DMA 延迟。
 
-#### 流水阶段
+#### 流水阶段（显式 load / wait / compute）
 
-| 阶段 | 操作 | 槽位变化 |
-|-----|-----|---------|
-| 1 | load (x1, W1_a, W3_a, W2_a[低优先级]) | x_slot ← x1（持久）; W_slot_0 ← W_a |
-| 2 | compute gate_1a = x1 @ W1_a, up_1a = x1 @ W3_a | VREG |
-| 3 | load (W1_b, W3_b, W2_b) | W_slot_1 ← W_b |
-| 4 | y_acc ← silu(gate_1a) * up_1a @ W2_a | y_acc 首次写入 |
-| 5 | compute gate_1b = x1 @ W1_b, up_1b = x1 @ W3_b | 切到 W_slot_1 |
-| 6 | load (W1_c, W3_c, W2_c) — 复用 W_slot_0 | W_slot_0 ← W_c（覆盖 W_a） |
-| 7 | y_acc += silu(gate_1b) * up_1b @ W2_b | |
-| 8 | compute gate_1c = x1 @ W1_c, up_1c = x1 @ W3_c | 切到 W_slot_0 |
-| 9 | load (W1_d, W3_d, W2_d) — 复用 W_slot_1 | W_slot_1 ← W_d（覆盖 W_b） |
-| 10 | y_acc += silu(gate_1c) * up_1c @ W2_c | |
-| 11+ | 继续 W_slot_0/W_slot_1 交替，直到 N_w 个 tile 完成 | 稳态 |
+DMA 是异步的：`load` 仅发起传输并占用 VMEM 槽，真正消费前需 `wait` 该张量的 DMA 完成。`W2` 标为低优先级——与 `W1/W3` 同步发起 DMA，但计算顺序上最晚用到，因此其 `wait` 可推迟到 SwiGLU 之后，让 `W2` 的 DMA 与 `x @ W1/W3` 的 MXU 计算完全重叠。
 
-相比 §5.7，没有 batch 内循环——每个权重 tile 只处理一次 `x @ W`，y_acc 在 N_w 个 tile 间持续累加。
+| # | 阶段 | 说明 |
+|---|-----|-----|
+| L1 | **load** (x1, W1_a, W3_a, W2_a[低优]) | 启动 DMA；x_slot ← x1（持久）; W_slot_0 ← W_a |
+| W1 | **wait** (x1, W1_a, W3_a) | 同步：等 x1/W1_a/W3_a 到位即可开始计算（W2_a 还在传） |
+| L2 | **load** (W1_b, W3_b, W2_b) | 启动下一 tile DMA；W_slot_1 ← W_b（与后续 compute 重叠） |
+| C1 | **compute** gate_1a = x1 @ W1_a, up_1a = x1 @ W3_a | VREG |
+| W2 | **wait** (W2_a) | 低优先级 DMA 完成（通常此时已到） |
+| C2 | **compute** y_acc ← silu(gate_1a) \* up_1a @ W2_a | y_acc 首次写入 VMEM |
+| W3 | **wait** (W1_b, W3_b) | 等下一 tile 的 gate/up 权重 |
+| L3 | **load** (W1_c, W3_c, W2_c) — 复用 W_slot_0 | W_slot_0 ← W_c（覆盖 W_a） |
+| C3 | **compute** gate_1b = x1 @ W1_b, up_1b = x1 @ W3_b | |
+| W4 | **wait** (W2_b) | |
+| C4 | **compute** y_acc += silu(gate_1b) \* up_1b @ W2_b | |
+| W5 | **wait** (W1_c, W3_c) | |
+| L4 | **load** (W1_d, W3_d, W2_d) — 复用 W_slot_1 | W_slot_1 ← W_d（覆盖 W_b） |
+| C5 | **compute** gate_1c = x1 @ W1_c, up_1c = x1 @ W3_c | |
+| W6 | **wait** (W2_c) | |
+| C6 | **compute** y_acc += silu(gate_1c) \* up_1c @ W2_c | |
+| …  | 稳态循环：`wait(W1/W3)` → `load` → `compute` → `wait(W2)` → `compute`，两槽交替 | 直至 N_w 个 tile 处理完 |
+
+稳态节拍（每处理一个权重 tile）：`wait(W1/W3)` + `load(next-tile)` + `compute(gate/up)` + `wait(W2)` + `compute(y_acc)`。只要 DMA 速率跟得上 MXU 消耗，`wait` 不阻塞（time 为 0），权重加载完全被计算隐藏。
 
 #### 阶段 VMEM 占用（4 MB tile，bt = 512）
 
-x = 512 × 8192 × 2 = 8 MB；W bundle = 12 MB；y_acc = 8 MB。
+x = 512 × 8192 × 2 = 8 MB；W bundle（W1+W3+W2）= 12 MB；y_acc = 8 MB。`wait` / `compute` 不改变 VMEM 占用，仅 `load` 使占用跳变。
 
-| 阶段 | x | W_slot_0 | W_slot_1 | y_acc | **合计** |
-|-----|---|----------|----------|-------|---------|
-| 1 | 8 | 12 (a) | – | – | **20 MB** |
-| 2 | 8 | 12 | – | – | **20 MB** |
-| 3 | 8 | 12 | 12 (b) | – | **32 MB** |
-| 4 | 8 | 12 | 12 | 8 | **40 MB** |
-| 5 | 8 | 12 | 12 | 8 | **40 MB** |
-| 6 | 8 | 12 (c) | 12 | 8 | **40 MB** |
-| 7 | 8 | 12 | 12 | 8 | **40 MB** |
-| 8 | 8 | 12 | 12 | 8 | **40 MB** |
-| 9 | 8 | 12 | 12 (d) | 8 | **40 MB** |
-| 10 | 8 | 12 | 12 | 8 | **40 MB** |
-| 稳态 | 8 | 12 | 12 | 8 | **40 MB** |
+| # | 阶段 | x | W_slot_0 | W_slot_1 | y_acc | **合计** |
+|---|-----|---|----------|----------|-------|---------|
+| L1 | load (x1, W_a[低优 W2_a]) | 8 | 12 (a) | – | – | **20 MB** |
+| W1 | wait (x1, W1_a, W3_a) | 8 | 12 | – | – | 20 MB |
+| L2 | load (W_b) | 8 | 12 | 12 (b) | – | **32 MB** |
+| C1 | compute gate_1a, up_1a | 8 | 12 | 12 | – | 32 MB |
+| W2 | wait (W2_a) | 8 | 12 | 12 | – | 32 MB |
+| C2 | y_acc ← … @ W2_a | 8 | 12 | 12 | 8 | **40 MB** |
+| W3 | wait (W1_b, W3_b) | 8 | 12 | 12 | 8 | 40 MB |
+| L3 | load (W_c) — 复用 slot_0 | 8 | 12 (c) | 12 | 8 | 40 MB |
+| C3 | compute gate_1b, up_1b | 8 | 12 | 12 | 8 | 40 MB |
+| W4 | wait (W2_b) | 8 | 12 | 12 | 8 | 40 MB |
+| C4 | y_acc += … @ W2_b | 8 | 12 | 12 | 8 | 40 MB |
+| W5 | wait (W1_c, W3_c) | 8 | 12 | 12 | 8 | 40 MB |
+| L4 | load (W_d) — 复用 slot_1 | 8 | 12 | 12 (d) | 8 | 40 MB |
+| … | 稳态 | 8 | 12 | 12 | 8 | **40 MB** |
 
 **峰值 40 MB，留 24 MB 余量**（可进一步容纳下一专家的权重 tile 预取）。
 
@@ -414,14 +425,16 @@ x = 512 × 8192 × 2 = 8 MB；W bundle = 12 MB；y_acc = 8 MB。
 
 W bundle = 24 MB。
 
-| 阶段 | x | W_slot_0 | W_slot_1 | y_acc | **合计** |
-|-----|---|----------|----------|-------|---------|
-| 1 | 8 | 24 (a) | – | – | **32 MB** |
-| 2 | 8 | 24 | – | – | **32 MB** |
-| 3 | 8 | 24 | 24 (b) | – | **56 MB** |
-| 4 | 8 | 24 | 24 | 8 | **64 MB** ⚠️ 满额 |
-| 5–10 | 8 | 24 | 24 | 8 | **64 MB** |
-| 稳态 | 8 | 24 | 24 | 8 | **64 MB** |
+| # | 阶段 | x | W_slot_0 | W_slot_1 | y_acc | **合计** |
+|---|-----|---|----------|----------|-------|---------|
+| L1 | load (x1, W_a) | 8 | 24 (a) | – | – | **32 MB** |
+| W1 | wait (x1, W1_a, W3_a) | 8 | 24 | – | – | 32 MB |
+| L2 | load (W_b) | 8 | 24 | 24 (b) | – | **56 MB** |
+| C1 | compute gate_1a, up_1a | 8 | 24 | 24 | – | 56 MB |
+| W2 | wait (W2_a) | 8 | 24 | 24 | – | 56 MB |
+| C2 | y_acc ← … @ W2_a | 8 | 24 | 24 | 8 | **64 MB** ⚠️ 满额 |
+| W3 … | wait/load 循环 | 8 | 24 | 24 | 8 | **64 MB** |
+| 稳态 | | 8 | 24 | 24 | 8 | **64 MB** |
 
 **峰值 64 MB 恰好填满 VMEM**，无余量跨专家预取。
 
