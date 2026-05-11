@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import functools
 import sys
+import warnings
 from typing import Callable
 
 import jax
@@ -20,7 +21,7 @@ from jax.experimental.pallas import tpu as pltpu
 from ._fused_moe_impl import activation_fn
 
 
-_ALLOWED_CONFIGS = {(256, 512), (512, 256)}  # (num_tokens, bf) pairs from §5.8
+_VALIDATED_CONFIGS = {(256, 512), (512, 256)}  # numerically checked in §5.8
 
 
 config = {
@@ -209,10 +210,15 @@ def double_buffer_expert(
         raise ValueError(
             f"Kernel hard-coded for d=8192, f=2048; got d={d}, f={f_full}"
         )
-    if (bt, bf) not in _ALLOWED_CONFIGS:
+    if bf <= 0 or f_full % bf != 0:
         raise ValueError(
-            f"Only (num_tokens, bf) in {sorted(_ALLOWED_CONFIGS)} supported; "
-            f"got (num_tokens={bt}, bf={bf})"
+            f"bf must be a positive divisor of intermediate_size={f_full}; got bf={bf}"
+        )
+    if (bt, bf) not in _VALIDATED_CONFIGS:
+        warnings.warn(
+            f"(num_tokens={bt}, bf={bf}) is not in the numerically validated set "
+            f"{sorted(_VALIDATED_CONFIGS)}; running anyway — verify correctness separately.",
+            stacklevel=2,
         )
     if w3.shape != (d, f_full):
         raise ValueError(f"w3.shape={w3.shape} must be (d={d}, f={f_full})")
