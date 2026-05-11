@@ -153,17 +153,22 @@ def start_fetch_w1(slot, tile_idx):
 # W2 source slice is w2_hbm.at[pl.ds(tile_idx * bf, bf), :]  — (bf, d) along reduction f
 ```
 
-### 4.2 Compute function (SwiGLU intermediates resident in VREG)
+### 4.2 Compute function (SwiGLU intermediates resident in VREG; W2 wait deferred)
 
 ```python
 def compute_tile(slot, is_first_tile):
+    """Consumes W1/W3 first (gate/up), then waits for W2 (low-pri DMA), then
+    finishes y_acc accumulation. Caller must have already waited for W1/W3 of
+    this slot; W2's wait is performed inside, overlapping gate/up compute."""
     x  = b_x_vmem[...]               # (bt, d) bf16
     w1 = b_w1_x2_vmem[slot]          # (d, bf) bf16
     w3 = b_w3_x2_vmem[slot]          # (d, bf) bf16
 
-    gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)  # (bt, bf) fp32 VREG
-    up   = jnp.dot(x, w3, preferred_element_type=jnp.float32)  # (bt, bf) fp32 VREG
+    gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)  # (bt, bf) fp32
+    up   = jnp.dot(x, w3, preferred_element_type=jnp.float32)  # (bt, bf) fp32
     act_up = activation_fn(gate, up, act_fn)                   # silu(gate) * up
+
+    wait_fetch_w2(slot)              # ← delayed wait; W2 DMA overlaps gate/up
 
     w2 = b_w2_x2_vmem[slot]          # (bf, d) bf16
     partial = jnp.dot(act_up, w2, preferred_element_type=jnp.float32)  # (bt, d) fp32
@@ -188,7 +193,8 @@ wait_fetch_w1(0); wait_fetch_w3(0)                                # x, W1_a, W3_
 if N_w >= 2:
     start_fetch_w1(1, 1); start_fetch_w3(1, 1); start_fetch_w2(1, 1)
 
-wait_fetch_w2(0)                                                  # W2_a ready (delayed wait)
+# compute_tile(slot=0) runs gate/up (using W1_a/W3_a, already waited),
+# then internally waits for W2_a, then y_acc ← silu*up @ W2_a.
 compute_tile(slot=0, is_first_tile=True)
 
 # ── Steady state: Python for-loop over tile ∈ [1, N_w - 1) ──
@@ -198,15 +204,13 @@ for tile in range(1, N_w - 1):
     start_fetch_w1(next_slot, tile + 1)
     start_fetch_w3(next_slot, tile + 1)
     start_fetch_w2(next_slot, tile + 1)
-    wait_fetch_w1(slot); wait_fetch_w3(slot)
-    wait_fetch_w2(slot)
-    compute_tile(slot, is_first_tile=False)
+    wait_fetch_w1(slot); wait_fetch_w3(slot)   # gate/up ready
+    compute_tile(slot, is_first_tile=False)    # internally waits W2
 
 # ── Epilogue: last tile, no more loads ──
 if N_w >= 2:
     last_slot = (N_w - 1) % 2
     wait_fetch_w1(last_slot); wait_fetch_w3(last_slot)
-    wait_fetch_w2(last_slot)
     compute_tile(last_slot, is_first_tile=False)
 
 # ── Write-back: y_acc (fp32 VMEM) → b_y_out_vmem (bf16 VMEM) → output_hbm ──
