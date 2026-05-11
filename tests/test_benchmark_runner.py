@@ -103,6 +103,18 @@ class TestCliArgParsing:
         args = runner.parse_args(["--kernel", "k", "--shape", "1"])
         assert args.num_warmup == 3
 
+    def test_parses_num_tokens(self):
+        runner = _import_runner()
+        args = runner.parse_args(
+            ["--kernel", "k", "--shape", "1", "--num-tokens", "512"]
+        )
+        assert args.num_tokens == 512
+
+    def test_num_tokens_default_is_none(self):
+        runner = _import_runner()
+        args = runner.parse_args(["--kernel", "k", "--shape", "1"])
+        assert args.num_tokens is None
+
 
 class TestEnvVarFallback:
     """Environment variables are used when CLI args are missing."""
@@ -174,6 +186,12 @@ class TestEnvVarFallback:
         assert args.job_name == "strix-benchmark-moe-20260501"
         assert args.chunk_size == 64
         assert args.gcs_bucket == "gs://poc_profile/"
+
+    def test_num_tokens_from_env(self):
+        runner = _import_runner()
+        with patch.dict(os.environ, {"NUM_TOKENS": "512"}):
+            args = runner.parse_args(["--kernel", "k", "--shape", "1"])
+        assert args.num_tokens == 512
 
 
 class TestIrDumpDirSetup:
