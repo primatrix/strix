@@ -88,8 +88,8 @@ class TestConfig:
         assert ds["hidden_size"] == 8192
         assert ds["intermediate_size"] == 2048
 
-    def test_default_bf_is_512(self):
-        assert self.config["bf"] == 512
+    def test_default_bd_is_256(self):
+        assert self.config["bd"] == 256
 
     def test_dtype_is_bfloat16(self):
         assert self.config["dtype"] == "bfloat16"
@@ -113,7 +113,7 @@ class TestKernelFnSignature:
         params = set(sig.parameters.keys())
         required = {
             "num_tokens", "hidden_size", "intermediate_size",
-            "dtype", "weight_dtype", "act_fn", "bf",
+            "dtype", "weight_dtype", "act_fn", "bd",
         }
         missing = required - params
         assert not missing, f"kernel_fn missing kwargs: {sorted(missing)}"

@@ -1,7 +1,7 @@
-"""Double-buffer expert FFN kernel — §5.8 decode pipeline for Ling 2.6.
+"""Double-buffer expert FFN kernel — d-axis tiled, three-phase pipeline.
 
-Single routed expert, B=1, persistent x, dual weight slots, low-priority
-W2 DMA, fp32 y_acc accumulator. Hard-coded for d=8192, f=2048, bf16.
+Single routed expert, B=1, persistent x, dual weight slots, d-axis tiling
+for smaller tiles and lower VMEM. Hard-coded for d=8192, f=2048, bf16.
 
 Spec: docs/superpowers/specs/2026-05-11-double-buffer-expert-design.md
 """
@@ -20,7 +20,7 @@ from jax.experimental.pallas import tpu as pltpu
 from ._fused_moe_impl import activation_fn
 
 
-_ALLOWED_CONFIGS = {(256, 256), (256, 512), (512, 256)}  # (num_tokens, bf) pairs from §5.8
+_ALLOWED_CONFIGS = {(256, 256), (256, 512), (256, 1024), (512, 256)}
 
 
 config = {
@@ -32,12 +32,12 @@ config = {
     "dtype": "bfloat16",
     "weight_dtype": "bfloat16",
     "act_fn": "silu",
-    "bf": 256,
+    "bd": 256,
     "tpu_type": "v7x",
     "tpu_topology": "2x2x1",
     "description": (
         "Double-buffer expert FFN — §5.8 B=1 decode "
-        "(persistent x, dual W slots, low-pri W2)"
+        "(persistent x, d-axis tiling, dual W slots)"
     ),
 }
 
@@ -52,7 +52,8 @@ def _double_buffer_expert_kernel(
     b_w13_x2_vmem,
     b_w2_x2_vmem,
     b_x_vmem,
-    b_y_acc_vmem,
+    gate_acc_vmem,
+    up_acc_vmem,
     b_y_out_vmem,
     # Semaphores.
     weight_sems,
@@ -60,11 +61,18 @@ def _double_buffer_expert_kernel(
     y_out_sem,
     *,
     act_fn: str,
-    bf: int,
+    bd: int,
     intermediate_size: int,
+    hidden_size: int,
 ):
-    """Pallas kernel body — §5.8 B=1 decode pipeline."""
-    n_w = intermediate_size // bf  # 4 (bf=512) or 8 (bf=256)
+    """Pallas kernel body — d-axis tiled, three-phase pipeline.
+
+    Phase 1: accumulate gate/up across d-chunks.
+    Phase 2: element-wise activation.
+    Phase 3: compute independent W2 output d-chunks, DMA each to HBM.
+    """
+    n_d = hidden_size // bd
+    bt = b_x_vmem.shape[0]
 
     # -- DMA helpers --
     def start_load_x():
@@ -80,12 +88,12 @@ def _double_buffer_expert_kernel(
     def start_fetch_w13(slot, tile_idx):
         sem = weight_sems.at[slot, 0]
         pltpu.make_async_copy(
-            src_ref=w1_hbm.at[:, pl.ds(tile_idx * bf, bf)],
+            src_ref=w1_hbm.at[pl.ds(tile_idx * bd, bd), :],
             dst_ref=b_w13_x2_vmem.at[slot, 0],
             sem=sem,
         ).start()
         pltpu.make_async_copy(
-            src_ref=w3_hbm.at[:, pl.ds(tile_idx * bf, bf)],
+            src_ref=w3_hbm.at[pl.ds(tile_idx * bd, bd), :],
             dst_ref=b_w13_x2_vmem.at[slot, 1],
             sem=sem,
         ).start()
@@ -99,7 +107,7 @@ def _double_buffer_expert_kernel(
 
     def start_fetch_w2(slot, tile_idx):
         pltpu.make_async_copy(
-            src_ref=w2_hbm.at[pl.ds(tile_idx * bf, bf), :],
+            src_ref=w2_hbm.at[:, pl.ds(tile_idx * bd, bd)],
             dst_ref=b_w2_x2_vmem.at[slot],
             sem=weight_sems.at[slot, 1],
         ).start()
@@ -111,53 +119,81 @@ def _double_buffer_expert_kernel(
             sem=weight_sems.at[slot, 1],
         ).wait()
 
-    # -- Compute function (W2 wait deferred inside) --
-    def compute_tile(slot):
-        x = b_x_vmem[...]
-        w1 = b_w13_x2_vmem[slot, 0]
-        w3 = b_w13_x2_vmem[slot, 1]
-        gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)
-        up = jnp.dot(x, w3, preferred_element_type=jnp.float32)
-        act_up = activation_fn(gate, up, act_fn)
+    def wait_y_out():
+        pltpu.make_async_copy(
+            src_ref=b_y_out_vmem, dst_ref=b_y_out_vmem, sem=y_out_sem.at[0],
+        ).wait()
 
-        wait_fetch_w2(slot)  # deferred — overlaps with gate/up MXU
-
-        w2 = b_w2_x2_vmem[slot]
-        partial = jnp.dot(act_up, w2, preferred_element_type=jnp.float32)
-        b_y_acc_vmem[...] = b_y_acc_vmem[...] + partial
-
-    # -- Prologue: load x and first tile's weights --
+    # ==================== Phase 1: Accumulate gate/up ====================
     start_load_x()
     start_fetch_w13(0, 0)
-    start_fetch_w2(0, 0)
     wait_load_x()
-    b_y_acc_vmem[...] = jnp.zeros(b_y_acc_vmem.shape, dtype=jnp.float32)
+    gate_acc_vmem[...] = jnp.zeros(gate_acc_vmem.shape, dtype=jnp.float32)
+    up_acc_vmem[...] = jnp.zeros(up_acc_vmem.shape, dtype=jnp.float32)
 
-    # -- Tile loop (pl.loop for tighter Mosaic DMA scheduling) --
-    @pl.loop(0, n_w, unroll=False)
-    def _tile_body(tile_idx):
+    @pl.loop(0, n_d, unroll=False)
+    def _phase1(tile_idx):
         slot = tile_idx % 2
         next_slot = 1 - slot
 
-        @pl.when(tile_idx + 1 < n_w)
+        @pl.when(tile_idx + 1 < n_d)
         def _prefetch():
             start_fetch_w13(next_slot, tile_idx + 1)
-            start_fetch_w2(next_slot, tile_idx + 1)
 
         wait_fetch_w13(slot)
-        compute_tile(slot)
 
-    # -- Write-back: y_acc (fp32) → b_y_out_vmem (bf16) → output_hbm --
-    b_y_out_vmem[...] = b_y_acc_vmem[...].astype(b_y_out_vmem.dtype)
-    pltpu.make_async_copy(
-        src_ref=b_y_out_vmem, dst_ref=output_hbm, sem=y_out_sem.at[0],
-    ).start()
-    pltpu.make_async_copy(
-        src_ref=b_y_out_vmem, dst_ref=b_y_out_vmem, sem=y_out_sem.at[0],
-    ).wait()
+        x_chunk = jax.lax.dynamic_slice(
+            b_x_vmem[...], (0, tile_idx * bd), (bt, bd)
+        )
+        w1_tile = b_w13_x2_vmem[slot, 0]
+        w3_tile = b_w13_x2_vmem[slot, 1]
+
+        gate_acc_vmem[...] = gate_acc_vmem[...] + jnp.dot(
+            x_chunk, w1_tile, preferred_element_type=jnp.float32
+        )
+        up_acc_vmem[...] = up_acc_vmem[...] + jnp.dot(
+            x_chunk, w3_tile, preferred_element_type=jnp.float32
+        )
+
+    # ==================== Phase 2: Activation ====================
+    gate_acc_vmem[...] = activation_fn(
+        gate_acc_vmem[...], up_acc_vmem[...], act_fn
+    )
+
+    # ==================== Phase 3: W2 output chunks ====================
+    start_fetch_w2(0, 0)
+
+    @pl.loop(0, n_d, unroll=False)
+    def _phase3(tile_idx):
+        slot = tile_idx % 2
+        next_slot = 1 - slot
+
+        @pl.when(tile_idx + 1 < n_d)
+        def _prefetch():
+            start_fetch_w2(next_slot, tile_idx + 1)
+
+        wait_fetch_w2(slot)
+
+        w2_tile = b_w2_x2_vmem[slot]
+        y_chunk = jnp.dot(
+            gate_acc_vmem[...], w2_tile, preferred_element_type=jnp.float32
+        )
+
+        @pl.when(tile_idx > 0)
+        def _wait_prev_write():
+            wait_y_out()
+
+        b_y_out_vmem[...] = y_chunk.astype(b_y_out_vmem.dtype)
+        pltpu.make_async_copy(
+            src_ref=b_y_out_vmem,
+            dst_ref=output_hbm.at[:, pl.ds(tile_idx * bd, bd)],
+            sem=y_out_sem.at[0],
+        ).start()
+
+    wait_y_out()
 
 
-@functools.partial(jax.jit, static_argnames=["act_fn", "bf"])
+@functools.partial(jax.jit, static_argnames=["act_fn", "bd"])
 def double_buffer_expert(
     tokens: jax.Array,
     w1: jax.Array,
@@ -165,9 +201,9 @@ def double_buffer_expert(
     w3: jax.Array,
     *,
     act_fn: str = "silu",
-    bf: int = 512,
+    bd: int = 256,
 ) -> jax.Array:
-    """Run the double-buffer expert FFN kernel.
+    """Run the double-buffer expert FFN kernel (d-axis tiled).
 
     Shapes:
       tokens: (bt, d) bf16
@@ -183,11 +219,13 @@ def double_buffer_expert(
         raise ValueError(
             f"Kernel hard-coded for d=8192, f=2048; got d={d}, f={f_full}"
         )
-    if (bt, bf) not in _ALLOWED_CONFIGS:
+    if (bt, bd) not in _ALLOWED_CONFIGS:
         raise ValueError(
-            f"Only (num_tokens, bf) in {sorted(_ALLOWED_CONFIGS)} supported; "
-            f"got (num_tokens={bt}, bf={bf})"
+            f"Only (num_tokens, bd) in {sorted(_ALLOWED_CONFIGS)} supported; "
+            f"got (num_tokens={bt}, bd={bd})"
         )
+    if d % bd != 0:
+        raise ValueError(f"bd={bd} must divide d={d}")
     if w3.shape != (d, f_full):
         raise ValueError(f"w3.shape={w3.shape} must be (d={d}, f={f_full})")
     if w2.shape != (f_full, d):
@@ -197,25 +235,27 @@ def double_buffer_expert(
     weight_dtype = w1.dtype
 
     scratch_shapes = (
-        pltpu.VMEM((2, 2, d, bf), weight_dtype),         # b_w13_x2_vmem[slot, {W1,W3}]
-        pltpu.VMEM((2, bf, d), weight_dtype),            # b_w2_x2_vmem
-        pltpu.VMEM((bt, d), dtype),                      # b_x_vmem
-        pltpu.VMEM((bt, d), jnp.float32),                # b_y_acc_vmem (fp32)
-        pltpu.VMEM((bt, d), dtype),                      # b_y_out_vmem (bf16 stage)
+        pltpu.VMEM((2, 2, bd, f_full), weight_dtype),   # b_w13_x2_vmem[slot, {W1,W3}]
+        pltpu.VMEM((2, f_full, bd), weight_dtype),       # b_w2_x2_vmem[slot]
+        pltpu.VMEM((bt, d), dtype),                      # b_x_vmem (persistent)
+        pltpu.VMEM((bt, f_full), jnp.float32),           # gate_acc_vmem (fp32)
+        pltpu.VMEM((bt, f_full), jnp.float32),           # up_acc_vmem (fp32)
+        pltpu.VMEM((bt, bd), dtype),                     # b_y_out_vmem (bf16 stage)
         pltpu.SemaphoreType.DMA((2, 2)),                 # weight_sems[slot, {W13,W2}]
         pltpu.SemaphoreType.DMA((1,)),                   # x_sem
         pltpu.SemaphoreType.DMA((1,)),                   # y_out_sem
     )
 
-    scope_name = f"double-buffer-expert-bt{bt}-bf{bf}"
+    scope_name = f"double-buffer-expert-bt{bt}-bd{bd}"
     hbm = pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM)
 
     kernel = pl.pallas_call(
         functools.partial(
             _double_buffer_expert_kernel,
             act_fn=act_fn,
-            bf=bf,
+            bd=bd,
             intermediate_size=f_full,
+            hidden_size=d,
         ),
         out_shape=jax.ShapeDtypeStruct((bt, d), dtype),
         grid_spec=pltpu.PrefetchScalarGridSpec(
@@ -261,13 +301,10 @@ def kernel_fn(
     dtype=jnp.bfloat16,
     weight_dtype=jnp.bfloat16,
     act_fn: str = "silu",
-    bf: int = 512,
+    bd: int = 256,
     **_extra,
 ) -> Callable[[], jax.Array]:
-    """Build random inputs and return a zero-arg closure calling the kernel.
-
-    Contract matches scripts/benchmark_runner.py (see expert_ffn.py).
-    """
+    """Build random inputs and return a zero-arg closure calling the kernel."""
     key = jax.random.key(42)
     k1, k2, k3, k4 = jax.random.split(key, 4)
     tokens = jax.random.normal(k1, (num_tokens, hidden_size), dtype=dtype)
@@ -277,7 +314,7 @@ def kernel_fn(
 
     def run():
         return double_buffer_expert(
-            tokens, w1, w2, w3, act_fn=act_fn, bf=bf,
+            tokens, w1, w2, w3, act_fn=act_fn, bd=bd,
         )
 
     return run
@@ -285,7 +322,7 @@ def kernel_fn(
 
 if __name__ == "__main__":
     bt = int(sys.argv[1]) if len(sys.argv) > 1 else 256
-    bf_arg = 512 if bt == 256 else 256
+    bd_arg = 256
 
     key = jax.random.key(0)
     k1, k2, k3, k4 = jax.random.split(key, 4)
@@ -294,12 +331,12 @@ if __name__ == "__main__":
     w2 = jax.random.normal(k3, (2048, 8192), dtype=jnp.bfloat16)
     w3 = jax.random.normal(k4, (8192, 2048), dtype=jnp.bfloat16)
 
-    result = double_buffer_expert(tokens, w1, w2, w3, bf=bf_arg)
+    result = double_buffer_expert(tokens, w1, w2, w3, bd=bd_arg)
     ref = _ref_expert_ffn(tokens, w1, w2, w3)
     result_f32 = result.astype(jnp.float32)
     ref_f32 = ref.astype(jnp.float32)
     max_err = jnp.max(jnp.abs(result_f32 - ref_f32))
     rel_err = max_err / (jnp.max(jnp.abs(ref_f32)) + 1e-6)
-    print(f"bt={bt}, bf={bf_arg}, max_abs_err={max_err:.4f}, rel_err={rel_err:.4f}")
+    print(f"bt={bt}, bd={bd_arg}, max_abs_err={max_err:.4f}, rel_err={rel_err:.4f}")
     assert rel_err < 0.05, f"rel_err too high: {rel_err}"
     print("PASS")
