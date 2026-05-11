@@ -142,9 +142,7 @@ def _double_buffer_expert_kernel(
 
         wait_fetch_w13(slot)
 
-        x_chunk = jax.lax.dynamic_slice(
-            b_x_vmem[...], (0, tile_idx * bd), (bt, bd)
-        )
+        x_chunk = b_x_vmem[:, pl.ds(tile_idx * bd, bd)]
         w1_tile = b_w13_x2_vmem[slot, 0]
         w3_tile = b_w13_x2_vmem[slot, 1]
 
