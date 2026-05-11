@@ -38,6 +38,8 @@ def parse_args(argv=None):
     p.add_argument("--num-runs", type=int, default=20)
     p.add_argument("--bt", type=int, default=256, help="num_tokens (default 256)")
     p.add_argument("--bf", type=int, default=512, help="tile size along f-axis (default 512)")
+    p.add_argument("--ablation", action="store_true",
+                   help="Run ablation: test each kernel variant at f=512 and f=65536")
     return p.parse_args(argv)
 
 
@@ -157,6 +159,172 @@ def fit_overhead_model(records: list[dict]) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Ablation mode
+# ---------------------------------------------------------------------------
+
+_ABLATION_F_VALUES = [512, 65536]
+
+
+def run_variant_at_f(variant_fn, f: int, bt: int, bf: int,
+                     num_warmup: int, num_runs: int) -> dict:
+    """Benchmark a single kernel variant at a single f value."""
+    cwd = os.getcwd()
+    if cwd not in sys.path:
+        sys.path.append(cwd)
+
+    import jax
+    import jax.numpy as jnp
+
+    d = 8192
+    key = jax.random.key(42)
+    k1, k2, k3, k4 = jax.random.split(key, 4)
+    tokens = jax.random.normal(k1, (bt, d), dtype=jnp.bfloat16)
+    w1 = jax.random.normal(k2, (d, f), dtype=jnp.bfloat16)
+    w2 = jax.random.normal(k3, (f, d), dtype=jnp.bfloat16)
+    w3 = jax.random.normal(k4, (d, f), dtype=jnp.bfloat16)
+
+    def run_fn():
+        return variant_fn(tokens, w1, w2, w3, bf=bf)
+
+    for _ in range(num_warmup):
+        result = run_fn()
+        result.block_until_ready()
+
+    timings = []
+    for _ in range(num_runs):
+        start = time.perf_counter()
+        result = run_fn()
+        result.block_until_ready()
+        timings.append(time.perf_counter() - start)
+
+    weight_bytes = 3 * d * f * 2
+    token_bytes = bt * d * 2
+    total_bytes = weight_bytes + token_bytes
+    median_s = statistics.median(timings)
+
+    return {
+        "intermediate_size": f,
+        "weight_bytes": weight_bytes,
+        "total_dma_bytes": total_bytes,
+        "statistics": {
+            "mean_ms": statistics.mean(timings) * 1000,
+            "median_ms": median_s * 1000,
+            "stdev_ms": statistics.stdev(timings) * 1000 if len(timings) > 1 else 0.0,
+            "min_ms": min(timings) * 1000,
+            "max_ms": max(timings) * 1000,
+        },
+    }
+
+
+def run_ablation(args):
+    """Run all ablation variants and extract overhead for each."""
+    cwd = os.getcwd()
+    if cwd not in sys.path:
+        sys.path.append(cwd)
+
+    from kernels.double_buffer_expert_ablation import VARIANTS
+
+    output_dir = pathlib.Path(args.output_dir)
+    metrics_dir = output_dir / "rank-0" / "benchmark"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"[ablation] Starting overhead ablation study")
+    print(f"[ablation] bt={args.bt}, bf={args.bf}")
+    print(f"[ablation] f_values={_ABLATION_F_VALUES}")
+    print(f"[ablation] variants: {list(VARIANTS.keys())}")
+    print(f"[ablation] num_warmup={args.num_warmup}, num_runs={args.num_runs}")
+    print()
+
+    results = {}
+    for name, variant_fn in VARIANTS.items():
+        print(f"[ablation] ── variant: {name}")
+        records = []
+        for f in _ABLATION_F_VALUES:
+            weight_mib = 3 * 8192 * f * 2 / (1024**2)
+            print(f"[ablation]    f={f:>5d}  weight_dma={weight_mib:.0f} MiB ... ", end="", flush=True)
+            rec = run_variant_at_f(
+                variant_fn, f, args.bt, args.bf,
+                args.num_warmup, args.num_runs,
+            )
+            records.append(rec)
+            med = rec["statistics"]["median_ms"]
+            print(f"median={med:.3f} ms")
+
+        # 2-point linear interpolation to extract overhead
+        xs = [r["weight_bytes"] for r in records]
+        ys = [r["statistics"]["median_ms"] for r in records]
+        if xs[1] != xs[0]:
+            slope = (ys[1] - ys[0]) / (xs[1] - xs[0])
+            overhead = ys[0] - slope * xs[0]
+            bw = 1.0 / (slope * 1e-3) / _GIB if slope > 0 else float("inf")
+        else:
+            overhead = ys[0]
+            slope = 0.0
+            bw = float("inf")
+
+        results[name] = {
+            "overhead_ms": overhead,
+            "slope_ms_per_byte": slope,
+            "bandwidth_gib_s": bw,
+            "records": records,
+        }
+        print(f"[ablation]    → overhead={overhead:.4f} ms  bandwidth={bw:.0f} GiB/s")
+        print()
+
+    # Summary table
+    print("[ablation] ══════════════════════════════════════════════")
+    print("[ablation] Variant              overhead_ms   Δ vs baseline")
+    print("[ablation] ──────────────────────────────────────────────")
+    baseline_oh = results["baseline"]["overhead_ms"]
+    for name, r in results.items():
+        delta = r["overhead_ms"] - baseline_oh
+        delta_str = f"{delta:+.4f} ms" if name != "baseline" else "  (ref)"
+        print(f"[ablation] {name:<22s} {r['overhead_ms']:.4f} ms   {delta_str}")
+    print("[ablation] ══════════════════════════════════════════════")
+
+    if not is_coordinator():
+        return
+
+    # Write results
+    ablation_path = metrics_dir / "ablation_results.json"
+    out = {
+        "config": {"bt": args.bt, "bf": args.bf, "f_values": _ABLATION_F_VALUES,
+                   "num_warmup": args.num_warmup, "num_runs": args.num_runs},
+        "variants": {
+            name: {
+                "overhead_ms": r["overhead_ms"],
+                "slope_ms_per_byte": r["slope_ms_per_byte"],
+                "bandwidth_gib_s": r["bandwidth_gib_s"],
+                "delta_vs_baseline_ms": r["overhead_ms"] - baseline_oh,
+                "f512_median_ms": r["records"][0]["statistics"]["median_ms"],
+                "f65536_median_ms": r["records"][1]["statistics"]["median_ms"],
+            }
+            for name, r in results.items()
+        },
+    }
+    with ablation_path.open("w") as fh:
+        json.dump(out, fh, indent=2)
+        fh.write("\n")
+    print(f"[ablation] Results written to {ablation_path}")
+
+    # Write manifest
+    manifest = {
+        "schema_version": 2,
+        "workflow": "overhead-ablation",
+        "operator_name": "kernels.double_buffer_expert",
+        "run_id": args.job_name,
+        "mode": "ablation",
+        "config": out["config"],
+    }
+    with (output_dir / "manifest.json").open("w") as fh:
+        json.dump(manifest, fh, indent=2)
+        fh.write("\n")
+
+    _write_env_info(output_dir / "rank-0" / "profiling")
+    _upload_if_configured(output_dir, args)
+
+
 def main(argv=None):
     args = parse_args(argv)
     output_dir = pathlib.Path(args.output_dir)
@@ -168,6 +336,10 @@ def main(argv=None):
             "--xla_tpu_scoped_vmem_limit_kib=65536"
             " --xla_jf_bounds_check=false"
         )
+
+    if args.ablation:
+        run_ablation(args)
+        return
 
     metrics_dir = output_dir / "rank-0" / "benchmark"
     metrics_dir.mkdir(parents=True, exist_ok=True)
