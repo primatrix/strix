@@ -162,10 +162,11 @@ def main(argv=None):
     output_dir = pathlib.Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Suppress IR dumps
+    # Suppress IR dumps; disable bounds check to reduce launch overhead
     if args.no_ir_dump:
         os.environ["LIBTPU_INIT_ARGS"] = (
             "--xla_tpu_scoped_vmem_limit_kib=65536"
+            " --xla_jf_bounds_check=false"
         )
 
     metrics_dir = output_dir / "rank-0" / "benchmark"
