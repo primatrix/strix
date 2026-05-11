@@ -43,6 +43,11 @@ def parse_args(argv=None):
 
 def run_single_f(f: int, bt: int, bf: int, num_warmup: int, num_runs: int) -> dict:
     """Benchmark the DMA-only kernel at a single intermediate_size value."""
+    # Ensure kernels package is importable (same trick as benchmark_runner.py)
+    cwd = os.getcwd()
+    if cwd not in sys.path:
+        sys.path.append(cwd)
+
     import jax
     import jax.numpy as jnp
     from kernels.double_buffer_expert import double_buffer_expert
