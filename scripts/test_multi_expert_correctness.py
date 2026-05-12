@@ -3,8 +3,13 @@
 
 Usage: python scripts/test_multi_expert_correctness.py [num_experts] [bt]
 """
+import os
 import runpy
 import sys
+
+cwd = os.getcwd()
+if cwd not in sys.path:
+    sys.path.insert(0, cwd)
 
 sys.argv = [
     "kernels/multi_expert_pipeline.py",
