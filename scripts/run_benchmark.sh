@@ -184,6 +184,9 @@ else
   if [[ -n "${PROFILE}" ]]; then
     RUNNER_CMD="${RUNNER_CMD} --profile"
   fi
+  if [[ -n "${NUM_TOKENS}" ]]; then
+    RUNNER_CMD="${RUNNER_CMD} --num-tokens ${NUM_TOKENS}"
+  fi
 fi
 export RUNNER_CMD
 
@@ -265,7 +268,7 @@ while [[ $ELAPSED -lt $JOB_TIMEOUT ]]; do
   STATUS=$(kubectl get job "${JOB_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)
   if echo "$STATUS" | grep -q True; then
     echo "Error: Job ${JOB_NAME} failed" >&2
-    kubectl logs "job/${JOB_NAME}" --tail=50 2>/dev/null || true
+    kubectl logs "job/${JOB_NAME}" --tail=200 2>/dev/null || true
     exit 1
   fi
   sleep $INTERVAL
