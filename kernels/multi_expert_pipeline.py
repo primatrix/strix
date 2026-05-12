@@ -15,6 +15,7 @@ from typing import Callable
 
 import jax
 import jax.numpy as jnp
+from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
@@ -174,52 +175,68 @@ def _multi_expert_kernel(
 
     wait_load_x(x_slot)
 
-    # -- Expert Loop --
+    # -- Expert Loop (lax.fori_loop — single trace, no unroll) --
 
-    for e in range(num_experts):
+    def expert_body(e, x_slot):
+        def run_expert(xs):
+            """One expert iteration with static x_slot=xs."""
+            next_xs = 1 - xs
 
-        # First tile
-        wait_fetch_w1(0)
-        wait_fetch_w3(0)
-        compute_tile(x_slot, w_slot=0, is_first_tile=True)
+            # First tile
+            wait_fetch_w1(0)
+            wait_fetch_w3(0)
+            compute_tile(xs, w_slot=0, is_first_tile=True)
 
-        # Steady state: tiles [1, n_w - 1)
-        for tile in range(1, n_w - 1):
-            w_slot = tile % 2
-            next_w = 1 - w_slot
-            start_fetch_w1(next_w, e, tile + 1)
-            start_fetch_w3(next_w, e, tile + 1)
-            start_fetch_w2(next_w, e, tile + 1)
-            wait_fetch_w1(w_slot)
-            wait_fetch_w3(w_slot)
-            compute_tile(x_slot, w_slot, is_first_tile=False)
+            # Steady state: tiles [1, n_w - 1)
+            for tile in range(1, n_w - 1):
+                w_slot = tile % 2
+                next_w = 1 - w_slot
+                start_fetch_w1(next_w, e, tile + 1)
+                start_fetch_w3(next_w, e, tile + 1)
+                start_fetch_w2(next_w, e, tile + 1)
+                wait_fetch_w1(w_slot)
+                wait_fetch_w3(w_slot)
+                compute_tile(xs, w_slot, is_first_tile=False)
 
-        # Epilogue: last tile
-        if n_w >= 2:
-            last_w = (n_w - 1) % 2
-            if e < num_experts - 1:
-                start_load_x(1 - x_slot, e + 1, priority=0)
-            wait_fetch_w1(last_w)
-            wait_fetch_w3(last_w)
-            compute_tile(x_slot, last_w, is_first_tile=False)
-
-        # Expert boundary: writeback + next expert prefetch
-        b_y_out_vmem[...] = b_y_acc_vmem[...].astype(b_y_out_vmem.dtype)
-        start_writeback(e)
-
-        if e < num_experts - 1:
-            start_fetch_w1(0, e + 1, 0)
-            start_fetch_w3(0, e + 1, 0)
-            start_fetch_w2(0, e + 1, 0)
+            # Epilogue: last tile
             if n_w >= 2:
-                start_fetch_w1(1, e + 1, 1)
-                start_fetch_w3(1, e + 1, 1)
-                start_fetch_w2(1, e + 1, 1)
+                last_w = (n_w - 1) % 2
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_load_x(next_xs, e + 1, priority=0)
+                wait_fetch_w1(last_w)
+                wait_fetch_w3(last_w)
+                compute_tile(xs, last_w, is_first_tile=False)
+
+            # Expert boundary: writeback + next expert prefetch
+            b_y_out_vmem[...] = b_y_acc_vmem[...].astype(b_y_out_vmem.dtype)
+            start_writeback(e)
+
+            @pl.when(e < num_experts - 1)
+            def _():
+                start_fetch_w1(0, e + 1, 0)
+                start_fetch_w3(0, e + 1, 0)
+                start_fetch_w2(0, e + 1, 0)
+                if n_w >= 2:
+                    start_fetch_w1(1, e + 1, 1)
+                    start_fetch_w3(1, e + 1, 1)
+                    start_fetch_w2(1, e + 1, 1)
+
             wait_writeback()
-            wait_load_x(1 - x_slot)
-            x_slot = 1 - x_slot
-        else:
-            wait_writeback()
+
+            @pl.when(e < num_experts - 1)
+            def _():
+                wait_load_x(next_xs)
+
+            return jnp.int32(next_xs)
+
+        return lax.cond(
+            x_slot == 0,
+            lambda: run_expert(0),
+            lambda: run_expert(1),
+        )
+
+    lax.fori_loop(0, num_experts, expert_body, jnp.int32(0), unroll=False)
 
 
 @functools.partial(jax.jit, static_argnames=["act_fn", "bf", "num_experts"])
