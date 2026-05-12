@@ -390,7 +390,41 @@ def _timed_runs(run_fn, num_runs: int, trace_root: str = "/tmp/strix_bench_trace
                     out = run_fn()
                     jax.block_until_ready(out)
 
-    durations_ms = _extract_marker_durations_ms(_load_trace(trace_dir), task=task)
+    trace = _load_trace(trace_dir)
+    all_events = trace.get("traceEvents", [])
+
+    # --- debug: understand trace structure ---
+    device_events = [e for e in all_events if e.get("args", {}).get("device_duration_ps")]
+    marker_in_tf_op = [e for e in all_events if _BENCH_MARKER in str(e.get("args", {}).get("tf_op", ""))]
+    marker_anywhere = [e for e in all_events if _BENCH_MARKER in json.dumps(e, default=str)]
+
+    print(f"[trace-debug] total_events={len(all_events)}, "
+          f"has_device_duration_ps={len(device_events)}, "
+          f"marker_in_tf_op={len(marker_in_tf_op)}, "
+          f"marker_anywhere={len(marker_anywhere)}")
+
+    if device_events:
+        for e in device_events[:3]:
+            print(f"[trace-debug] device_event: name={e.get('name')!r}, "
+                  f"dur={e.get('dur')}, "
+                  f"device_ps={e['args']['device_duration_ps']}, "
+                  f"tf_op={str(e.get('args', {}).get('tf_op', ''))[:120]}")
+
+    if marker_anywhere and not marker_in_tf_op:
+        for e in marker_anywhere[:3]:
+            print(f"[trace-debug] marker_event: {json.dumps(e, default=str)[:300]}")
+
+    # show what the fallback path matches
+    import re
+    task_events = [e for e in all_events if "name" in e and re.compile(task).match(e["name"])]
+    if task_events:
+        for e in task_events[:3]:
+            print(f"[trace-debug] task_fallback: name={e.get('name')!r}, "
+                  f"dur={e.get('dur')}, "
+                  f"device_ps={e.get('args', {}).get('device_duration_ps')}")
+    # --- end debug ---
+
+    durations_ms = _extract_marker_durations_ms(trace, task=task)
     if not durations_ms:
         raise RuntimeError("No device durations found in profiler trace")
     return [d / 1000.0 for d in durations_ms]
