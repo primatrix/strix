@@ -198,25 +198,28 @@ def _multi_expert_kernel(
                 wait_fetch_w3(w_slot)
                 compute_tile(xs, w_slot, is_first_tile=False)
 
-            # Epilogue: last tile
+            # Epilogue: last tile — prefetch next expert's first weight
+            # tile (slot 0) *before* the last compute to overlap DMA with
+            # the final tile's MXU work.  Tile 1 (slot 1) cannot move here
+            # because last_w == 1 and the compute still reads from that slot.
             if n_w >= 2:
                 last_w = (n_w - 1) % 2
                 @pl.when(e < num_experts - 1)
                 def _():
                     start_load_x(next_xs, e + 1, priority=0)
+                    start_fetch_w1(0, e + 1, 0)
+                    start_fetch_w3(0, e + 1, 0)
+                    start_fetch_w2(0, e + 1, 0)
                 wait_fetch_w1(last_w)
                 wait_fetch_w3(last_w)
                 compute_tile(xs, last_w, is_first_tile=False)
 
-            # Expert boundary: writeback + next expert prefetch
+            # Expert boundary: writeback + remaining next-expert prefetch
             b_y_out_vmem[...] = b_y_acc_vmem[...].astype(b_y_out_vmem.dtype)
             start_writeback(e)
 
             @pl.when(e < num_experts - 1)
             def _():
-                start_fetch_w1(0, e + 1, 0)
-                start_fetch_w3(0, e + 1, 0)
-                start_fetch_w2(0, e + 1, 0)
                 if n_w >= 2:
                     start_fetch_w1(1, e + 1, 1)
                     start_fetch_w3(1, e + 1, 1)
