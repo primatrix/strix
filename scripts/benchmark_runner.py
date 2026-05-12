@@ -269,6 +269,8 @@ def setup_xla_flags(ir_dump_root):
         f"--xla_mosaic_dump_to={ir_dump_root / 'mosaic'}",
         "--xla_mosaic_enable_llo_source_annotations=true",
         f"--xla_tpu_scoped_vmem_limit_kib={_VMEM_LIMIT_KIB}",
+        "--xla_jf_bounds_check=false",
+        "--xla_tpu_dvfs_p_state=7",
     ])
 
 
@@ -709,9 +711,11 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
         setup_xla_flags(ir_dump_root)
     else:
         print("[benchmark] IR dump disabled (--no-ir-dump)")
-        os.environ["LIBTPU_INIT_ARGS"] = (
-            f"--xla_tpu_scoped_vmem_limit_kib={_VMEM_LIMIT_KIB}"
-        )
+        os.environ["LIBTPU_INIT_ARGS"] = " ".join([
+            f"--xla_tpu_scoped_vmem_limit_kib={_VMEM_LIMIT_KIB}",
+            "--xla_jf_bounds_check=false",
+            "--xla_tpu_dvfs_p_state=7",
+        ])
 
     profile_dir = None
     if args.profile:
