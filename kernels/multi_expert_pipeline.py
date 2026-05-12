@@ -127,18 +127,18 @@ def _multi_expert_kernel(
             sem=weight_sems.at[slot, 2],
         ).wait()
 
-    def start_writeback(expert_idx):
+    def start_writeback(expert_idx, y_slot):
         pltpu.make_async_copy(
-            src_ref=b_y_out_vmem,
+            src_ref=b_y_out_vmem.at[y_slot],
             dst_ref=output_hbm.at[expert_idx],
-            sem=y_out_sem.at[0],
+            sem=y_out_sem.at[y_slot],
         ).start()
 
-    def wait_writeback():
+    def wait_writeback(y_slot):
         pltpu.make_async_copy(
-            src_ref=b_y_out_vmem,
-            dst_ref=b_y_out_vmem,
-            sem=y_out_sem.at[0],
+            src_ref=b_y_out_vmem.at[y_slot],
+            dst_ref=b_y_out_vmem.at[y_slot],
+            sem=y_out_sem.at[y_slot],
         ).wait()
 
     # -- Compute --
@@ -214,9 +214,16 @@ def _multi_expert_kernel(
                 wait_fetch_w3(last_w)
                 compute_tile(xs, last_w, is_first_tile=False)
 
-            # Expert boundary: writeback + remaining next-expert prefetch
-            b_y_out_vmem[...] = b_y_acc_vmem[...].astype(b_y_out_vmem.dtype)
-            start_writeback(e)
+            # Expert boundary: double-buffered writeback.
+            # Wait for the previous user of this y_slot (expert e-2).
+            @pl.when(e >= 2)
+            def _():
+                wait_writeback(xs)
+
+            b_y_out_vmem.at[xs][...] = b_y_acc_vmem[...].astype(
+                b_y_out_vmem.dtype
+            )
+            start_writeback(e, xs)
 
             @pl.when(e < num_experts - 1)
             def _():
@@ -225,7 +232,7 @@ def _multi_expert_kernel(
                     start_fetch_w3(1, e + 1, 1)
                     start_fetch_w2(1, e + 1, 1)
 
-            wait_writeback()
+            # No wait_writeback — DMA overlaps with next expert compute.
 
             @pl.when(e < num_experts - 1)
             def _():
@@ -240,6 +247,10 @@ def _multi_expert_kernel(
         )
 
     lax.fori_loop(0, num_experts, expert_body, jnp.int32(0), unroll=False)
+
+    # Drain last expert's writeback.
+    last_y_slot = (num_experts - 1) % 2
+    wait_writeback(last_y_slot)
 
 
 @functools.partial(jax.jit, static_argnames=["act_fn", "bf", "num_experts"])
@@ -294,10 +305,10 @@ def multi_expert_ffn(
         pltpu.VMEM((2, bf, d), weight_dtype),        # b_w2_x2_vmem
         pltpu.VMEM((2, bt, d), dtype),               # b_x_x2_vmem
         pltpu.VMEM((bt, d), jnp.float32),            # b_y_acc_vmem
-        pltpu.VMEM((bt, d), dtype),                  # b_y_out_vmem
+        pltpu.VMEM((2, bt, d), dtype),               # b_y_out_vmem (double-buffered)
         pltpu.SemaphoreType.DMA((2, 3)),             # weight_sems[slot, channel]
         pltpu.SemaphoreType.DMA((2,)),               # x_sem[x_slot]
-        pltpu.SemaphoreType.DMA((1,)),               # y_out_sem
+        pltpu.SemaphoreType.DMA((2,)),               # y_out_sem[y_slot]
     )
 
     scope_name = f"multi-expert-bt{bt}-bf{bf}-e{num_experts}"
