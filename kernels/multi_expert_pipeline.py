@@ -1,0 +1,387 @@
+"""Multi-expert double-buffer FFN pipeline — EP decode.
+
+Extends double_buffer_expert.py to process N experts sequentially on one
+device, with DMA overlap between adjacent experts. Hard-coded for
+d=8192, f=2048, bf16.
+
+Spec: docs/superpowers/specs/2026-05-12-multi-expert-pipeline-design.md
+"""
+
+from __future__ import annotations
+
+import functools
+import sys
+from typing import Callable
+
+import jax
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
+
+from ._fused_moe_impl import activation_fn
+
+
+_ALLOWED_CONFIGS = {(256, 256), (512, 256)}
+
+
+config = {
+    "default_shape": {
+        "num_tokens": 256,
+        "hidden_size": 8192,
+        "intermediate_size": 2048,
+        "num_experts": 8,
+    },
+    "dtype": "bfloat16",
+    "weight_dtype": "bfloat16",
+    "act_fn": "silu",
+    "bf": 256,
+    "tpu_type": "v7x",
+    "tpu_topology": "2x2x1",
+    "description": (
+        "Multi-expert double-buffer FFN — EP decode "
+        "(N experts sequential, expert-to-expert DMA overlap)"
+    ),
+}
+
+
+def _multi_expert_kernel(
+    tokens_hbm,
+    w1_hbm,
+    w2_hbm,
+    w3_hbm,
+    output_hbm,
+    b_w1_x2_vmem,
+    b_w3_x2_vmem,
+    b_w2_x2_vmem,
+    b_x_x2_vmem,
+    b_y_acc_vmem,
+    b_y_out_vmem,
+    weight_sems,
+    x_sem,
+    y_out_sem,
+    *,
+    act_fn: str,
+    bf: int,
+    intermediate_size: int,
+    num_experts: int,
+):
+    """Pallas kernel body — multi-expert pipeline."""
+    n_w = intermediate_size // bf
+
+    # -- DMA helpers --
+
+    def start_load_x(x_slot, expert_idx, priority=1):
+        pltpu.make_async_copy(
+            src_ref=tokens_hbm.at[expert_idx],
+            dst_ref=b_x_x2_vmem.at[x_slot],
+            sem=x_sem.at[x_slot],
+        ).start(priority=priority)
+
+    def wait_load_x(x_slot):
+        pltpu.make_async_copy(
+            src_ref=b_x_x2_vmem.at[x_slot],
+            dst_ref=b_x_x2_vmem.at[x_slot],
+            sem=x_sem.at[x_slot],
+        ).wait()
+
+    def start_fetch_w1(slot, expert_idx, tile_idx, priority=1):
+        pltpu.make_async_copy(
+            src_ref=w1_hbm.at[expert_idx, :, pl.ds(tile_idx * bf, bf)],
+            dst_ref=b_w1_x2_vmem.at[slot],
+            sem=weight_sems.at[slot, 0],
+        ).start(priority=priority)
+
+    def wait_fetch_w1(slot):
+        pltpu.make_async_copy(
+            src_ref=b_w1_x2_vmem.at[slot],
+            dst_ref=b_w1_x2_vmem.at[slot],
+            sem=weight_sems.at[slot, 0],
+        ).wait()
+
+    def start_fetch_w3(slot, expert_idx, tile_idx, priority=1):
+        pltpu.make_async_copy(
+            src_ref=w3_hbm.at[expert_idx, :, pl.ds(tile_idx * bf, bf)],
+            dst_ref=b_w3_x2_vmem.at[slot],
+            sem=weight_sems.at[slot, 1],
+        ).start(priority=priority)
+
+    def wait_fetch_w3(slot):
+        pltpu.make_async_copy(
+            src_ref=b_w3_x2_vmem.at[slot],
+            dst_ref=b_w3_x2_vmem.at[slot],
+            sem=weight_sems.at[slot, 1],
+        ).wait()
+
+    def start_fetch_w2(slot, expert_idx, tile_idx, priority=0):
+        pltpu.make_async_copy(
+            src_ref=w2_hbm.at[expert_idx, pl.ds(tile_idx * bf, bf), :],
+            dst_ref=b_w2_x2_vmem.at[slot],
+            sem=weight_sems.at[slot, 2],
+        ).start(priority=priority)
+
+    def wait_fetch_w2(slot):
+        pltpu.make_async_copy(
+            src_ref=b_w2_x2_vmem.at[slot],
+            dst_ref=b_w2_x2_vmem.at[slot],
+            sem=weight_sems.at[slot, 2],
+        ).wait()
+
+    def start_writeback(expert_idx):
+        pltpu.make_async_copy(
+            src_ref=b_y_out_vmem,
+            dst_ref=output_hbm.at[expert_idx],
+            sem=y_out_sem.at[0],
+        ).start()
+
+    def wait_writeback():
+        pltpu.make_async_copy(
+            src_ref=b_y_out_vmem,
+            dst_ref=b_y_out_vmem,
+            sem=y_out_sem.at[0],
+        ).wait()
+
+    # -- Compute --
+
+    def compute_tile(x_slot, w_slot, is_first_tile):
+        x = b_x_x2_vmem[x_slot]
+        w1 = b_w1_x2_vmem[w_slot]
+        w3 = b_w3_x2_vmem[w_slot]
+        gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)
+        up = jnp.dot(x, w3, preferred_element_type=jnp.float32)
+        act_up = activation_fn(gate, up, act_fn)
+
+        wait_fetch_w2(w_slot)
+
+        w2 = b_w2_x2_vmem[w_slot]
+        partial = jnp.dot(act_up, w2, preferred_element_type=jnp.float32)
+        if is_first_tile:
+            b_y_acc_vmem[...] = partial
+        else:
+            b_y_acc_vmem[...] = b_y_acc_vmem[...] + partial
+
+    # -- Global Prologue --
+
+    x_slot = 0
+    start_load_x(x_slot=0, expert_idx=0)
+    start_fetch_w1(0, 0, 0, priority=1)
+    start_fetch_w3(0, 0, 0, priority=1)
+    start_fetch_w2(0, 0, 0, priority=1)
+
+    if n_w >= 2:
+        start_fetch_w1(1, 0, 1)
+        start_fetch_w3(1, 0, 1)
+        start_fetch_w2(1, 0, 1)
+
+    wait_load_x(x_slot)
+
+    # -- Expert Loop --
+
+    for e in range(num_experts):
+
+        # First tile
+        wait_fetch_w1(0)
+        wait_fetch_w3(0)
+        compute_tile(x_slot, w_slot=0, is_first_tile=True)
+
+        # Steady state: tiles [1, n_w - 1)
+        for tile in range(1, n_w - 1):
+            w_slot = tile % 2
+            next_w = 1 - w_slot
+            start_fetch_w1(next_w, e, tile + 1)
+            start_fetch_w3(next_w, e, tile + 1)
+            start_fetch_w2(next_w, e, tile + 1)
+            wait_fetch_w1(w_slot)
+            wait_fetch_w3(w_slot)
+            compute_tile(x_slot, w_slot, is_first_tile=False)
+
+        # Epilogue: last tile
+        if n_w >= 2:
+            last_w = (n_w - 1) % 2
+            if e < num_experts - 1:
+                start_load_x(1 - x_slot, e + 1, priority=0)
+            wait_fetch_w1(last_w)
+            wait_fetch_w3(last_w)
+            compute_tile(x_slot, last_w, is_first_tile=False)
+
+        # Expert boundary: writeback + next expert prefetch
+        b_y_out_vmem[...] = b_y_acc_vmem[...].astype(b_y_out_vmem.dtype)
+        start_writeback(e)
+
+        if e < num_experts - 1:
+            start_fetch_w1(0, e + 1, 0)
+            start_fetch_w3(0, e + 1, 0)
+            start_fetch_w2(0, e + 1, 0)
+            if n_w >= 2:
+                start_fetch_w1(1, e + 1, 1)
+                start_fetch_w3(1, e + 1, 1)
+                start_fetch_w2(1, e + 1, 1)
+            wait_writeback()
+            wait_load_x(1 - x_slot)
+            x_slot = 1 - x_slot
+        else:
+            wait_writeback()
+
+
+@functools.partial(jax.jit, static_argnames=["act_fn", "bf", "num_experts"])
+def multi_expert_ffn(
+    tokens: jax.Array,
+    w1: jax.Array,
+    w2: jax.Array,
+    w3: jax.Array,
+    *,
+    act_fn: str = "silu",
+    bf: int = 256,
+    num_experts: int,
+) -> jax.Array:
+    """Run the multi-expert double-buffer FFN kernel.
+
+    Shapes:
+      tokens: (num_experts, bt, d) bf16
+      w1:     (num_experts, d, f)  bf16
+      w2:     (num_experts, f, d)  bf16
+      w3:     (num_experts, d, f)  bf16
+    Returns:
+      output: (num_experts, bt, d) bf16
+    """
+    n_exp, bt, d = tokens.shape
+    f_full = w1.shape[2]
+    if n_exp != num_experts:
+        raise ValueError(
+            f"tokens.shape[0]={n_exp} != num_experts={num_experts}"
+        )
+    if d != 8192 or f_full != 2048:
+        raise ValueError(
+            f"Kernel hard-coded for d=8192, f=2048; got d={d}, f={f_full}"
+        )
+    if (bt, bf) not in _ALLOWED_CONFIGS:
+        raise ValueError(
+            f"Only (num_tokens, bf) in {sorted(_ALLOWED_CONFIGS)} supported; "
+            f"got (num_tokens={bt}, bf={bf})"
+        )
+    if w1.shape != (num_experts, d, f_full):
+        raise ValueError(f"w1.shape={w1.shape} must be ({num_experts}, {d}, {f_full})")
+    if w2.shape != (num_experts, f_full, d):
+        raise ValueError(f"w2.shape={w2.shape} must be ({num_experts}, {f_full}, {d})")
+    if w3.shape != (num_experts, d, f_full):
+        raise ValueError(f"w3.shape={w3.shape} must be ({num_experts}, {d}, {f_full})")
+
+    dtype = tokens.dtype
+    weight_dtype = w1.dtype
+
+    scratch_shapes = (
+        pltpu.VMEM((2, d, bf), weight_dtype),       # b_w1_x2_vmem
+        pltpu.VMEM((2, d, bf), weight_dtype),        # b_w3_x2_vmem
+        pltpu.VMEM((2, bf, d), weight_dtype),        # b_w2_x2_vmem
+        pltpu.VMEM((2, bt, d), dtype),               # b_x_x2_vmem
+        pltpu.VMEM((bt, d), jnp.float32),            # b_y_acc_vmem
+        pltpu.VMEM((bt, d), dtype),                  # b_y_out_vmem
+        pltpu.SemaphoreType.DMA((2, 3)),             # weight_sems[slot, channel]
+        pltpu.SemaphoreType.DMA((2,)),               # x_sem[x_slot]
+        pltpu.SemaphoreType.DMA((1,)),               # y_out_sem
+    )
+
+    scope_name = f"multi-expert-bt{bt}-bf{bf}-e{num_experts}"
+    hbm = pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM)
+
+    kernel = pl.pallas_call(
+        functools.partial(
+            _multi_expert_kernel,
+            act_fn=act_fn,
+            bf=bf,
+            intermediate_size=f_full,
+            num_experts=num_experts,
+        ),
+        out_shape=jax.ShapeDtypeStruct((num_experts, bt, d), dtype),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[hbm, hbm, hbm, hbm],
+            out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
+            scratch_shapes=scratch_shapes,
+        ),
+        compiler_params=pltpu.CompilerParams(
+            vmem_limit_bytes=64 * 1024 * 1024,
+        ),
+        name=scope_name,
+    )
+    return jax.named_scope(scope_name)(kernel)(
+        pltpu.with_memory_space_constraint(tokens, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w1, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w2, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w3, pltpu.HBM),
+    )
+
+
+def _ref_multi_expert_ffn(tokens, w1, w2, w3, *, act_fn="silu"):
+    """Pure-JAX reference: loop over experts, each does (silu(x@W1) * (x@W3)) @ W2."""
+    num_experts = tokens.shape[0]
+    outputs = []
+    for e in range(num_experts):
+        x = tokens[e].astype(jnp.float32)
+        gate = x @ w1[e].astype(jnp.float32)
+        up = x @ w3[e].astype(jnp.float32)
+        act = activation_fn(gate, up, act_fn)
+        out = (act @ w2[e].astype(jnp.float32)).astype(tokens.dtype)
+        outputs.append(out)
+    return jnp.stack(outputs)
+
+
+def kernel_fn(
+    num_tokens: int = 256,
+    hidden_size: int = 8192,
+    intermediate_size: int = 2048,
+    dtype=jnp.bfloat16,
+    weight_dtype=jnp.bfloat16,
+    act_fn: str = "silu",
+    bf: int = 256,
+    num_experts: int = 8,
+    **_kwargs,
+) -> Callable[[], jax.Array]:
+    """Build random inputs and return a zero-arg closure calling the kernel."""
+    key = jax.random.key(42)
+    k1, k2, k3, k4 = jax.random.split(key, 4)
+    tokens = jax.random.normal(k1, (num_experts, num_tokens, hidden_size), dtype=dtype)
+    w1 = jax.random.normal(k2, (num_experts, hidden_size, intermediate_size), dtype=weight_dtype)
+    w2 = jax.random.normal(k3, (num_experts, intermediate_size, hidden_size), dtype=weight_dtype)
+    w3 = jax.random.normal(k4, (num_experts, hidden_size, intermediate_size), dtype=weight_dtype)
+
+    def run():
+        return multi_expert_ffn(
+            tokens, w1, w2, w3,
+            act_fn=act_fn, bf=bf, num_experts=num_experts,
+        )
+
+    return run
+
+
+if __name__ == "__main__":
+    num_experts_arg = int(sys.argv[1]) if len(sys.argv) > 1 else 4
+    bt = int(sys.argv[2]) if len(sys.argv) > 2 else 256
+    bf_arg = 256
+
+    key = jax.random.key(0)
+    k1, k2, k3, k4 = jax.random.split(key, 4)
+    tokens = jax.random.normal(k1, (num_experts_arg, bt, 8192), dtype=jnp.bfloat16)
+    w1 = jax.random.normal(k2, (num_experts_arg, 8192, 2048), dtype=jnp.bfloat16)
+    w2 = jax.random.normal(k3, (num_experts_arg, 2048, 8192), dtype=jnp.bfloat16)
+    w3 = jax.random.normal(k4, (num_experts_arg, 8192, 2048), dtype=jnp.bfloat16)
+
+    result = multi_expert_ffn(
+        tokens, w1, w2, w3, bf=bf_arg, num_experts=num_experts_arg,
+    )
+    ref = _ref_multi_expert_ffn(tokens, w1, w2, w3)
+
+    max_errs = []
+    rel_errs = []
+    for e in range(num_experts_arg):
+        r = result[e].astype(jnp.float32)
+        f = ref[e].astype(jnp.float32)
+        me = jnp.max(jnp.abs(r - f))
+        re = me / (jnp.max(jnp.abs(f)) + 1e-6)
+        max_errs.append(float(me))
+        rel_errs.append(float(re))
+        print(f"  expert {e}: max_abs_err={me:.4f}, rel_err={re:.4f}")
+
+    worst_rel = max(rel_errs)
+    print(f"num_experts={num_experts_arg}, bt={bt}, bf={bf_arg}, worst_rel_err={worst_rel:.4f}")
+    assert worst_rel < 0.05, f"worst rel_err too high: {worst_rel}"
+    print("PASS")
