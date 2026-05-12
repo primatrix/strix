@@ -71,7 +71,7 @@ def _double_buffer_expert_kernel(
     def start_load_x():
         pltpu.make_async_copy(
             src_ref=tokens_hbm, dst_ref=b_x_vmem, sem=x_sem.at[0],
-        ).start()
+        ).start(priority=1)
 
     def wait_load_x():
         pltpu.make_async_copy(
@@ -83,7 +83,7 @@ def _double_buffer_expert_kernel(
             src_ref=w1_hbm.at[:, pl.ds(tile_idx * bf, bf)],
             dst_ref=b_w1_x2_vmem.at[slot],
             sem=weight_sems.at[slot, 0],
-        ).start()
+        ).start(priority=1)
 
     def wait_fetch_w1(slot):
         pltpu.make_async_copy(
@@ -97,7 +97,7 @@ def _double_buffer_expert_kernel(
             src_ref=w3_hbm.at[:, pl.ds(tile_idx * bf, bf)],
             dst_ref=b_w3_x2_vmem.at[slot],
             sem=weight_sems.at[slot, 1],
-        ).start()
+        ).start(priority=1)
 
     def wait_fetch_w3(slot):
         pltpu.make_async_copy(
