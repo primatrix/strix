@@ -20,7 +20,7 @@ from jax.experimental.pallas import tpu as pltpu
 from ._fused_moe_impl import activation_fn
 
 
-_ALLOWED_CONFIGS = {(256, 512), (256, 256), (512, 256)}
+_ALLOWED_CONFIGS = {(256, 256), (512, 256)}
 
 
 config = {
@@ -32,7 +32,7 @@ config = {
     "dtype": "bfloat16",
     "weight_dtype": "bfloat16",
     "act_fn": "silu",
-    "bf": 512,
+    "bf": 256,
     "tpu_type": "v7x",
     "tpu_topology": "2x2x1",
     "description": (
@@ -191,7 +191,7 @@ def double_buffer_expert(
     w3: jax.Array,
     *,
     act_fn: str = "silu",
-    bf: int = 512,
+    bf: int = 256,
 ) -> jax.Array:
     """Run the double-buffer expert FFN kernel.
 
@@ -286,7 +286,7 @@ def kernel_fn(
     dtype=jnp.bfloat16,
     weight_dtype=jnp.bfloat16,
     act_fn: str = "silu",
-    bf: int = 512,
+    bf: int = 256,
     **_kwargs,
 ) -> Callable[[], jax.Array]:
     """Build random inputs and return a zero-arg closure calling the kernel.
@@ -310,7 +310,7 @@ def kernel_fn(
 
 if __name__ == "__main__":
     bt = int(sys.argv[1]) if len(sys.argv) > 1 else 256
-    bf_arg = 512 if bt == 256 else 256
+    bf_arg = 256
 
     key = jax.random.key(0)
     k1, k2, k3, k4 = jax.random.split(key, 4)
