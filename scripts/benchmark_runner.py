@@ -9,13 +9,15 @@ to GCS.
 from __future__ import annotations
 
 import argparse
+import gzip
 import importlib
 import json
 import os
 import pathlib
+import random
 import statistics
+import string
 import sys
-import time
 
 IR_DUMP_SUBDIRS = ("hlo", "llo", "mosaic")
 _GIB = 1024 ** 3
@@ -27,6 +29,8 @@ _DTYPE_BYTES = {
     "float8_e5m2": 1,
     "float32": 4,
 }
+
+_BENCH_MARKER = "STRIX_BENCH"
 
 
 def is_coordinator():
@@ -295,6 +299,101 @@ def check_kernel_compat(kernel_fn, *, module_name: str) -> None:
         )
 
 
+def _load_trace(trace_root: str) -> dict:
+    """Load profiler trace JSON from the given directory."""
+    trace_dir = pathlib.Path(trace_root) / "plugins" / "profile"
+    if not trace_dir.exists():
+        raise FileNotFoundError(f"No trace output under {trace_dir}")
+    latest_dir = max(trace_dir.iterdir(), key=os.path.getmtime)
+    trace_files = list(latest_dir.glob("*.trace.json.gz"))
+    if not trace_files:
+        raise FileNotFoundError(f"No trace json.gz under {latest_dir}")
+
+    combined: dict = {"traceEvents": []}
+    for trace_file in sorted(trace_files):
+        with gzip.open(trace_file, "rb") as f:
+            shard = json.load(f)
+        shard_events = shard.get("traceEvents", [])
+        if isinstance(shard_events, list):
+            combined["traceEvents"].extend(shard_events)
+    return combined
+
+
+def _extract_marker_durations_ms(trace: dict, task: str | None = None) -> list[float]:
+    """Extract per-iteration device durations (ms) from a profiler trace."""
+    marker_events = []
+    for e in trace.get("traceEvents", []):
+        tf_op = e.get("args", {}).get("tf_op", "")
+        if _BENCH_MARKER in tf_op:
+            marker_events.append(e)
+
+    marker_call_done = [e for e in marker_events if e.get("name", "").endswith("call-done")]
+    if marker_call_done:
+        marker_events = marker_call_done
+
+    def _durations_by_pid(events):
+        by_pid: dict[int, list[dict]] = {}
+        for e in events:
+            pid = e.get("pid")
+            if isinstance(pid, int):
+                by_pid.setdefault(pid, []).append(e)
+
+        durations: dict[int, list[float]] = {}
+        for pid, pid_events in by_pid.items():
+            pid_events.sort(key=lambda ev: float(ev.get("ts", 0.0)))
+            pid_durations = []
+            for e in pid_events:
+                args = e.get("args", {})
+                if args.get("device_duration_ps"):
+                    pid_durations.append(float(args["device_duration_ps"]) / 1e9)
+                elif "dur" in e:
+                    pid_durations.append(float(e["dur"]) / 1e3)
+            if pid_durations:
+                durations[pid] = pid_durations
+        return durations
+
+    if not marker_events:
+        if not task:
+            return []
+        import re
+        event_matcher = re.compile(task)
+        events = [
+            e for e in trace.get("traceEvents", [])
+            if "name" in e and event_matcher.match(e["name"])
+        ]
+        durations_by_pid = _durations_by_pid(events)
+        if not durations_by_pid:
+            return []
+        return max(sorted(durations_by_pid.items()), key=lambda kv: len(kv[1]))[1]
+
+    durations_by_pid = _durations_by_pid(marker_events)
+    if not durations_by_pid:
+        return []
+    return max(sorted(durations_by_pid.items()), key=lambda kv: len(kv[1]))[1]
+
+
+def _timed_runs(run_fn, num_runs: int, trace_root: str = "/tmp/strix_bench_trace") -> list[float]:
+    """Run *num_runs* iterations under JAX profiler and return device durations (seconds)."""
+    import jax
+
+    trace_name = "bench_" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    trace_dir = os.path.join(trace_root, trace_name)
+    os.makedirs(trace_dir, exist_ok=True)
+
+    task = "kernel_bench"
+    with jax.profiler.trace(trace_dir):
+        for i in range(num_runs):
+            with jax.profiler.StepTraceAnnotation(task, step_num=i):
+                with jax.named_scope(f"{_BENCH_MARKER}_{i}"):
+                    out = run_fn()
+                    jax.block_until_ready(out)
+
+    durations_ms = _extract_marker_durations_ms(_load_trace(trace_dir), task=task)
+    if not durations_ms:
+        raise RuntimeError("No device durations found in profiler trace")
+    return [d / 1000.0 for d in durations_ms]
+
+
 def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_size=None, bf=None, bd=None, num_tokens=None):
     """Execute kernel benchmark and return list of timing values (seconds)."""
     kwargs = dict(config.get("default_shape", {}))
@@ -316,16 +415,7 @@ def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_s
         if hasattr(result, "block_until_ready"):
             result.block_until_ready()
 
-    # Timed runs
-    timings = []
-    for _ in range(num_runs):
-        start = time.perf_counter()
-        result = run_fn()
-        if hasattr(result, "block_until_ready"):
-            result.block_until_ready()
-        timings.append(time.perf_counter() - start)
-
-    return timings
+    return _timed_runs(run_fn, num_runs)
 
 
 def write_benchmark_result(timings, kernel, shape, job_name, config, output_path):
@@ -483,13 +573,7 @@ def run_sweep(
                     result.block_until_ready()
                 jax.profiler.stop_trace()
 
-            timings = []
-            for _ in range(num_runs):
-                start = time.perf_counter()
-                result = run_fn()
-                if hasattr(result, "block_until_ready"):
-                    result.block_until_ready()
-                timings.append(time.perf_counter() - start)
+            timings = _timed_runs(run_fn, num_runs)
 
             record = build_sweep_record(
                 kernel=kernel, shape=shape, job_name=job_name,
