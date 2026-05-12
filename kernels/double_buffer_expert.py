@@ -144,15 +144,15 @@ def _double_buffer_expert_kernel(
     start_fetch_w1(0, 0)
     start_fetch_w3(0, 0)
     start_fetch_w2(0, 0)
-    wait_load_x()
-    wait_fetch_w1(0)
-    wait_fetch_w3(0)
-
+    
     if n_w >= 2:
         start_fetch_w1(1, 1)
         start_fetch_w3(1, 1)
         start_fetch_w2(1, 1)
 
+    wait_load_x()
+    wait_fetch_w1(0)
+    wait_fetch_w3(0)
     compute_tile(slot=0, is_first_tile=True)
 
     # -- Steady state: Python for-loop over tile in [1, n_w - 1) --
