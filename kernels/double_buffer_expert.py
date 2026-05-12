@@ -68,7 +68,7 @@ def _double_buffer_expert_kernel(
     n_w = intermediate_size // bf  # 4 (bf=512) or 8 (bf=256)
 
     # -- DMA helpers --
-    def start_load_x(priority=3):
+    def start_load_x(priority=1):
         pltpu.make_async_copy(
             src_ref=tokens_hbm, dst_ref=b_x_vmem, sem=x_sem.at[0],
         ).start(priority=priority)
@@ -78,7 +78,7 @@ def _double_buffer_expert_kernel(
             src_ref=b_x_vmem, dst_ref=b_x_vmem, sem=x_sem.at[0],
         ).wait()
 
-    def start_fetch_w1(slot, tile_idx, priority=2):
+    def start_fetch_w1(slot, tile_idx, priority=1):
         pltpu.make_async_copy(
             src_ref=w1_hbm.at[:, pl.ds(tile_idx * bf, bf)],
             dst_ref=b_w1_x2_vmem.at[slot],
@@ -92,7 +92,7 @@ def _double_buffer_expert_kernel(
             sem=weight_sems.at[slot, 0],
         ).wait()
 
-    def start_fetch_w3(slot, tile_idx, priority=2):
+    def start_fetch_w3(slot, tile_idx, priority=1):
         pltpu.make_async_copy(
             src_ref=w3_hbm.at[:, pl.ds(tile_idx * bf, bf)],
             dst_ref=b_w3_x2_vmem.at[slot],
@@ -106,7 +106,7 @@ def _double_buffer_expert_kernel(
             sem=weight_sems.at[slot, 1],
         ).wait()
 
-    def start_fetch_w2(slot, tile_idx, priority=1):
+    def start_fetch_w2(slot, tile_idx, priority=0):
         pltpu.make_async_copy(
             src_ref=w2_hbm.at[pl.ds(tile_idx * bf, bf), :],
             dst_ref=b_w2_x2_vmem.at[slot],
@@ -140,10 +140,10 @@ def _double_buffer_expert_kernel(
             b_y_acc_vmem[...] = b_y_acc_vmem[...] + partial
 
     # -- Prologue (§5.8 stages L1..C2) --
-    start_load_x(priority=3)
-    start_fetch_w1(0, 0, priority=3)
-    start_fetch_w3(0, 0, priority=3)
-    start_fetch_w2(0, 0, priority=2)
+    start_load_x(priority=1)
+    start_fetch_w1(0, 0, priority=1)
+    start_fetch_w3(0, 0, priority=1)
+    start_fetch_w2(0, 0, priority=1)
     
     if n_w >= 2:
         start_fetch_w1(1, 1)
