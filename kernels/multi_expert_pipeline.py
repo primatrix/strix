@@ -248,9 +248,12 @@ def _multi_expert_kernel(
 
     lax.fori_loop(0, num_experts, expert_body, jnp.int32(0), unroll=False)
 
-    # Drain last expert's writeback.
+    # Drain outstanding writebacks.  With double-buffered output, up to
+    # two slots may have in-flight DMAs (the last two experts).
     last_y_slot = (num_experts - 1) % 2
     wait_writeback(last_y_slot)
+    if num_experts >= 2:
+        wait_writeback(1 - last_y_slot)
 
 
 @functools.partial(jax.jit, static_argnames=["act_fn", "bf", "num_experts"])
