@@ -165,7 +165,7 @@ def _multi_expert_kernel(
     start_load_x(x_slot=0, expert_idx=0)
     start_fetch_w1(0, 0, 0, priority=1)
     start_fetch_w3(0, 0, 0, priority=1)
-    start_fetch_w2(0, 0, 0, priority=1)
+    start_fetch_w2(0, 0, 0)
 
     if n_w >= 2:
         start_fetch_w1(1, 0, 1)
