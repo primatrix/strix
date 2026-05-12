@@ -287,6 +287,7 @@ def kernel_fn(
     weight_dtype=jnp.bfloat16,
     act_fn: str = "silu",
     bf: int = 512,
+    **_kwargs,
 ) -> Callable[[], jax.Array]:
     """Build random inputs and return a zero-arg closure calling the kernel.
 
