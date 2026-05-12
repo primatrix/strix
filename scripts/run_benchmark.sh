@@ -280,6 +280,7 @@ if [[ $ELAPSED -ge $JOB_TIMEOUT ]]; then
 fi
 
 # ---- Download results ----
+kubectl logs "job/${JOB_NAME}" --tail=200 2>/dev/null || true
 echo "[run_benchmark] Downloading results from ${GCS_PATH}..."
 mkdir -p "${OUTPUT_DIR}"
 gcloud storage cp "${GCS_PATH}${JOB_NAME}.tar.gz" "${OUTPUT_DIR}/"
