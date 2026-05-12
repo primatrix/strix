@@ -20,7 +20,7 @@ from jax.experimental.pallas import tpu as pltpu
 from ._fused_moe_impl import activation_fn
 
 
-_ALLOWED_CONFIGS = {(256, 512), (512, 256)}  # (num_tokens, bf) pairs from §5.8
+_ALLOWED_CONFIGS = {(256, 512), (256, 256), (512, 256)}
 
 
 config = {
