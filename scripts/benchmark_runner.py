@@ -30,7 +30,6 @@ _DTYPE_BYTES = {
     "float32": 4,
 }
 
-_BENCH_MARKER = "STRIX_BENCH"
 
 
 def is_coordinator():
@@ -321,57 +320,32 @@ def _load_trace(trace_root: str) -> dict:
     return combined
 
 
-def _extract_marker_durations_ms(trace: dict, task: str | None = None) -> list[float]:
-    """Extract per-iteration device durations (ms) from a profiler trace."""
-    marker_events = []
-    for e in trace.get("traceEvents", []):
-        tf_op = e.get("args", {}).get("tf_op", "")
-        if _BENCH_MARKER in tf_op:
-            marker_events.append(e)
+def _extract_device_durations_ms(trace: dict) -> list[float]:
+    """Extract per-iteration device durations (ms) from a profiler trace.
 
-    marker_call_done = [e for e in marker_events if e.get("name", "").endswith("call-done")]
-    if marker_call_done:
-        marker_events = marker_call_done
-
-    def _durations_by_pid(events):
-        by_pid: dict[int, list[dict]] = {}
-        for e in events:
-            pid = e.get("pid")
-            if isinstance(pid, int):
-                by_pid.setdefault(pid, []).append(e)
-
-        durations: dict[int, list[float]] = {}
-        for pid, pid_events in by_pid.items():
-            pid_events.sort(key=lambda ev: float(ev.get("ts", 0.0)))
-            pid_durations = []
-            for e in pid_events:
-                args = e.get("args", {})
-                if args.get("device_duration_ps"):
-                    pid_durations.append(float(args["device_duration_ps"]) / 1e9)
-                elif "dur" in e:
-                    pid_durations.append(float(e["dur"]) / 1e3)
-            if pid_durations:
-                durations[pid] = pid_durations
-        return durations
-
-    if not marker_events:
-        if not task:
-            return []
-        import re
-        event_matcher = re.compile(task)
-        events = [
-            e for e in trace.get("traceEvents", [])
-            if "name" in e and event_matcher.match(e["name"])
-        ]
-        durations_by_pid = _durations_by_pid(events)
-        if not durations_by_pid:
-            return []
-        return max(sorted(durations_by_pid.items()), key=lambda kv: len(kv[1]))[1]
-
-    durations_by_pid = _durations_by_pid(marker_events)
-    if not durations_by_pid:
+    Finds events with device_duration_ps (set by the TPU runtime), groups
+    by pid (one pid per chip), and returns durations from the chip with the
+    most events.
+    """
+    device_events = [
+        e for e in trace.get("traceEvents", [])
+        if e.get("args", {}).get("device_duration_ps")
+    ]
+    if not device_events:
         return []
-    return max(sorted(durations_by_pid.items()), key=lambda kv: len(kv[1]))[1]
+
+    by_pid: dict[int, list[dict]] = {}
+    for e in device_events:
+        pid = e.get("pid")
+        if isinstance(pid, int):
+            by_pid.setdefault(pid, []).append(e)
+
+    if not by_pid:
+        return []
+
+    _, best_events = max(by_pid.items(), key=lambda kv: len(kv[1]))
+    best_events.sort(key=lambda ev: float(ev.get("ts", 0.0)))
+    return [float(e["args"]["device_duration_ps"]) / 1e9 for e in best_events]
 
 
 def _timed_runs(run_fn, num_runs: int, trace_root: str = "/tmp/strix_bench_trace") -> list[float]:
@@ -382,49 +356,12 @@ def _timed_runs(run_fn, num_runs: int, trace_root: str = "/tmp/strix_bench_trace
     trace_dir = os.path.join(trace_root, trace_name)
     os.makedirs(trace_dir, exist_ok=True)
 
-    task = "kernel_bench"
     with jax.profiler.trace(trace_dir):
-        for i in range(num_runs):
-            with jax.profiler.StepTraceAnnotation(task, step_num=i):
-                with jax.named_scope(f"{_BENCH_MARKER}_{i}"):
-                    out = run_fn()
-                    jax.block_until_ready(out)
+        for _ in range(num_runs):
+            out = run_fn()
+            jax.block_until_ready(out)
 
-    trace = _load_trace(trace_dir)
-    all_events = trace.get("traceEvents", [])
-
-    # --- debug: understand trace structure ---
-    device_events = [e for e in all_events if e.get("args", {}).get("device_duration_ps")]
-    marker_in_tf_op = [e for e in all_events if _BENCH_MARKER in str(e.get("args", {}).get("tf_op", ""))]
-    marker_anywhere = [e for e in all_events if _BENCH_MARKER in json.dumps(e, default=str)]
-
-    print(f"[trace-debug] total_events={len(all_events)}, "
-          f"has_device_duration_ps={len(device_events)}, "
-          f"marker_in_tf_op={len(marker_in_tf_op)}, "
-          f"marker_anywhere={len(marker_anywhere)}")
-
-    if device_events:
-        for e in device_events[:3]:
-            print(f"[trace-debug] device_event: name={e.get('name')!r}, "
-                  f"dur={e.get('dur')}, "
-                  f"device_ps={e['args']['device_duration_ps']}, "
-                  f"tf_op={str(e.get('args', {}).get('tf_op', ''))[:120]}")
-
-    if marker_anywhere and not marker_in_tf_op:
-        for e in marker_anywhere[:3]:
-            print(f"[trace-debug] marker_event: {json.dumps(e, default=str)[:300]}")
-
-    # show what the fallback path matches
-    import re
-    task_events = [e for e in all_events if "name" in e and re.compile(task).match(e["name"])]
-    if task_events:
-        for e in task_events[:3]:
-            print(f"[trace-debug] task_fallback: name={e.get('name')!r}, "
-                  f"dur={e.get('dur')}, "
-                  f"device_ps={e.get('args', {}).get('device_duration_ps')}")
-    # --- end debug ---
-
-    durations_ms = _extract_marker_durations_ms(trace, task=task)
+    durations_ms = _extract_device_durations_ms(_load_trace(trace_dir))
     if not durations_ms:
         raise RuntimeError("No device durations found in profiler trace")
     return [d / 1000.0 for d in durations_ms]
