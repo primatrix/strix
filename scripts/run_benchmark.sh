@@ -192,6 +192,7 @@ export RUNNER_CMD
 
 # ---- Generate job name ----
 KERNEL_SLUG="${KERNEL_MODULE//[._]/-}"
+KERNEL_SLUG="${KERNEL_SLUG:0:30}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 export JOB_NAME="strix-benchmark-${KERNEL_SLUG}-${TIMESTAMP}"
 
