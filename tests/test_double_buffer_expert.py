@@ -1,8 +1,6 @@
 """Structural tests for kernels/double_buffer_expert.py (no TPU required).
 
-Mirrors tests/test_expert_ffn_kernel.py — AST-based checks that the module
-exposes the correct public API per
-docs/superpowers/specs/2026-05-11-double-buffer-expert-design.md.
+DMA-only variant — f-axis tiling, all compute removed.
 """
 
 from __future__ import annotations

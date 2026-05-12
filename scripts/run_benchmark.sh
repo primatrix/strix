@@ -27,6 +27,7 @@ SWEEP=""
 TOTAL_BYTES=""
 NO_IR_DUMP=""
 PROFILE=""
+RUNNER_SCRIPT=""
 JOB_TIMEOUT=${JOB_TIMEOUT:-7200}
 
 # ---- Usage ----
@@ -52,6 +53,7 @@ Options:
   --total-bytes <n>    Target total DMA bytes per sweep config (default: 67108864 = 64 MiB)
   --no-ir-dump         Disable HLO/LLO/Mosaic IR dump
   --profile            Capture JAX profiler trace
+  --runner-script <p>  Use custom runner script instead of benchmark_runner.py
   -h, --help           Show this help
 EOF
   exit 1
@@ -125,6 +127,10 @@ while [[ $# -gt 0 ]]; do
       PROFILE="1"
       shift
       ;;
+    --runner-script)
+      RUNNER_SCRIPT="${2:?--runner-script requires a value}"
+      shift 2
+      ;;
     -h|--help)
       usage
       ;;
@@ -147,7 +153,12 @@ if [[ -n "${SWEEP}" && ( -n "${BF}" || -n "${BD}" ) ]]; then
 fi
 
 # ---- Set runner command ----
-if [[ -n "${COMPILE_ONLY}" ]]; then
+if [[ -n "${RUNNER_SCRIPT}" ]]; then
+  RUNNER_CMD="python ${RUNNER_SCRIPT}"
+  if [[ -n "${NO_IR_DUMP}" ]]; then
+    RUNNER_CMD="${RUNNER_CMD} --no-ir-dump"
+  fi
+elif [[ -n "${COMPILE_ONLY}" ]]; then
   TARGET_TOPOLOGY="${TARGET_TOPOLOGY:-2x8x8}"
   RUNNER_CMD="python scripts/cross_compile.py --topology ${TARGET_TOPOLOGY}"
   if [[ -n "${NUM_TOKENS}" ]]; then
