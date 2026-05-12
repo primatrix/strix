@@ -252,7 +252,7 @@ def double_buffer_expert(
             scratch_shapes=scratch_shapes,
         ),
         compiler_params=pltpu.CompilerParams(
-            vmem_limit_bytes=96 * 1024 * 1024,
+            vmem_limit_bytes=64 * 1024 * 1024,
         ),
         name=scope_name,
     )
