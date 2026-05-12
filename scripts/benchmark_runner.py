@@ -320,16 +320,17 @@ def _load_trace(trace_root: str) -> dict:
     return combined
 
 
-def _extract_device_durations_ms(trace: dict) -> list[float]:
+def _extract_device_durations_ms(trace: dict, num_runs: int | None = None) -> list[float]:
     """Extract per-iteration device durations (ms) from a profiler trace.
 
-    Finds events with device_duration_ps (set by the TPU runtime), groups
-    by pid (one pid per chip), and returns durations from the chip with the
-    most events.
+    Finds events with device_duration_ps > 0 (set by the TPU runtime),
+    groups by pid, and returns durations from the chip with the most events.
+    When multiple device events fire per dispatch (e.g. 2 TensorCores per
+    chip), groups them into *num_runs* buckets and takes the max of each.
     """
     device_events = [
         e for e in trace.get("traceEvents", [])
-        if e.get("args", {}).get("device_duration_ps")
+        if float(e.get("args", {}).get("device_duration_ps", 0)) > 0
     ]
     if not device_events:
         return []
@@ -345,7 +346,16 @@ def _extract_device_durations_ms(trace: dict) -> list[float]:
 
     _, best_events = max(by_pid.items(), key=lambda kv: len(kv[1]))
     best_events.sort(key=lambda ev: float(ev.get("ts", 0.0)))
-    return [float(e["args"]["device_duration_ps"]) / 1e9 for e in best_events]
+    durations = [float(e["args"]["device_duration_ps"]) / 1e9 for e in best_events]
+
+    if num_runs and len(durations) > num_runs:
+        stride = len(durations) // num_runs
+        grouped = []
+        for i in range(0, len(durations), stride):
+            grouped.append(max(durations[i:i + stride]))
+        return grouped[:num_runs]
+
+    return durations
 
 
 def _timed_runs(run_fn, num_runs: int, trace_root: str = "/tmp/strix_bench_trace") -> list[float]:
@@ -361,7 +371,7 @@ def _timed_runs(run_fn, num_runs: int, trace_root: str = "/tmp/strix_bench_trace
             out = run_fn()
             jax.block_until_ready(out)
 
-    durations_ms = _extract_device_durations_ms(_load_trace(trace_dir))
+    durations_ms = _extract_device_durations_ms(_load_trace(trace_dir), num_runs=num_runs)
     if not durations_ms:
         raise RuntimeError("No device durations found in profiler trace")
     return [d / 1000.0 for d in durations_ms]
