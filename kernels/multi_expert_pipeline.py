@@ -178,73 +178,68 @@ def _multi_expert_kernel(
     # -- Expert Loop (lax.fori_loop — single trace, no unroll) --
 
     def expert_body(e, x_slot):
-        def run_expert(xs):
-            """One expert iteration with static x_slot=xs."""
-            next_xs = 1 - xs
+        next_xs = 1 - x_slot
 
-            # First tile
-            wait_fetch_w1(0)
-            wait_fetch_w3(0)
-            compute_tile(xs, w_slot=0, is_first_tile=True)
+        # First tile
+        wait_fetch_w1(0)
+        wait_fetch_w3(0)
+        compute_tile(x_slot, w_slot=0, is_first_tile=True)
 
-            # Steady state: tiles [1, n_w - 1)
-            for tile in range(1, n_w - 1):
-                w_slot = tile % 2
-                next_w = 1 - w_slot
-                start_fetch_w1(next_w, e, tile + 1)
-                start_fetch_w3(next_w, e, tile + 1)
-                start_fetch_w2(next_w, e, tile + 1)
-                wait_fetch_w1(w_slot)
-                wait_fetch_w3(w_slot)
-                compute_tile(xs, w_slot, is_first_tile=False)
+        # Steady state: tiles [1, n_w - 1)
+        for tile in range(1, n_w - 1):
+            w_slot = tile % 2
+            next_w = 1 - w_slot
+            start_fetch_w1(next_w, e, tile + 1)
+            start_fetch_w3(next_w, e, tile + 1)
+            start_fetch_w2(next_w, e, tile + 1)
+            wait_fetch_w1(w_slot)
+            wait_fetch_w3(w_slot)
+            compute_tile(x_slot, w_slot, is_first_tile=False)
 
-            # Epilogue: last tile — prefetch next expert's first weight
-            # tile (slot 0) *before* the last compute to overlap DMA with
-            # the final tile's MXU work.  Tile 1 (slot 1) cannot move here
-            # because last_w == 1 and the compute still reads from that slot.
-            if n_w >= 2:
-                last_w = (n_w - 1) % 2
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_load_x(next_xs, e + 1, priority=1)
-                    start_fetch_w1(0, e + 1, 0)
-                    start_fetch_w3(0, e + 1, 0)
-                    start_fetch_w2(0, e + 1, 0)
-                wait_fetch_w1(last_w)
-                wait_fetch_w3(last_w)
-                compute_tile(xs, last_w, is_first_tile=False)
-
-            # Expert boundary: double-buffered writeback.
-            # Wait for the previous user of this y_slot (expert e-2).
-            @pl.when(e >= 2)
-            def _():
-                wait_writeback(xs)
-
-            b_y_out_vmem.at[xs][...] = b_y_acc_vmem[...].astype(
-                b_y_out_vmem.dtype
-            )
-            start_writeback(e, xs)
-
+        # Epilogue: last tile — prefetch next expert's first weight
+        # tile (slot 0) *before* the last compute to overlap DMA with
+        # the final tile's MXU work.  Tile 1 (slot 1) cannot move here
+        # because last_w == 1 and the compute still reads from that slot.
+        if n_w >= 2:
+            last_w = (n_w - 1) % 2
             @pl.when(e < num_experts - 1)
             def _():
-                if n_w >= 2:
-                    start_fetch_w1(1, e + 1, 1)
-                    start_fetch_w3(1, e + 1, 1)
-                    start_fetch_w2(1, e + 1, 1)
+                start_load_x(next_xs, e + 1, priority=1)
+                start_fetch_w1(0, e + 1, 0)
+                start_fetch_w3(0, e + 1, 0)
+                start_fetch_w2(0, e + 1, 0)
+            wait_fetch_w1(last_w)
+            wait_fetch_w3(last_w)
+            compute_tile(x_slot, last_w, is_first_tile=False)
 
-            # No wait_writeback — DMA overlaps with next expert compute.
+        # Expert boundary: double-buffered writeback.
+        # Wait for the previous user of this y_slot (expert e-2).
+        @pl.when(e >= 2)
+        def _():
+            wait_writeback(x_slot)
 
-            @pl.when(e < num_experts - 1)
-            def _():
-                wait_load_x(next_xs)
-
-            return jnp.int32(next_xs)
-
-        return lax.cond(
-            x_slot == 0,
-            lambda: run_expert(0),
-            lambda: run_expert(1),
+        # fp32 → bf16 via bitcast truncation (upper 16 bits of fp32 ≈ bf16).
+        acc_u32 = pltpu.bitcast(b_y_acc_vmem[...], jnp.uint32)
+        acc_bf16 = pltpu.bitcast(
+            (acc_u32 >> 16).astype(jnp.uint16), jnp.bfloat16
         )
+        b_y_out_vmem[x_slot] = acc_bf16
+        start_writeback(e, x_slot)
+
+        @pl.when(e < num_experts - 1)
+        def _():
+            if n_w >= 2:
+                start_fetch_w1(1, e + 1, 1)
+                start_fetch_w3(1, e + 1, 1)
+                start_fetch_w2(1, e + 1, 1)
+
+        # No wait_writeback — DMA overlaps with next expert compute.
+
+        @pl.when(e < num_experts - 1)
+        def _():
+            wait_load_x(next_xs)
+
+        return next_xs
 
     lax.fori_loop(0, num_experts, expert_body, jnp.int32(0), unroll=False)
 
