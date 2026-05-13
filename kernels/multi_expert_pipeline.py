@@ -206,7 +206,7 @@ def _multi_expert_kernel(
                 last_w = (n_w - 1) % 2
                 @pl.when(e < num_experts - 1)
                 def _():
-                    start_load_x(next_xs, e + 1, priority=0)
+                    start_load_x(next_xs, e + 1, priority=1)
                     start_fetch_w1(0, e + 1, 0)
                     start_fetch_w3(0, e + 1, 0)
                     start_fetch_w2(0, e + 1, 0)
