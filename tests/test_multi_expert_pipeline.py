@@ -135,3 +135,58 @@ class TestKernelFnSignature:
         }
         missing = required - params
         assert not missing, f"kernel_fn missing kwargs: {sorted(missing)}"
+
+
+class TestFp8Config:
+    @pytest.fixture(autouse=True)
+    def _extract_config(self):
+        source = KERNEL_FILE.read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "config":
+                        module = ast.Module(body=[node], type_ignores=[])
+                        ast.fix_missing_locations(module)
+                        code = compile(module, str(KERNEL_FILE), "exec")
+                        ns = {}
+                        exec(code, ns)
+                        self.config = ns["config"]
+                        return
+        pytest.fail("config not found")
+
+    def test_config_has_quant_block_k(self):
+        assert "quant_block_k" in self.config
+        assert self.config["quant_block_k"] == 128
+
+
+class TestFp8MultiExpertFfnSignature:
+    @pytest.fixture(autouse=True)
+    def _import_module(self):
+        import importlib
+        self.module = importlib.import_module("kernels.multi_expert_pipeline")
+
+    def test_multi_expert_ffn_accepts_scale_params(self):
+        sig = inspect.signature(self.module.multi_expert_ffn)
+        params = set(sig.parameters.keys())
+        for p in ("w1_scale", "w2_scale", "w3_scale", "quant_block_k"):
+            assert p in params, f"multi_expert_ffn missing param: {p}"
+
+    def test_kernel_fn_accepts_fp8_params(self):
+        sig = inspect.signature(self.module.kernel_fn)
+        params = set(sig.parameters.keys())
+        for p in ("quant_block_k",):
+            assert p in params, f"kernel_fn missing param: {p}"
+
+
+class TestFp8RefSignature:
+    @pytest.fixture(autouse=True)
+    def _import_module(self):
+        import importlib
+        self.module = importlib.import_module("kernels.multi_expert_pipeline")
+
+    def test_ref_accepts_scale_params(self):
+        sig = inspect.signature(self.module._ref_multi_expert_ffn)
+        params = set(sig.parameters.keys())
+        for p in ("w1_scale", "w2_scale", "w3_scale", "quant_block_k"):
+            assert p in params, f"_ref_multi_expert_ffn missing param: {p}"
