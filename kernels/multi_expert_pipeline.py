@@ -130,7 +130,7 @@ def _multi_expert_kernel(
                 ).start(priority=priority)
                 pltpu.make_async_copy(
                     src_ref=w1_scale_hbm.at[
-                        expert_idx, p, :, pl.ds(0, 1),
+                        expert_idx, p, :,
                         pl.ds(tile_idx * bf, bf),
                     ],
                     dst_ref=b_w1_scale_x2_vmem.at[slot, p],
@@ -170,7 +170,7 @@ def _multi_expert_kernel(
                 ).start(priority=priority)
                 pltpu.make_async_copy(
                     src_ref=w3_scale_hbm.at[
-                        expert_idx, p, :, pl.ds(0, 1),
+                        expert_idx, p, :,
                         pl.ds(tile_idx * bf, bf),
                     ],
                     dst_ref=b_w3_scale_x2_vmem.at[slot, p],
@@ -211,7 +211,7 @@ def _multi_expert_kernel(
                 ).start(priority=priority)
                 pltpu.make_async_copy(
                     src_ref=w2_scale_hbm.at[
-                        expert_idx, p, :, pl.ds(0, 1), :,
+                        expert_idx, p, :, :,
                     ],
                     dst_ref=b_w2_scale_x2_vmem.at[slot, p],
                     sem=weight_sems.at[slot, 2],
@@ -308,22 +308,19 @@ def _multi_expert_kernel(
                         )
 
                     # Scale: use the last sub-group's scale (megablox pattern)
+                    # Scalar index on sg dim collapses it; result is (bf,)
                     last_sg = bd1c_id * sg_per_dot + (sg_per_dot - 1)
                     s1 = b_w1_scale_x2_vmem.at[
-                        w_slot, p_id, last_sg, pl.ds(0, 1),
+                        w_slot, p_id, last_sg,
                         pl.ds(0, bf),
-                    ][...]  # (1, bf) f32
-                    gate = gate + dot_acc1 * jnp.broadcast_to(
-                        s1, dot_acc1.shape
-                    )
+                    ][...]  # (bf,) f32
+                    gate = gate + dot_acc1 * s1.reshape(1, bf)
 
                     s3 = b_w3_scale_x2_vmem.at[
-                        w_slot, p_id, last_sg, pl.ds(0, 1),
+                        w_slot, p_id, last_sg,
                         pl.ds(0, bf),
-                    ][...]  # (1, bf) f32
-                    up = up + dot_acc3 * jnp.broadcast_to(
-                        s3, dot_acc3.shape
-                    )
+                    ][...]  # (bf,) f32
+                    up = up + dot_acc3 * s3.reshape(1, bf)
 
             # ---- Global SiLU activation ----
             act = activation_fn(gate, up, act_fn)  # (bt, bf) f32
@@ -348,9 +345,9 @@ def _multi_expert_kernel(
                     # Offset into full w2_scale by tile position
                     sg2_abs = tile_idx * n_sg2_per_tp + sg_id
                     s = b_w2_scale_x2_vmem.at[
-                        w_slot, p_id, sg2_abs, pl.ds(0, 1), :,
-                    ][...]  # (1, d) f32
-                    s = s.reshape(1, d_k)
+                        w_slot, p_id, sg2_abs, :,
+                    ][...]  # (d,) f32
+                    partial = partial + d_val * s.reshape(1, d_k)
                     partial = partial + d_val * jnp.broadcast_to(
                         s, d_val.shape
                     )
@@ -597,9 +594,9 @@ def multi_expert_ffn(
         w1 = w1.reshape(n_exp, tp, d_per_tp, f_full)
         w3 = w3.reshape(n_exp, tp, d_per_tp, f_full)
         w2 = w2.reshape(n_exp, tp, f_per_tp, d)
-        w1_scale = w1_scale.reshape(n_exp, tp, n_sg_per_tp, 1, f_full)
-        w3_scale = w3_scale.reshape(n_exp, tp, n_sg_per_tp, 1, f_full)
-        w2_scale = w2_scale.reshape(n_exp, tp, f_per_tp // quant_block_k, 1, d)
+        w1_scale = w1_scale.reshape(n_exp, tp, n_sg_per_tp, f_full)
+        w3_scale = w3_scale.reshape(n_exp, tp, n_sg_per_tp, f_full)
+        w2_scale = w2_scale.reshape(n_exp, tp, f_per_tp // quant_block_k, d)
 
         # Pack tokens: bf16 (E, bt, d) → uint32 (E, bt, d//tp)
         # Weight layout is contiguous-split: w1[e, p, k, :] corresponds to
@@ -632,9 +629,9 @@ def multi_expert_ffn(
     if use_fp8:
         n_sg2_full = f_full // tp // quant_block_k
         scratch_shapes.extend([
-            pltpu.VMEM((2, tp, n_sg_per_tp, 1, bf), jnp.float32),
-            pltpu.VMEM((2, tp, n_sg_per_tp, 1, bf), jnp.float32),
-            pltpu.VMEM((2, tp, n_sg2_full, 1, d), jnp.float32),
+            pltpu.VMEM((2, tp, n_sg_per_tp, bf), jnp.float32),
+            pltpu.VMEM((2, tp, n_sg_per_tp, bf), jnp.float32),
+            pltpu.VMEM((2, tp, n_sg2_full, d), jnp.float32),
         ])
     scratch_shapes.extend([
         pltpu.VMEM((2, bt, d_per_tp), jnp.uint32)
