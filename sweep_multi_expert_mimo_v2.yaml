@@ -10,8 +10,8 @@
 # matches FP8:  bf16 (6144 × 256) × 2B = fp8 (6144 × 512) × 1B.
 # This also preserves n_w = 4 tiles, matching the real fp8 bf=512 config.
 #
-# EP layout: 4x8x1 = 32 chips = 64 devices.
-# Config says EP=32 → 384/32 = 12 experts per device.
+# EP layout: 2x2x1 = 4 chips = 8 devices.
+# EP=8 → 384/8 = 48 experts per device.
 # Sweep: [1, 4, 8, 12, 16, 24, 48] experts.
 #
 # Shape encoding (metadata): num_tokens,hidden_size,intermediate_size
@@ -25,7 +25,7 @@
 kernel: kernels.multi_expert_pipeline
 shape: "256,6144,1024"
 tpu_type: v7x
-tpu_topology: 4x8x1
+tpu_topology: 2x2x1
 no_ir_dump: true
 runner_script: scripts/sweep_multi_expert_device.py
 runner_args: "--profile mimo-v2"
