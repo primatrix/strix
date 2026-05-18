@@ -290,7 +290,7 @@ def _multi_expert_kernel(
 
                     for sg_sub in range(sg_per_dot):
                         sg_off = bd1c_off + sg_sub * quant_block_k
-                        t_slice = t_bf16[:, pl.ds(sg_off, quant_block_k)]
+                        t_slice = t_bf16[:, sg_off:sg_off + quant_block_k]
 
                         w1_tile = b_w1_x2_vmem[
                             w_slot, p_id,
@@ -340,7 +340,7 @@ def _multi_expert_kernel(
             for p_id in range(tp):
                 for sg_id in range(n_sg2_per_tp):
                     sg_off_act = p_id * bf_per_tp + sg_id * quant_block_k
-                    act_slice = act[:, pl.ds(sg_off_act, quant_block_k)]
+                    act_slice = act[:, sg_off_act:sg_off_act + quant_block_k]
 
                     w2_tile = b_w2_x2_vmem[
                         w_slot, p_id,
