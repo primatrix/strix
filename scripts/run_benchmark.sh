@@ -28,6 +28,7 @@ TOTAL_BYTES=""
 NO_IR_DUMP=""
 PROFILE=""
 RUNNER_SCRIPT=""
+RUNNER_ARGS=""
 JOB_TIMEOUT=${JOB_TIMEOUT:-7200}
 
 # ---- Usage ----
@@ -54,6 +55,7 @@ Options:
   --no-ir-dump         Disable HLO/LLO/Mosaic IR dump
   --profile            Capture JAX profiler trace
   --runner-script <p>  Use custom runner script instead of benchmark_runner.py
+  --runner-args <a>    Extra arguments to pass to the runner script
   -h, --help           Show this help
 EOF
   exit 1
@@ -131,6 +133,10 @@ while [[ $# -gt 0 ]]; do
       RUNNER_SCRIPT="${2:?--runner-script requires a value}"
       shift 2
       ;;
+    --runner-args)
+      RUNNER_ARGS="${2:?--runner-args requires a value}"
+      shift 2
+      ;;
     -h|--help)
       usage
       ;;
@@ -157,6 +163,9 @@ if [[ -n "${RUNNER_SCRIPT}" ]]; then
   RUNNER_CMD="python ${RUNNER_SCRIPT}"
   if [[ -n "${NO_IR_DUMP}" ]]; then
     RUNNER_CMD="${RUNNER_CMD} --no-ir-dump"
+  fi
+  if [[ -n "${RUNNER_ARGS}" ]]; then
+    RUNNER_CMD="${RUNNER_CMD} ${RUNNER_ARGS}"
   fi
 elif [[ -n "${COMPILE_ONLY}" ]]; then
   TARGET_TOPOLOGY="${TARGET_TOPOLOGY:-2x8x8}"

@@ -1,8 +1,7 @@
 """Multi-expert double-buffer FFN pipeline — EP decode.
 
 Extends double_buffer_expert.py to process N experts sequentially on one
-device, with DMA overlap between adjacent experts. Hard-coded for
-d=8192, f=2048, bf16.
+device, with DMA overlap between adjacent experts.
 
 Spec: docs/superpowers/specs/2026-05-12-multi-expert-pipeline-design.md
 """
@@ -20,9 +19,6 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from ._fused_moe_impl import activation_fn
-
-
-_ALLOWED_CONFIGS = {(256, 256), (512, 256)}
 
 
 config = {
@@ -273,14 +269,14 @@ def multi_expert_ffn(
         raise ValueError(
             f"tokens.shape[0]={n_exp} != num_experts={num_experts}"
         )
-    if d != 8192 or f_full != 2048:
+    if f_full % bf != 0:
         raise ValueError(
-            f"Kernel hard-coded for d=8192, f=2048; got d={d}, f={f_full}"
+            f"intermediate_size={f_full} must be divisible by bf={bf}"
         )
-    if (bt, bf) not in _ALLOWED_CONFIGS:
+    if f_full // bf < 2:
         raise ValueError(
-            f"Only (num_tokens, bf) in {sorted(_ALLOWED_CONFIGS)} supported; "
-            f"got (num_tokens={bt}, bf={bf})"
+            f"Need >= 2 weight tiles (intermediate_size/bf >= 2); "
+            f"got {f_full}/{bf}={f_full // bf}"
         )
     if w1.shape != (num_experts, d, f_full):
         raise ValueError(f"w1.shape={w1.shape} must be ({num_experts}, {d}, {f_full})")
