@@ -276,17 +276,12 @@ def _multi_expert_kernel(
                     x_b32.astype(jnp.int16), jnp.bfloat16
                 )  # (bt, d//tp) bf16
 
-                # Use lax.fori_loop for scale-group iteration (matching
-                # reference fused_moe v2 direct_scaled_dot pattern).
-                def _ffn1_sg_body(sg_id, carry):
-                    gate_acc, up_acc = carry
-                    sg_off = sg_id * quant_block_k
-
-                    t_slice = lax.dynamic_slice(
-                        t_bf16,
-                        (0, sg_off),
-                        (bt_k, quant_block_k),
-                    )
+                # Per-scale-group loop (matching reference fused_moe v2
+                # direct_scaled_dot access pattern: pl.ds(sg, 1), 0,
+                # pl.ds(0, bf) on scale refs with singleton dim).
+                for sg in range(n_sg_per_tp):
+                    sg_off = sg * quant_block_k
+                    t_slice = t_bf16[:, sg_off:sg_off + quant_block_k]
 
                     w1_tile = b_w1_x2_vmem[
                         w_slot, p_id,
@@ -299,11 +294,9 @@ def _multi_expert_kernel(
                     )
                     s1 = b_w1_scale_x2_vmem[
                         w_slot, p_id,
-                        pl.ds(sg_id, 1), 0, pl.ds(0, bf),
+                        pl.ds(sg, 1), 0, pl.ds(0, bf),
                     ].reshape(1, bf)
-                    gate_acc = gate_acc + d1 * jnp.broadcast_to(
-                        s1, d1.shape
-                    )
+                    gate = gate + d1 * jnp.broadcast_to(s1, d1.shape)
 
                     w3_tile = b_w3_x2_vmem[
                         w_slot, p_id,
@@ -316,17 +309,9 @@ def _multi_expert_kernel(
                     )
                     s3 = b_w3_scale_x2_vmem[
                         w_slot, p_id,
-                        pl.ds(sg_id, 1), 0, pl.ds(0, bf),
+                        pl.ds(sg, 1), 0, pl.ds(0, bf),
                     ].reshape(1, bf)
-                    up_acc = up_acc + d3 * jnp.broadcast_to(
-                        s3, d3.shape
-                    )
-                    return gate_acc, up_acc
-
-                gate, up = lax.fori_loop(
-                    0, n_sg_per_tp, _ffn1_sg_body, (gate, up),
-                    unroll=n_sg_per_tp,
-                )
+                    up = up + d3 * jnp.broadcast_to(s3, d3.shape)
 
             # ---- Global SiLU activation ----
             act = activation_fn(gate, up, act_fn)  # (bt, bf) f32
@@ -336,13 +321,9 @@ def _multi_expert_kernel(
             partial = jnp.zeros((bt_k, d_k), dtype=jnp.float32)
 
             for p_id in range(tp):
-                def _ffn2_sg_body(sg_id, partial_acc):
+                for sg_id in range(n_sg2_per_tp):
                     sg_off_act = p_id * bf_per_tp + sg_id * quant_block_k
-                    act_slice = lax.dynamic_slice(
-                        act,
-                        (0, sg_off_act),
-                        (bt_k, quant_block_k),
-                    )
+                    act_slice = act[:, sg_off_act:sg_off_act + quant_block_k]
 
                     w2_tile = b_w2_x2_vmem[
                         w_slot, p_id,
@@ -358,14 +339,9 @@ def _multi_expert_kernel(
                         w_slot, p_id,
                         pl.ds(sg2_abs, 1), 0, :,
                     ].reshape(1, d_k)
-                    return partial_acc + d_val * jnp.broadcast_to(
+                    partial = partial + d_val * jnp.broadcast_to(
                         s, d_val.shape
                     )
-
-                partial = lax.fori_loop(
-                    0, n_sg2_per_tp, _ffn2_sg_body, partial,
-                    unroll=n_sg2_per_tp,
-                )
 
         else:
             # bf16 path — unchanged from original
