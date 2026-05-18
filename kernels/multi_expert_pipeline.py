@@ -314,13 +314,13 @@ def _multi_expert_kernel(
                         w_slot, p_id, last_sg,
                         pl.ds(0, bf),
                     ][...]  # (bf,) f32
-                    gate = gate + dot_acc1 * s1.reshape(1, bf)
+                    gate = gate + dot_acc1 * s1
 
                     s3 = b_w3_scale_x2_vmem.at[
                         w_slot, p_id, last_sg,
                         pl.ds(0, bf),
                     ][...]  # (bf,) f32
-                    up = up + dot_acc3 * s3.reshape(1, bf)
+                    up = up + dot_acc3 * s3
 
             # ---- Global SiLU activation ----
             act = activation_fn(gate, up, act_fn)  # (bt, bf) f32
@@ -347,7 +347,7 @@ def _multi_expert_kernel(
                     s = b_w2_scale_x2_vmem.at[
                         w_slot, p_id, sg2_abs, :,
                     ][...]  # (d,) f32
-                    partial = partial + d_val * s.reshape(1, d_k)
+                    partial = partial + d_val * s
                     partial = partial + d_val * jnp.broadcast_to(
                         s, d_val.shape
                     )

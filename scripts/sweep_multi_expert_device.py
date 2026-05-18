@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""Sweep num_experts with device-level timing via JAX profiler trace.
-
-Supports configurable shapes for different model profiles.
-
-Usage:
-  python scripts/sweep_multi_expert_device.py                    # Ling 2.6 defaults
-  python scripts/sweep_multi_expert_device.py --profile mimo-v2  # MiMo V2 fp8-approx
-  python scripts/sweep_multi_expert_device.py --hidden-size 6144 --intermediate-size 1024
-"""
+"""Sweep num_experts with device-level timing via JAX profiler trace."""
 import argparse
 import os
 import sys
+
+os.environ["JAX_TRACEBACK_FILTERING"] = "off"
 
 cwd = os.getcwd()
 if cwd not in sys.path:
