@@ -217,8 +217,7 @@ def _multi_expert_kernel(
             gate = jnp.zeros((bt_k, bf), dtype=jnp.float32)
             up = jnp.zeros_like(gate)
 
-            def _ffn1_sg_body(sg_id, carry):
-                gate_acc, up_acc = carry
+            for sg_id in range(n_sg):
                 sg_off = sg_id * quant_block_k
                 x_slice = x[:, pl.ds(sg_off, quant_block_k)]
 
@@ -232,7 +231,7 @@ def _multi_expert_kernel(
                 s1 = b_w1_scale_x2_vmem[
                     w_slot, pl.ds(sg_id, 1), 0, pl.ds(0, bf)
                 ].reshape(1, bf)
-                gate_acc = gate_acc + d1 * jnp.broadcast_to(s1, d1.shape)
+                gate = gate + d1 * jnp.broadcast_to(s1, d1.shape)
 
                 w3_tile = b_w3_x2_vmem[
                     w_slot, pl.ds(sg_off, quant_block_k), pl.ds(0, bf)
@@ -244,13 +243,7 @@ def _multi_expert_kernel(
                 s3 = b_w3_scale_x2_vmem[
                     w_slot, pl.ds(sg_id, 1), 0, pl.ds(0, bf)
                 ].reshape(1, bf)
-                up_acc = up_acc + d3 * jnp.broadcast_to(s3, d3.shape)
-
-                return gate_acc, up_acc
-
-            gate, up = lax.fori_loop(
-                0, n_sg, _ffn1_sg_body, (gate, up), unroll=n_sg,
-            )
+                up = up + d3 * jnp.broadcast_to(s3, d3.shape)
             b_gate_acc_vmem[...] = gate
             b_up_acc_vmem[...] = up
 
@@ -261,7 +254,8 @@ def _multi_expert_kernel(
             # act is applied per (bt, qbk) slice before the W2 dot.
             d_out = x.shape[1]  # hidden_size
 
-            def _ffn2_sg_body(sg_id, partial_acc):
+            partial = jnp.zeros((bt_k, d_out), dtype=jnp.float32)
+            for sg_id in range(n_sg2):
                 sg_off = sg_id * quant_block_k
                 gate_slice = b_gate_acc_vmem[
                     :, pl.ds(sg_off, quant_block_k)
@@ -281,13 +275,7 @@ def _multi_expert_kernel(
                 s = b_w2_scale_x2_vmem[
                     w_slot, pl.ds(sg_id, 1), 0, :
                 ].reshape(1, d_out)
-                return partial_acc + d * jnp.broadcast_to(s, d.shape)
-
-            partial = lax.fori_loop(
-                0, n_sg2, _ffn2_sg_body,
-                jnp.zeros((bt_k, d_out), dtype=jnp.float32),
-                unroll=n_sg2,
-            )
+                partial = partial + d * jnp.broadcast_to(s, d.shape)
         else:
             # bf16 path — unchanged from original
             w1 = b_w1_x2_vmem[w_slot]
