@@ -308,19 +308,21 @@ def _multi_expert_kernel(
                         )
 
                     # Scale: use the last sub-group's scale (megablox pattern)
+                    # Load all scale groups then index — avoids pl.ds(sg, 1)
+                    # which creates a size-1 slice that Mosaic can't tile.
                     last_sg = bd1c_id * sg_per_dot + (sg_per_dot - 1)
-                    s1 = b_w1_scale_x2_vmem[
-                        w_slot, p_id, pl.ds(last_sg, 1),
-                        pl.ds(0, bf),
-                    ].reshape(1, bf)
+                    s1_all = b_w1_scale_x2_vmem[
+                        w_slot, p_id, :, pl.ds(0, bf),
+                    ]  # (n_sg_per_tp, bf)
+                    s1 = s1_all[last_sg:last_sg + 1, :]  # (1, bf) — numpy slicing
                     gate = gate + dot_acc1 * jnp.broadcast_to(
                         s1, dot_acc1.shape
                     )
 
-                    s3 = b_w3_scale_x2_vmem[
-                        w_slot, p_id, pl.ds(last_sg, 1),
-                        pl.ds(0, bf),
-                    ].reshape(1, bf)
+                    s3_all = b_w3_scale_x2_vmem[
+                        w_slot, p_id, :, pl.ds(0, bf),
+                    ]  # (n_sg_per_tp, bf)
+                    s3 = s3_all[last_sg:last_sg + 1, :]  # (1, bf)
                     up = up + dot_acc3 * jnp.broadcast_to(
                         s3, dot_acc3.shape
                     )
@@ -347,9 +349,11 @@ def _multi_expert_kernel(
                     )
                     # Offset into full w2_scale by tile position
                     sg2_abs = tile_idx * n_sg2_per_tp + sg_id
-                    s = b_w2_scale_x2_vmem[
-                        w_slot, p_id, pl.ds(sg2_abs, 1), :,
-                    ].reshape(1, d_k)
+                    s_all = b_w2_scale_x2_vmem[
+                        w_slot, p_id, :, :,
+                    ]  # (n_sg2_full, d)
+                    s = s_all[sg2_abs:sg2_abs + 1, :]  # (1, d)
+                    s = s.reshape(1, d_k)
                     partial = partial + d_val * jnp.broadcast_to(
                         s, d_val.shape
                     )
