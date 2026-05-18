@@ -39,6 +39,13 @@ PROFILES = {
         hidden_size=6144, intermediate_size=1024, bf=256,
         experts=[1, 4, 8, 12, 16, 24, 48],
     ),
+    "mimo-v2-fp8": dict(
+        # Real FP8: d=6144, f=2048, float8_e4m3fn weights with per-block
+        # f32 scales.  bf=512 (real tile size), n_w=4 tiles per expert.
+        hidden_size=6144, intermediate_size=2048, bf=512,
+        weight_dtype="float8_e4m3fn", quant_block_k=128,
+        experts=[1, 4, 8, 12, 16, 24, 48],
+    ),
 }
 
 
@@ -58,12 +65,15 @@ def main():
     f = args.intermediate_size or defaults["intermediate_size"]
     bf = args.bf or defaults["bf"]
     bt = args.num_tokens
+    weight_dtype_str = defaults.get("weight_dtype", "bfloat16")
+    weight_dtype = jnp.float8_e4m3fn if weight_dtype_str == "float8_e4m3fn" else jnp.bfloat16
+    qbk = defaults.get("quant_block_k", 128)
     expert_counts = (
         [int(x) for x in args.experts.split(",")]
         if args.experts else defaults["experts"]
     )
 
-    print(f"Config: d={d}, f={f}, bf={bf}, bt={bt}")
+    print(f"Config: d={d}, f={f}, bf={bf}, bt={bt}, weight_dtype={weight_dtype_str}")
     print(f"{'experts':>8} {'median_ms':>10} {'mean_ms':>10} {'min_ms':>10} "
           f"{'max_ms':>10} {'stdev_ms':>10} {'per_expert_us':>14}")
     print("-" * 84)
@@ -72,6 +82,7 @@ def main():
         run = kernel_fn(
             num_experts=ne, num_tokens=bt,
             hidden_size=d, intermediate_size=f, bf=bf,
+            weight_dtype=weight_dtype, quant_block_k=qbk,
         )
         for _ in range(NUM_WARMUP):
             run().block_until_ready()
