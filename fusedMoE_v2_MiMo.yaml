@@ -1,0 +1,40 @@
+# MiMo V2 Pro — Fused MoE v2 Decode Profile Config
+# ==================================================
+# Model: MiMo V2 Pro (Xiaomi MiMo-MoE)
+# Stage: Decode (autoregressive)
+# Batch size: 256 → num_tokens=256
+#
+# MoE Architecture:
+#   Routed experts:        384
+#   Active experts/token:  8 (top_k=8)
+#   Shared expert:         none
+#   Hidden size:           6144
+#   Expert intermediate:   2048
+#   Activation:            SwiGLU (silu)
+#   Precision:             BF16 activations, FP8 e4m3 weights (quant_block_k=128)
+#   Expert parallelism:    32 devices (4x8x1 TPU v7x)
+#
+# v2 kernel features:
+#   - Strix-style weight streaming: tile along intermediate dim (bf)
+#   - Persistent tokens in VMEM, double-buffer W1/W3/W2
+#   - Deferred W2 wait (overlaps W2 DMA with gate/up MXU compute)
+#   - direct_scaled_dot: fp8 dot per quant group, scale after dot
+#   - Cross-expert bf0 prefetch
+#
+# Shape encoding (metadata): num_tokens,num_experts,top_k,hidden_size,intermediate_size
+# → decode @ bs=256: "256,384,8,6144,2048"
+
+kernel: kernels.fused_moe_v2
+shape: "256,384,8,6144,2048"
+tpu_type: v7x
+tpu_topology: 4x8x1
+
+# Tuned block configs (TPU v7, fp8 direct_scaled_dot, ep=32):
+#   tokens=64:    bt=8,  bf=512,  btc=8,   bse=256, bts=8
+#   tokens=128:   bt=8,  bf=512,  btc=8,   bse=256, bts=8
+#   tokens=256:   bt=8,  bf=512,  btc=16,  bse=256, bts=16
+#   tokens=512:   bt=16, bf=512,  btc=16,  bse=256, bts=16
+#   tokens=2048:  bt=128,bf=512,  btc=128, bse=256, bts=auto
+#   tokens=4096:  bt=128,bf=512,  btc=128, bse=256, bts=auto
+#   tokens=8192:  bt=256,bf=1024, btc=128, bse=256, bts=256
+#   tokens=16384: bt=256,bf=1024, btc=128, bse=256, bts=256
