@@ -497,10 +497,10 @@ def multi_expert_ffn(
 
     scope_name = f"multi-expert-bt{bt}-bf{bf}-e{num_experts}"
     hbm = pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM)
-    in_specs = [hbm, hbm, hbm, hbm,
-                hbm if use_fp8 else None,
-                hbm if use_fp8 else None,
-                hbm if use_fp8 else None]
+    if use_fp8:
+        in_specs = [hbm, hbm, hbm, hbm, hbm, hbm, hbm]
+    else:
+        in_specs = [hbm, hbm, hbm, hbm]
 
     kernel = pl.pallas_call(
         functools.partial(
