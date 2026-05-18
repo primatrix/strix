@@ -590,17 +590,18 @@ def multi_expert_ffn(
             raise ValueError(f"bd1c={bd1c} must be divisible by t_packing={tp}")
 
         d_per_tp = d // tp
+        f_per_tp = f_full // tp
         n_sg_per_tp = d_per_tp // quant_block_k
         bf_per_tp = bf // tp
-        n_sg2_per_tp = bf_per_tp // quant_block_k
+        n_sg2_per_tp = bf_per_tp // quant_block_k  # per-tile scale groups for w2
 
         # Reshape weights and scales to t_packing layout
         w1 = w1.reshape(n_exp, tp, d_per_tp, f_full)
         w3 = w3.reshape(n_exp, tp, d_per_tp, f_full)
-        w2 = w2.reshape(n_exp, tp, bf_per_tp, d)
+        w2 = w2.reshape(n_exp, tp, f_per_tp, d)
         w1_scale = w1_scale.reshape(n_exp, tp, n_sg_per_tp, 1, f_full)
         w3_scale = w3_scale.reshape(n_exp, tp, n_sg_per_tp, 1, f_full)
-        w2_scale = w2_scale.reshape(n_exp, tp, n_sg2_per_tp, 1, d)
+        w2_scale = w2_scale.reshape(n_exp, tp, f_per_tp // quant_block_k, 1, d)
 
         # Pack tokens: bf16 (bt, d) → uint32 (bt, d//tp) via view
         tokens = tokens.reshape(n_exp, bt, tp, d_per_tp)
