@@ -4,8 +4,14 @@ Extends double_buffer_expert.py to process N experts sequentially on one
 device, with DMA overlap between adjacent experts.
 
 Supports both bf16 and fp8 (float8_e4m3fn) weights.  When fp8 scales are
-provided, uses a direct-scaled-dot path: per-scale-group fp8 matmul with
-post-multiply f32 scale, matching the v2 fused MoE pattern.
+provided, uses a t_packing-aligned layout: tokens are bitcast to uint32
+(packing 2 bf16 per word), weights and scales carry a leading t_packing
+dimension, and the inner loop processes one sub-word stripe at a time.
+
+The `bd1c` parameter controls the contracting dimension per compute tile:
+  bd1c = quant_block_k (128): exact per-block scaling, 48 dots/tile
+  bd1c = 256: accumulate 2 scale groups per dot, 24 dots/tile
+  bd1c = 512: accumulate 4 scale groups per dot, 12 dots/tile
 
 Spec: docs/superpowers/specs/2026-05-18-fused-moe-v3-design.md
 """
@@ -45,6 +51,10 @@ config = {
     ),
 }
 
+# t_packing for bf16 tokens: 2 bf16 values per 32-bit VREG word
+T_PACKING = 2
+T_BITWIDTH = 16
+
 
 def _multi_expert_kernel(
     # HBM inputs
@@ -67,8 +77,6 @@ def _multi_expert_kernel(
     b_x_x2_vmem,
     b_y_acc_vmem,
     b_y_out_vmem,
-    b_gate_acc_vmem,     # None when bf16
-    b_up_acc_vmem,       # None when bf16
     weight_sems,
     x_sem,
     y_out_sem,
@@ -78,13 +86,21 @@ def _multi_expert_kernel(
     intermediate_size: int,
     num_experts: int,
     quant_block_k: int | None,
+    bd1c: int | None,
 ):
     """Pallas kernel body — multi-expert pipeline."""
     n_w = intermediate_size // bf
     use_fp8 = w1_scale_hbm is not None
+
     if use_fp8:
-        n_sg = b_w1_scale_x2_vmem.shape[1]   # d // quant_block_k
-        n_sg2 = b_w2_scale_x2_vmem.shape[1]  # bf // quant_block_k
+        tp = T_PACKING
+        d_per_tp = b_x_x2_vmem.shape[2]  # uint32 units = d // tp
+        bd1c_per_tp = bd1c // tp
+        n_bd1c_per_tp = d_per_tp // bd1c_per_tp
+        sg_per_dot = bd1c_per_tp // quant_block_k
+        n_sg_per_tp = b_w1_scale_x2_vmem.shape[2]  # d_per_tp // qbk
+        bf_per_tp = bf // tp
+        n_sg2_per_tp = b_w2_scale_x2_vmem.shape[2]  # bf_per_tp // qbk
 
     # -- DMA helpers --
 
@@ -103,17 +119,29 @@ def _multi_expert_kernel(
         ).wait()
 
     def start_fetch_w1(slot, expert_idx, tile_idx, priority=1):
-        pltpu.make_async_copy(
-            src_ref=w1_hbm.at[expert_idx, :, pl.ds(tile_idx * bf, bf)],
-            dst_ref=b_w1_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 0],
-        ).start(priority=priority)
         if use_fp8:
+            for p in range(tp):
+                pltpu.make_async_copy(
+                    src_ref=w1_hbm.at[
+                        expert_idx, p, :, pl.ds(tile_idx * bf, bf)
+                    ],
+                    dst_ref=b_w1_x2_vmem.at[slot, p],
+                    sem=weight_sems.at[slot, 0],
+                ).start(priority=priority)
+                pltpu.make_async_copy(
+                    src_ref=w1_scale_hbm.at[
+                        expert_idx, p, :, pl.ds(0, 1),
+                        pl.ds(tile_idx * bf, bf),
+                    ],
+                    dst_ref=b_w1_scale_x2_vmem.at[slot, p],
+                    sem=weight_sems.at[slot, 0],
+                ).start(priority=priority)
+        else:
             pltpu.make_async_copy(
-                src_ref=w1_scale_hbm.at[
-                    expert_idx, :, pl.ds(0, 1), pl.ds(tile_idx * bf, bf)
+                src_ref=w1_hbm.at[
+                    expert_idx, :, pl.ds(tile_idx * bf, bf)
                 ],
-                dst_ref=b_w1_scale_x2_vmem.at[slot],
+                dst_ref=b_w1_x2_vmem.at[slot],
                 sem=weight_sems.at[slot, 0],
             ).start(priority=priority)
 
@@ -131,17 +159,29 @@ def _multi_expert_kernel(
             ).wait()
 
     def start_fetch_w3(slot, expert_idx, tile_idx, priority=1):
-        pltpu.make_async_copy(
-            src_ref=w3_hbm.at[expert_idx, :, pl.ds(tile_idx * bf, bf)],
-            dst_ref=b_w3_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 1],
-        ).start(priority=priority)
         if use_fp8:
+            for p in range(tp):
+                pltpu.make_async_copy(
+                    src_ref=w3_hbm.at[
+                        expert_idx, p, :, pl.ds(tile_idx * bf, bf)
+                    ],
+                    dst_ref=b_w3_x2_vmem.at[slot, p],
+                    sem=weight_sems.at[slot, 1],
+                ).start(priority=priority)
+                pltpu.make_async_copy(
+                    src_ref=w3_scale_hbm.at[
+                        expert_idx, p, :, pl.ds(0, 1),
+                        pl.ds(tile_idx * bf, bf),
+                    ],
+                    dst_ref=b_w3_scale_x2_vmem.at[slot, p],
+                    sem=weight_sems.at[slot, 1],
+                ).start(priority=priority)
+        else:
             pltpu.make_async_copy(
-                src_ref=w3_scale_hbm.at[
-                    expert_idx, :, pl.ds(0, 1), pl.ds(tile_idx * bf, bf)
+                src_ref=w3_hbm.at[
+                    expert_idx, :, pl.ds(tile_idx * bf, bf)
                 ],
-                dst_ref=b_w3_scale_x2_vmem.at[slot],
+                dst_ref=b_w3_x2_vmem.at[slot],
                 sem=weight_sems.at[slot, 1],
             ).start(priority=priority)
 
@@ -159,23 +199,34 @@ def _multi_expert_kernel(
             ).wait()
 
     def start_fetch_w2(slot, expert_idx, tile_idx, priority=0):
-        pltpu.make_async_copy(
-            src_ref=w2_hbm.at[expert_idx, pl.ds(tile_idx * bf, bf), :],
-            dst_ref=b_w2_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 2],
-        ).start(priority=priority)
         if use_fp8:
+            for p in range(tp):
+                pltpu.make_async_copy(
+                    src_ref=w2_hbm.at[
+                        expert_idx, p,
+                        pl.ds(tile_idx * bf_per_tp, bf_per_tp), :,
+                    ],
+                    dst_ref=b_w2_x2_vmem.at[slot, p],
+                    sem=weight_sems.at[slot, 2],
+                ).start(priority=priority)
+                pltpu.make_async_copy(
+                    src_ref=w2_scale_hbm.at[
+                        expert_idx, p,
+                        pl.ds(
+                            tile_idx * bf_per_tp // quant_block_k,
+                            bf_per_tp // quant_block_k,
+                        ),
+                        pl.ds(0, 1), :,
+                    ],
+                    dst_ref=b_w2_scale_x2_vmem.at[slot, p],
+                    sem=weight_sems.at[slot, 2],
+                ).start(priority=priority)
+        else:
             pltpu.make_async_copy(
-                src_ref=w2_scale_hbm.at[
-                    expert_idx,
-                    pl.ds(
-                        tile_idx * bf // quant_block_k,
-                        bf // quant_block_k,
-                    ),
-                    pl.ds(0, 1),
-                    :,
+                src_ref=w2_hbm.at[
+                    expert_idx, pl.ds(tile_idx * bf, bf), :
                 ],
-                dst_ref=b_w2_scale_x2_vmem.at[slot],
+                dst_ref=b_w2_x2_vmem.at[slot],
                 sem=weight_sems.at[slot, 2],
             ).start(priority=priority)
 
@@ -209,76 +260,103 @@ def _multi_expert_kernel(
     # -- Compute --
 
     def compute_tile(x_slot, w_slot, is_first_tile):
-        # b_x_x2_vmem shape: (2, bt, d)
         bt_k = b_x_x2_vmem.shape[1]
-        d_k = b_x_x2_vmem.shape[2]
 
         if use_fp8:
-            # FP8 direct scaled dot — combined gate+up over scale groups.
+            d_k = d_per_tp * tp  # full hidden_size
+
+            # ---- FFN1: gate + up ----
             gate = jnp.zeros((bt_k, bf), dtype=jnp.float32)
             up = jnp.zeros_like(gate)
 
-            for sg_id in range(n_sg):
-                sg_off = sg_id * quant_block_k
-                x_slice = b_x_x2_vmem.at[
-                    x_slot, pl.ds(0, bt_k), pl.ds(sg_off, quant_block_k)
-                ][...]
+            x_b32_full = b_x_x2_vmem.at[x_slot][...]  # (bt, d//tp) uint32
 
-                w1_tile = b_w1_x2_vmem[
-                    w_slot, pl.ds(sg_off, quant_block_k), pl.ds(0, bf)
-                ]
-                d1 = jnp.dot(
-                    x_slice, w1_tile,
-                    preferred_element_type=jnp.float32,
-                )
-                s1 = b_w1_scale_x2_vmem[
-                    w_slot, pl.ds(sg_id, 1), 0, pl.ds(0, bf)
-                ].reshape(1, bf)
-                gate = gate + d1 * jnp.broadcast_to(s1, d1.shape)
+            for p_id in range(tp):
+                # Extract bf16 sub-element from packed uint32
+                if p_id == 0:
+                    x_b32 = x_b32_full
+                else:
+                    x_b32 = x_b32_full >> (p_id * T_BITWIDTH)
+                t_bf16 = pltpu.bitcast(
+                    x_b32.astype(jnp.int16), jnp.bfloat16
+                )  # (bt, d//tp) bf16
 
-                w3_tile = b_w3_x2_vmem[
-                    w_slot, pl.ds(sg_off, quant_block_k), pl.ds(0, bf)
-                ]
-                d3 = jnp.dot(
-                    x_slice, w3_tile,
-                    preferred_element_type=jnp.float32,
-                )
-                s3 = b_w3_scale_x2_vmem[
-                    w_slot, pl.ds(sg_id, 1), 0, pl.ds(0, bf)
-                ].reshape(1, bf)
-                up = up + d3 * jnp.broadcast_to(s3, d3.shape)
-            b_gate_acc_vmem[...] = gate
-            b_up_acc_vmem[...] = up
+                for bd1c_id in range(n_bd1c_per_tp):
+                    bd1c_off = bd1c_id * bd1c_per_tp
 
-            # Wait for W2 (deferred — priority=0, overlap with gate/up MXU)
+                    # Accumulate across scale groups within compute tile
+                    dot_acc1 = jnp.zeros((bt_k, bf), dtype=jnp.float32)
+                    dot_acc3 = jnp.zeros_like(dot_acc1)
+
+                    for sg_sub in range(sg_per_dot):
+                        sg_off = bd1c_off + sg_sub * quant_block_k
+                        t_slice = t_bf16[:, pl.ds(sg_off, quant_block_k)]
+
+                        w1_tile = b_w1_x2_vmem[
+                            w_slot, p_id,
+                            pl.ds(sg_off, quant_block_k),
+                            pl.ds(0, bf),
+                        ]
+                        dot_acc1 = dot_acc1 + jnp.dot(
+                            t_slice, w1_tile,
+                            preferred_element_type=jnp.float32,
+                        )
+
+                        w3_tile = b_w3_x2_vmem[
+                            w_slot, p_id,
+                            pl.ds(sg_off, quant_block_k),
+                            pl.ds(0, bf),
+                        ]
+                        dot_acc3 = dot_acc3 + jnp.dot(
+                            t_slice, w3_tile,
+                            preferred_element_type=jnp.float32,
+                        )
+
+                    # Scale: use the last sub-group's scale (megablox pattern)
+                    last_sg = bd1c_id * sg_per_dot + (sg_per_dot - 1)
+                    s1 = b_w1_scale_x2_vmem[
+                        w_slot, p_id, pl.ds(last_sg, 1), 0,
+                        pl.ds(0, bf),
+                    ].reshape(1, bf)
+                    gate = gate + dot_acc1 * jnp.broadcast_to(
+                        s1, dot_acc1.shape
+                    )
+
+                    s3 = b_w3_scale_x2_vmem[
+                        w_slot, p_id, pl.ds(last_sg, 1), 0,
+                        pl.ds(0, bf),
+                    ].reshape(1, bf)
+                    up = up + dot_acc3 * jnp.broadcast_to(
+                        s3, dot_acc3.shape
+                    )
+
+            # ---- Global SiLU activation ----
+            act = activation_fn(gate, up, act_fn)  # (bt, bf) f32
+
+            # ---- FFN2: down projection ----
             wait_fetch_w2(w_slot)
+            partial = jnp.zeros((bt_k, d_k), dtype=jnp.float32)
 
-            # FFN2: per-scale-group activation + down-projection.
-            # act is applied per (bt, qbk) slice before the W2 dot.
-            d_out = d_k  # hidden_size
+            for p_id in range(tp):
+                for sg_id in range(n_sg2_per_tp):
+                    sg_off_act = p_id * bf_per_tp + sg_id * quant_block_k
+                    act_slice = act[:, pl.ds(sg_off_act, quant_block_k)]
 
-            partial = jnp.zeros((bt_k, d_out), dtype=jnp.float32)
-            for sg_id in range(n_sg2):
-                sg_off = sg_id * quant_block_k
-                gate_slice = b_gate_acc_vmem[
-                    :, pl.ds(sg_off, quant_block_k)
-                ]
-                up_slice = b_up_acc_vmem[
-                    :, pl.ds(sg_off, quant_block_k)
-                ]
-                act_slice = activation_fn(gate_slice, up_slice, act_fn)
+                    w2_tile = b_w2_x2_vmem[
+                        w_slot, p_id,
+                        pl.ds(sg_id * quant_block_k, quant_block_k), :,
+                    ]
+                    d_val = jnp.dot(
+                        act_slice, w2_tile,
+                        preferred_element_type=jnp.float32,
+                    )
+                    s = b_w2_scale_x2_vmem[
+                        w_slot, p_id, pl.ds(sg_id, 1), 0, :,
+                    ].reshape(1, d_k)
+                    partial = partial + d_val * jnp.broadcast_to(
+                        s, d_val.shape
+                    )
 
-                w2_tile = b_w2_x2_vmem[
-                    w_slot, pl.ds(sg_off, quant_block_k), :
-                ]
-                d = jnp.dot(
-                    act_slice, w2_tile,
-                    preferred_element_type=jnp.float32,
-                )
-                s = b_w2_scale_x2_vmem[
-                    w_slot, pl.ds(sg_id, 1), 0, :
-                ].reshape(1, d_out)
-                partial = partial + d * jnp.broadcast_to(s, d.shape)
         else:
             # bf16 path — unchanged from original
             x = b_x_x2_vmem[x_slot]
@@ -336,10 +414,7 @@ def _multi_expert_kernel(
             wait_fetch_w3(w_slot)
             compute_tile(x_slot, w_slot, is_first_tile=False)
 
-        # Epilogue: last tile — prefetch next expert's first weight
-        # tile (slot 0) *before* the last compute to overlap DMA with
-        # the final tile's MXU work.  Tile 1 (slot 1) cannot move here
-        # because last_w == 1 and the compute still reads from that slot.
+        # Epilogue: last tile
         if n_w >= 2:
             last_w = (n_w - 1) % 2
             @pl.when(e < num_experts - 1)
@@ -353,7 +428,6 @@ def _multi_expert_kernel(
             compute_tile(x_slot, last_w, is_first_tile=False)
 
         # Expert boundary: double-buffered writeback.
-        # Wait for the previous user of this y_slot (expert e-2).
         @pl.when(e >= 2)
         def _():
             wait_writeback(x_slot)
@@ -368,8 +442,6 @@ def _multi_expert_kernel(
                 start_fetch_w3(1, e + 1, 1)
                 start_fetch_w2(1, e + 1, 1)
 
-        # No wait_writeback — DMA overlaps with next expert compute.
-
         @pl.when(e < num_experts - 1)
         def _():
             wait_load_x(next_xs)
@@ -378,8 +450,7 @@ def _multi_expert_kernel(
 
     lax.fori_loop(0, num_experts, expert_body, jnp.int32(0), unroll=False)
 
-    # Drain outstanding writebacks.  With double-buffered output, up to
-    # two slots may have in-flight DMAs (the last two experts).
+    # Drain outstanding writebacks.
     last_y_slot = (num_experts - 1) % 2
     wait_writeback(last_y_slot)
     if num_experts >= 2:
@@ -393,9 +464,8 @@ def _multi_expert_kernel_fp8(
     b_w1_x2_vmem, b_w3_x2_vmem, b_w2_x2_vmem,
     b_w1_scale_x2_vmem, b_w3_scale_x2_vmem, b_w2_scale_x2_vmem,
     b_x_x2_vmem, b_y_acc_vmem, b_y_out_vmem,
-    b_gate_acc_vmem, b_up_acc_vmem,
     weight_sems, x_sem, y_out_sem,
-    *, act_fn, bf, intermediate_size, num_experts, quant_block_k,
+    *, act_fn, bf, intermediate_size, num_experts, quant_block_k, bd1c,
 ):
     _multi_expert_kernel(
         tokens_hbm, w1_hbm, w2_hbm, w3_hbm,
@@ -404,10 +474,9 @@ def _multi_expert_kernel_fp8(
         b_w1_x2_vmem, b_w3_x2_vmem, b_w2_x2_vmem,
         b_w1_scale_x2_vmem, b_w3_scale_x2_vmem, b_w2_scale_x2_vmem,
         b_x_x2_vmem, b_y_acc_vmem, b_y_out_vmem,
-        b_gate_acc_vmem, b_up_acc_vmem,
         weight_sems, x_sem, y_out_sem,
         act_fn=act_fn, bf=bf, intermediate_size=intermediate_size,
-        num_experts=num_experts, quant_block_k=quant_block_k,
+        num_experts=num_experts, quant_block_k=quant_block_k, bd1c=bd1c,
     )
 
 
@@ -417,7 +486,7 @@ def _multi_expert_kernel_bf16(
     b_w1_x2_vmem, b_w3_x2_vmem, b_w2_x2_vmem,
     b_x_x2_vmem, b_y_acc_vmem, b_y_out_vmem,
     weight_sems, x_sem, y_out_sem,
-    *, act_fn, bf, intermediate_size, num_experts, quant_block_k,
+    *, act_fn, bf, intermediate_size, num_experts, quant_block_k, bd1c,
 ):
     _multi_expert_kernel(
         tokens_hbm, w1_hbm, w2_hbm, w3_hbm,
@@ -426,16 +495,15 @@ def _multi_expert_kernel_bf16(
         b_w1_x2_vmem, b_w3_x2_vmem, b_w2_x2_vmem,
         None, None, None,
         b_x_x2_vmem, b_y_acc_vmem, b_y_out_vmem,
-        None, None,
         weight_sems, x_sem, y_out_sem,
         act_fn=act_fn, bf=bf, intermediate_size=intermediate_size,
-        num_experts=num_experts, quant_block_k=quant_block_k,
+        num_experts=num_experts, quant_block_k=quant_block_k, bd1c=bd1c,
     )
 
 
 @functools.partial(
     jax.jit,
-    static_argnames=["act_fn", "bf", "num_experts", "quant_block_k"],
+    static_argnames=["act_fn", "bf", "num_experts", "quant_block_k", "bd1c"],
 )
 def multi_expert_ffn(
     tokens: jax.Array,
@@ -450,6 +518,7 @@ def multi_expert_ffn(
     w2_scale: jax.Array | None = None,
     w3_scale: jax.Array | None = None,
     quant_block_k: int | None = None,
+    bd1c: int | None = None,
 ) -> jax.Array:
     """Run the multi-expert double-buffer FFN kernel.
 
@@ -486,12 +555,6 @@ def multi_expert_ffn(
             f"Need >= 2 weight tiles (intermediate_size/bf >= 2); "
             f"got {f_full}/{bf}={f_full // bf}"
         )
-    if w1.shape != (num_experts, d, f_full):
-        raise ValueError(f"w1.shape={w1.shape} must be ({num_experts}, {d}, {f_full})")
-    if w2.shape != (num_experts, f_full, d):
-        raise ValueError(f"w2.shape={w2.shape} must be ({num_experts}, {f_full}, {d})")
-    if w3.shape != (num_experts, d, f_full):
-        raise ValueError(f"w3.shape={w3.shape} must be ({num_experts}, {d}, {f_full})")
 
     use_fp8 = w1_scale is not None
     if use_fp8:
@@ -512,37 +575,69 @@ def multi_expert_ffn(
             raise ValueError(
                 f"bf={bf} must be divisible by quant_block_k={quant_block_k}"
             )
+        if bd1c is None:
+            bd1c = quant_block_k
+        if bd1c % quant_block_k != 0:
+            raise ValueError(
+                f"bd1c={bd1c} must be divisible by quant_block_k={quant_block_k}"
+            )
+        tp = T_PACKING
+        if d % tp != 0:
+            raise ValueError(f"hidden_size={d} must be divisible by t_packing={tp}")
+        if bf % tp != 0:
+            raise ValueError(f"bf={bf} must be divisible by t_packing={tp}")
+        if bd1c % tp != 0:
+            raise ValueError(f"bd1c={bd1c} must be divisible by t_packing={tp}")
 
-    dtype = tokens.dtype
+        d_per_tp = d // tp
+        n_sg_per_tp = d_per_tp // quant_block_k
+        bf_per_tp = bf // tp
+        n_sg2_per_tp = bf_per_tp // quant_block_k
+
+        # Reshape weights and scales to t_packing layout
+        w1 = w1.reshape(n_exp, tp, d_per_tp, f_full)
+        w3 = w3.reshape(n_exp, tp, d_per_tp, f_full)
+        w2 = w2.reshape(n_exp, tp, bf_per_tp, d)
+        w1_scale = w1_scale.reshape(n_exp, tp, n_sg_per_tp, 1, f_full)
+        w3_scale = w3_scale.reshape(n_exp, tp, n_sg_per_tp, 1, f_full)
+        w2_scale = w2_scale.reshape(n_exp, tp, n_sg2_per_tp, 1, d)
+
+        # Pack tokens: bf16 (bt, d) → uint32 (bt, d//tp) via view
+        tokens = tokens.reshape(n_exp, bt, tp, d_per_tp)
+        tokens_packed = jax.lax.bitcast_convert_type(
+            tokens, jnp.uint32
+        )  # (n_exp, bt, 1, d_per_tp) — tp bf16s merge into uint32
+        tokens_packed = tokens_packed.reshape(n_exp, bt, d_per_tp)
+
+    else:
+        if bd1c is None:
+            bd1c = 0  # unused for bf16
+
+    dtype = tokens.dtype if not use_fp8 else jnp.uint32
     weight_dtype = w1.dtype
-    n_sg = d // quant_block_k if use_fp8 else 0
-    n_sg2 = bf // quant_block_k if use_fp8 else 0
 
     scratch_shapes = [
-        pltpu.VMEM((2, d, bf), weight_dtype),         # b_w1_x2_vmem
-        pltpu.VMEM((2, d, bf), weight_dtype),          # b_w3_x2_vmem
-        pltpu.VMEM((2, bf, d), weight_dtype),          # b_w2_x2_vmem
+        pltpu.VMEM((2, tp, d_per_tp, bf), weight_dtype)
+            if use_fp8 else pltpu.VMEM((2, d, bf), weight_dtype),
+        pltpu.VMEM((2, tp, d_per_tp, bf), weight_dtype)
+            if use_fp8 else pltpu.VMEM((2, d, bf), weight_dtype),
+        pltpu.VMEM((2, tp, bf_per_tp, d), weight_dtype)
+            if use_fp8 else pltpu.VMEM((2, bf, d), weight_dtype),
     ]
     if use_fp8:
         scratch_shapes.extend([
-            pltpu.VMEM((2, n_sg, 1, bf), jnp.float32),   # b_w1_scale_x2
-            pltpu.VMEM((2, n_sg, 1, bf), jnp.float32),   # b_w3_scale_x2
-            pltpu.VMEM((2, n_sg2, 1, d), jnp.float32),   # b_w2_scale_x2
+            pltpu.VMEM((2, tp, n_sg_per_tp, 1, bf), jnp.float32),
+            pltpu.VMEM((2, tp, n_sg_per_tp, 1, bf), jnp.float32),
+            pltpu.VMEM((2, tp, n_sg2_per_tp, 1, d), jnp.float32),
         ])
     scratch_shapes.extend([
-        pltpu.VMEM((2, bt, d), dtype),                 # b_x_x2_vmem
-        pltpu.VMEM((bt, d), jnp.float32),              # b_y_acc_vmem
-        pltpu.VMEM((2, bt, d), dtype),                  # b_y_out_vmem
-    ])
-    if use_fp8:
-        scratch_shapes.extend([
-            pltpu.VMEM((bt, bf), jnp.float32),            # b_gate_acc
-            pltpu.VMEM((bt, bf), jnp.float32),            # b_up_acc
-        ])
-    scratch_shapes.extend([
-        pltpu.SemaphoreType.DMA((2, 3)),               # weight_sems
-        pltpu.SemaphoreType.DMA((2,)),                 # x_sem
-        pltpu.SemaphoreType.DMA((2,)),                 # y_out_sem
+        pltpu.VMEM((2, bt, d_per_tp), jnp.uint32)
+            if use_fp8 else pltpu.VMEM((2, bt, d), tokens.dtype),
+        pltpu.VMEM((bt, d), jnp.float32),
+        pltpu.VMEM((2, bt, d), jnp.bfloat16),
+        pltpu.SemaphoreType.DMA((2, 3)),
+        pltpu.SemaphoreType.DMA((2,)),
+        pltpu.SemaphoreType.DMA((2,)),
     ])
 
     scope_name = f"multi-expert-bt{bt}-bf{bf}-e{num_experts}"
@@ -557,8 +652,9 @@ def multi_expert_ffn(
             intermediate_size=f_full,
             num_experts=num_experts,
             quant_block_k=quant_block_k,
+            bd1c=bd1c,
         ),
-        out_shape=jax.ShapeDtypeStruct((num_experts, bt, d), dtype),
+        out_shape=jax.ShapeDtypeStruct((num_experts, bt, d), jnp.bfloat16),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=in_specs,
@@ -571,18 +667,23 @@ def multi_expert_ffn(
         name=scope_name,
     )
 
-    hbm_inputs = [
-        pltpu.with_memory_space_constraint(tokens, pltpu.HBM),
-        pltpu.with_memory_space_constraint(w1, pltpu.HBM),
-        pltpu.with_memory_space_constraint(w2, pltpu.HBM),
-        pltpu.with_memory_space_constraint(w3, pltpu.HBM),
-    ]
     if use_fp8:
-        hbm_inputs.extend([
+        hbm_inputs = [
+            pltpu.with_memory_space_constraint(tokens_packed, pltpu.HBM),
+            pltpu.with_memory_space_constraint(w1, pltpu.HBM),
+            pltpu.with_memory_space_constraint(w2, pltpu.HBM),
+            pltpu.with_memory_space_constraint(w3, pltpu.HBM),
             pltpu.with_memory_space_constraint(w1_scale, pltpu.HBM),
             pltpu.with_memory_space_constraint(w2_scale, pltpu.HBM),
             pltpu.with_memory_space_constraint(w3_scale, pltpu.HBM),
-        ])
+        ]
+    else:
+        hbm_inputs = [
+            pltpu.with_memory_space_constraint(tokens, pltpu.HBM),
+            pltpu.with_memory_space_constraint(w1, pltpu.HBM),
+            pltpu.with_memory_space_constraint(w2, pltpu.HBM),
+            pltpu.with_memory_space_constraint(w3, pltpu.HBM),
+        ]
     return jax.named_scope(scope_name)(kernel)(*hbm_inputs)
 
 
@@ -598,7 +699,6 @@ def _ref_multi_expert_ffn(
     for e in range(num_experts):
         x = tokens[e].astype(jnp.float32)
         if w1_scale is not None:
-            # Per-scale-group matmul for fp8
             d = x.shape[-1]
             f = w1.shape[-1]
             n_sg = d // quant_block_k
@@ -617,8 +717,9 @@ def _ref_multi_expert_ffn(
                 s3 = w3_scale[e, sg:sg + 1, 0, :].reshape(1, f)
                 gate += (x_slice @ w1_tile) * s1
                 up += (x_slice @ w3_tile) * s3
+            # Global SiLU activation on full gate/up vectors
             act = activation_fn(gate, up, act_fn)
-            # FFN2: per-scale-group activation + down-projection
+            # FFN2
             n_sg2 = f // quant_block_k
             out = jnp.zeros((x.shape[0], d), dtype=jnp.float32)
             for sg in range(n_sg2):
@@ -649,6 +750,7 @@ def kernel_fn(
     bf: int = 256,
     num_experts: int = 8,
     quant_block_k: int = 128,
+    bd1c: int | None = None,
     **_kwargs,
 ) -> Callable[[], jax.Array]:
     """Build random inputs and return a zero-arg closure calling the kernel."""
@@ -669,6 +771,7 @@ def kernel_fn(
 
     w1_scale = w2_scale = w3_scale = None
     qbk = None
+    bd1c_val = None
     if jnp.dtype(weight_dtype) == jnp.float8_e4m3fn:
         n_sg_h = hidden_size // quant_block_k
         n_sg_i = intermediate_size // quant_block_k
@@ -688,13 +791,14 @@ def kernel_fn(
             ) * 0.01
         )
         qbk = quant_block_k
+        bd1c_val = bd1c if bd1c is not None else quant_block_k
 
     def run():
         return multi_expert_ffn(
             tokens, w1, w2, w3,
             act_fn=act_fn, bf=bf, num_experts=num_experts,
             w1_scale=w1_scale, w2_scale=w2_scale, w3_scale=w3_scale,
-            quant_block_k=qbk,
+            quant_block_k=qbk, bd1c=bd1c_val,
         )
 
     return run
@@ -705,6 +809,12 @@ if __name__ == "__main__":
     bt = int(sys.argv[2]) if len(sys.argv) > 2 else 256
     use_fp8 = "--fp8" in sys.argv
     bf_arg = 512 if use_fp8 else 256
+
+    # Parse --bd1c
+    bd1c_arg = None
+    for i, a in enumerate(sys.argv):
+        if a == "--bd1c" and i + 1 < len(sys.argv):
+            bd1c_arg = int(sys.argv[i + 1])
 
     key = jax.random.key(0)
     k1, k2, k3, k4 = jax.random.split(key, 4)
@@ -745,7 +855,7 @@ if __name__ == "__main__":
     result = multi_expert_ffn(
         tokens, w1, w2, w3, bf=bf_arg, num_experts=num_experts_arg,
         w1_scale=w1_scale, w2_scale=w2_scale, w3_scale=w3_scale,
-        quant_block_k=qbk,
+        quant_block_k=qbk, bd1c=bd1c_arg,
     )
     ref = _ref_multi_expert_ffn(
         tokens, w1, w2, w3,
@@ -766,8 +876,9 @@ if __name__ == "__main__":
 
     worst_rel = max(rel_errs)
     mode = "fp8" if use_fp8 else "bf16"
+    bd1c_str = f", bd1c={bd1c_arg}" if bd1c_arg else ""
     print(
-        f"[{mode}] num_experts={num_experts_arg}, bt={bt}, bf={bf_arg}, "
+        f"[{mode}] num_experts={num_experts_arg}, bt={bt}, bf={bf_arg}{bd1c_str}, "
         f"worst_rel_err={worst_rel:.4f}"
     )
     assert worst_rel < 0.05, f"worst rel_err too high: {worst_rel}"
