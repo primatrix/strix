@@ -218,12 +218,7 @@ def _multi_expert_kernel(
         def _():
             wait_writeback(x_slot)
 
-        # fp32 → bf16 via bitcast truncation (upper 16 bits of fp32 ≈ bf16).
-        acc_u32 = pltpu.bitcast(b_y_acc_vmem[...], jnp.uint32)
-        acc_bf16 = pltpu.bitcast(
-            (acc_u32 >> 16).astype(jnp.uint16), jnp.bfloat16
-        )
-        b_y_out_vmem[x_slot] = acc_bf16
+        b_y_out_vmem[x_slot] = b_y_acc_vmem[...].astype(jnp.bfloat16)
         start_writeback(e, x_slot)
 
         @pl.when(e < num_experts - 1)
