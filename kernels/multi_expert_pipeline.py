@@ -386,6 +386,53 @@ def _multi_expert_kernel(
         wait_writeback(1 - last_y_slot)
 
 
+def _multi_expert_kernel_fp8(
+    tokens_hbm, w1_hbm, w2_hbm, w3_hbm,
+    w1_scale_hbm, w2_scale_hbm, w3_scale_hbm,
+    output_hbm,
+    b_w1_x2_vmem, b_w3_x2_vmem, b_w2_x2_vmem,
+    b_w1_scale_x2_vmem, b_w3_scale_x2_vmem, b_w2_scale_x2_vmem,
+    b_x_x2_vmem, b_y_acc_vmem, b_y_out_vmem,
+    b_gate_acc_vmem, b_up_acc_vmem,
+    weight_sems, x_sem, y_out_sem,
+    *, act_fn, bf, intermediate_size, num_experts, quant_block_k,
+):
+    _multi_expert_kernel(
+        tokens_hbm, w1_hbm, w2_hbm, w3_hbm,
+        w1_scale_hbm, w2_scale_hbm, w3_scale_hbm,
+        output_hbm,
+        b_w1_x2_vmem, b_w3_x2_vmem, b_w2_x2_vmem,
+        b_w1_scale_x2_vmem, b_w3_scale_x2_vmem, b_w2_scale_x2_vmem,
+        b_x_x2_vmem, b_y_acc_vmem, b_y_out_vmem,
+        b_gate_acc_vmem, b_up_acc_vmem,
+        weight_sems, x_sem, y_out_sem,
+        act_fn=act_fn, bf=bf, intermediate_size=intermediate_size,
+        num_experts=num_experts, quant_block_k=quant_block_k,
+    )
+
+
+def _multi_expert_kernel_bf16(
+    tokens_hbm, w1_hbm, w2_hbm, w3_hbm,
+    output_hbm,
+    b_w1_x2_vmem, b_w3_x2_vmem, b_w2_x2_vmem,
+    b_x_x2_vmem, b_y_acc_vmem, b_y_out_vmem,
+    weight_sems, x_sem, y_out_sem,
+    *, act_fn, bf, intermediate_size, num_experts, quant_block_k,
+):
+    _multi_expert_kernel(
+        tokens_hbm, w1_hbm, w2_hbm, w3_hbm,
+        None, None, None,
+        output_hbm,
+        b_w1_x2_vmem, b_w3_x2_vmem, b_w2_x2_vmem,
+        None, None, None,
+        b_x_x2_vmem, b_y_acc_vmem, b_y_out_vmem,
+        None, None,
+        weight_sems, x_sem, y_out_sem,
+        act_fn=act_fn, bf=bf, intermediate_size=intermediate_size,
+        num_experts=num_experts, quant_block_k=quant_block_k,
+    )
+
+
 @functools.partial(
     jax.jit,
     static_argnames=["act_fn", "bf", "num_experts", "quant_block_k"],
@@ -475,34 +522,36 @@ def multi_expert_ffn(
         pltpu.VMEM((2, d, bf), weight_dtype),         # b_w1_x2_vmem
         pltpu.VMEM((2, d, bf), weight_dtype),          # b_w3_x2_vmem
         pltpu.VMEM((2, bf, d), weight_dtype),          # b_w2_x2_vmem
-        # Scale scratch — per bf tile, double-buffered
-        # Use minimal (2,1,1,1) dummy when bf16 to keep arg positions stable
-        pltpu.VMEM((2, n_sg, 1, bf), jnp.float32)
-            if use_fp8 else pltpu.VMEM((2, 1, 1, 1), jnp.float32),
-        pltpu.VMEM((2, n_sg, 1, bf), jnp.float32)
-            if use_fp8 else pltpu.VMEM((2, 1, 1, 1), jnp.float32),
-        pltpu.VMEM((2, n_sg2, 1, d), jnp.float32)
-            if use_fp8 else pltpu.VMEM((2, 1, 1, 1), jnp.float32),
+    ]
+    if use_fp8:
+        scratch_shapes.extend([
+            pltpu.VMEM((2, n_sg, 1, bf), jnp.float32),   # b_w1_scale_x2
+            pltpu.VMEM((2, n_sg, 1, bf), jnp.float32),   # b_w3_scale_x2
+            pltpu.VMEM((2, n_sg2, 1, d), jnp.float32),   # b_w2_scale_x2
+        ])
+    scratch_shapes.extend([
         pltpu.VMEM((2, bt, d), dtype),                 # b_x_x2_vmem
         pltpu.VMEM((bt, d), jnp.float32),              # b_y_acc_vmem
         pltpu.VMEM((2, bt, d), dtype),                  # b_y_out_vmem
-        # Gate/up accumulators for fp8 scale-group loop
-        pltpu.VMEM((bt, bf), jnp.float32)
-            if use_fp8 else pltpu.VMEM((1, 1), jnp.float32),
-        pltpu.VMEM((bt, bf), jnp.float32)
-            if use_fp8 else pltpu.VMEM((1, 1), jnp.float32),
+    ])
+    if use_fp8:
+        scratch_shapes.extend([
+            pltpu.VMEM((bt, bf), jnp.float32),            # b_gate_acc
+            pltpu.VMEM((bt, bf), jnp.float32),            # b_up_acc
+        ])
+    scratch_shapes.extend([
         pltpu.SemaphoreType.DMA((2, 3)),               # weight_sems
         pltpu.SemaphoreType.DMA((2,)),                 # x_sem
         pltpu.SemaphoreType.DMA((2,)),                 # y_out_sem
-    ]
+    ])
 
     scope_name = f"multi-expert-bt{bt}-bf{bf}-e{num_experts}"
     hbm = pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM)
-    in_specs = [hbm] * 7
+    in_specs = [hbm] * (7 if use_fp8 else 4)
 
     kernel = pl.pallas_call(
         functools.partial(
-            _multi_expert_kernel,
+            _multi_expert_kernel_fp8 if use_fp8 else _multi_expert_kernel_bf16,
             act_fn=act_fn,
             bf=bf,
             intermediate_size=f_full,
@@ -534,13 +583,6 @@ def multi_expert_ffn(
             pltpu.with_memory_space_constraint(w2_scale, pltpu.HBM),
             pltpu.with_memory_space_constraint(w3_scale, pltpu.HBM),
         ])
-    else:
-        # Dummy scale arrays to keep kernel arg positions stable
-        dummy = jnp.zeros((1,), dtype=jnp.float32)
-        for _ in range(3):
-            hbm_inputs.append(
-                pltpu.with_memory_space_constraint(dummy, pltpu.HBM)
-            )
     return jax.named_scope(scope_name)(kernel)(*hbm_inputs)
 
 
