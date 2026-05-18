@@ -100,7 +100,7 @@ def _multi_expert_kernel(
         sg_per_dot = bd1c_per_tp // quant_block_k
         n_sg_per_tp = b_w1_scale_x2_vmem.shape[2]  # d_per_tp // qbk
         bf_per_tp = bf // tp
-        n_sg2_per_tp = b_w2_scale_x2_vmem.shape[2]  # bf_per_tp // qbk
+        n_sg2_per_tp = bf_per_tp // quant_block_k  # per-tile scale groups
 
     # -- DMA helpers --
 
