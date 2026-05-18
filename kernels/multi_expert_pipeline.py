@@ -211,11 +211,7 @@ def _multi_expert_kernel(
                 ).start(priority=priority)
                 pltpu.make_async_copy(
                     src_ref=w2_scale_hbm.at[
-                        expert_idx, p,
-                        pl.ds(
-                            tile_idx * bf_per_tp // quant_block_k,
-                            bf_per_tp // quant_block_k,
-                        ), :,
+                        expert_idx, p, :, :,
                     ],
                     dst_ref=b_w2_scale_x2_vmem.at[slot, p],
                     sem=weight_sems.at[slot, 2],
@@ -258,7 +254,7 @@ def _multi_expert_kernel(
 
     # -- Compute --
 
-    def compute_tile(x_slot, w_slot, is_first_tile):
+    def compute_tile(x_slot, w_slot, tile_idx, is_first_tile):
         bt_k = b_x_x2_vmem.shape[1]
 
         if use_fp8:
@@ -349,8 +345,10 @@ def _multi_expert_kernel(
                         act_slice, w2_tile,
                         preferred_element_type=jnp.float32,
                     )
+                    # Offset into full w2_scale by tile position
+                    sg2_abs = tile_idx * n_sg2_per_tp + sg_id
                     s = b_w2_scale_x2_vmem[
-                        w_slot, p_id, pl.ds(sg_id, 1), :,
+                        w_slot, p_id, pl.ds(sg2_abs, 1), :,
                     ].reshape(1, d_k)
                     partial = partial + d_val * jnp.broadcast_to(
                         s, d_val.shape
@@ -400,7 +398,7 @@ def _multi_expert_kernel(
         # First tile
         wait_fetch_w1(0)
         wait_fetch_w3(0)
-        compute_tile(x_slot, w_slot=0, is_first_tile=True)
+        compute_tile(x_slot, w_slot=0, tile_idx=0, is_first_tile=True)
 
         # Steady state: tiles [1, n_w - 1)
         for tile in range(1, n_w - 1):
@@ -411,7 +409,7 @@ def _multi_expert_kernel(
             start_fetch_w2(next_w, e, tile + 1)
             wait_fetch_w1(w_slot)
             wait_fetch_w3(w_slot)
-            compute_tile(x_slot, w_slot, is_first_tile=False)
+            compute_tile(x_slot, w_slot, tile_idx=tile, is_first_tile=False)
 
         # Epilogue: last tile
         if n_w >= 2:
@@ -424,7 +422,7 @@ def _multi_expert_kernel(
                 start_fetch_w2(0, e + 1, 0)
             wait_fetch_w1(last_w)
             wait_fetch_w3(last_w)
-            compute_tile(x_slot, last_w, is_first_tile=False)
+            compute_tile(x_slot, last_w, tile_idx=n_w - 1, is_first_tile=False)
 
         # Expert boundary: double-buffered writeback.
         @pl.when(e >= 2)
@@ -631,10 +629,11 @@ def multi_expert_ffn(
             if use_fp8 else pltpu.VMEM((2, bf, d), weight_dtype),
     ]
     if use_fp8:
+        n_sg2_full = f_full // tp // quant_block_k  # all w2 scale groups per tp stripe
         scratch_shapes.extend([
             pltpu.VMEM((2, tp, n_sg_per_tp, bf), jnp.float32),
             pltpu.VMEM((2, tp, n_sg_per_tp, bf), jnp.float32),
-            pltpu.VMEM((2, tp, n_sg2_per_tp, d), jnp.float32),
+            pltpu.VMEM((2, tp, n_sg2_full, d), jnp.float32),
         ])
     scratch_shapes.extend([
         pltpu.VMEM((2, bt, d_per_tp), jnp.uint32)
