@@ -603,12 +603,18 @@ def multi_expert_ffn(
         w3_scale = w3_scale.reshape(n_exp, tp, n_sg_per_tp, 1, f_full)
         w2_scale = w2_scale.reshape(n_exp, tp, f_per_tp // quant_block_k, 1, d)
 
-        # Pack tokens: bf16 (bt, d) → uint32 (bt, d//tp) via view
+        # Pack tokens: bf16 (E, bt, d) → uint32 (E, bt, d//tp)
+        # Weight layout is contiguous-split: w1[e, p, k, :] corresponds to
+        # original rows [p*d_per_tp .. (p+1)*d_per_tp-1].
+        # Token packing must match: uint32[k] packs token[0*d_per_tp+k] (low)
+        # and token[1*d_per_tp+k] (high), i.e. contiguous halves.
+        # Reshape to (E, bt, tp, d_per_tp) then transpose to put tp last for
+        # bitcast_convert_type.
         tokens = tokens.reshape(n_exp, bt, tp, d_per_tp)
+        tokens = tokens.transpose(0, 1, 3, 2)  # (E, bt, d_per_tp, tp)
         tokens_packed = jax.lax.bitcast_convert_type(
             tokens, jnp.uint32
-        )  # (n_exp, bt, 1, d_per_tp) — tp bf16s merge into uint32
-        tokens_packed = tokens_packed.reshape(n_exp, bt, d_per_tp)
+        )  # (n_exp, bt, d_per_tp) uint32
 
     else:
         if bd1c is None:
