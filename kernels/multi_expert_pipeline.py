@@ -209,17 +209,20 @@ def _multi_expert_kernel(
     # -- Compute --
 
     def compute_tile(x_slot, w_slot, is_first_tile):
-        x = b_x_x2_vmem[x_slot]
+        # b_x_x2_vmem shape: (2, bt, d)
+        bt_k = b_x_x2_vmem.shape[1]
+        d_k = b_x_x2_vmem.shape[2]
 
         if use_fp8:
             # FP8 direct scaled dot — combined gate+up over scale groups.
-            bt_k = x.shape[0]
             gate = jnp.zeros((bt_k, bf), dtype=jnp.float32)
             up = jnp.zeros_like(gate)
 
             for sg_id in range(n_sg):
                 sg_off = sg_id * quant_block_k
-                x_slice = x[:, pl.ds(sg_off, quant_block_k)]
+                x_slice = b_x_x2_vmem.at[
+                    x_slot, pl.ds(0, bt_k), pl.ds(sg_off, quant_block_k)
+                ][...]
 
                 w1_tile = b_w1_x2_vmem[
                     w_slot, pl.ds(sg_off, quant_block_k), pl.ds(0, bf)
@@ -252,7 +255,7 @@ def _multi_expert_kernel(
 
             # FFN2: per-scale-group activation + down-projection.
             # act is applied per (bt, qbk) slice before the W2 dot.
-            d_out = x.shape[1]  # hidden_size
+            d_out = d_k  # hidden_size
 
             partial = jnp.zeros((bt_k, d_out), dtype=jnp.float32)
             for sg_id in range(n_sg2):
@@ -278,6 +281,7 @@ def _multi_expert_kernel(
                 partial = partial + d * jnp.broadcast_to(s, d.shape)
         else:
             # bf16 path — unchanged from original
+            x = b_x_x2_vmem[x_slot]
             w1 = b_w1_x2_vmem[w_slot]
             w3 = b_w3_x2_vmem[w_slot]
             gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)
