@@ -302,9 +302,32 @@ def _multi_expert_kernel_fp8(
         # --- Tile 0 ---
         wait_fetch_w1(0)
         wait_fetch_w3(0)
-        compute_tile(x_slot, w_slot=0, is_first_tile=True)
 
-        # --- Tiles [1, n_w): prefetch next tile, or next-expert tiles when last ---
+        if n_w == 2:
+            def _t0_after_w1():
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_load_x(next_xs, e + 1, priority=1)
+                    start_fetch_w1(0, e + 1, 0)
+
+            def _t0_after_w3():
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_fetch_w3(0, e + 1, 0)
+
+            def _t0_after_w2():
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_fetch_w2(0, e + 1, 0)
+
+            compute_tile(x_slot, w_slot=0, is_first_tile=True,
+                         after_dequant_w1=_t0_after_w1,
+                         after_dequant_w3=_t0_after_w3,
+                         after_dequant_w2=_t0_after_w2)
+        else:
+            compute_tile(x_slot, w_slot=0, is_first_tile=True)
+
+        # --- Tiles [1, n_w) ---
         for tile in range(1, n_w):
             w_slot = tile % 2
             next_w = 1 - w_slot
@@ -312,38 +335,60 @@ def _multi_expert_kernel_fp8(
             wait_fetch_w1(w_slot)
             wait_fetch_w3(w_slot)
 
-            if tile + 1 < n_w:
+            if tile + 2 < n_w:
                 compute_tile(
                     x_slot, w_slot, is_first_tile=False,
                     after_dequant_w1=lambda: start_fetch_w1(next_w, e, tile + 1),
                     after_dequant_w3=lambda: start_fetch_w3(next_w, e, tile + 1),
                     after_dequant_w2=lambda: start_fetch_w2(next_w, e, tile + 1),
                 )
-            else:
-                def _next_expert_after_w1():
+            elif tile + 1 < n_w:
+                def _penultimate_after_w1():
+                    start_fetch_w1(next_w, e, tile + 1)
                     @pl.when(e < num_experts - 1)
                     def _():
                         start_load_x(next_xs, e + 1, priority=1)
-                        start_fetch_w1(0, e + 1, 0)
-                        start_fetch_w1(1, e + 1, 1)
+                        start_fetch_w1(w_slot, e + 1, w_slot)
 
-                def _next_expert_after_w3():
+                def _penultimate_after_w3():
+                    start_fetch_w3(next_w, e, tile + 1)
                     @pl.when(e < num_experts - 1)
                     def _():
-                        start_fetch_w3(0, e + 1, 0)
-                        start_fetch_w3(1, e + 1, 1)
+                        start_fetch_w3(w_slot, e + 1, w_slot)
 
-                def _next_expert_after_w2():
+                def _penultimate_after_w2():
+                    start_fetch_w2(next_w, e, tile + 1)
                     @pl.when(e < num_experts - 1)
                     def _():
-                        start_fetch_w2(0, e + 1, 0)
-                        start_fetch_w2(1, e + 1, 1)
+                        start_fetch_w2(w_slot, e + 1, w_slot)
 
                 compute_tile(
                     x_slot, w_slot, is_first_tile=False,
-                    after_dequant_w1=_next_expert_after_w1,
-                    after_dequant_w3=_next_expert_after_w3,
-                    after_dequant_w2=_next_expert_after_w2,
+                    after_dequant_w1=_penultimate_after_w1,
+                    after_dequant_w3=_penultimate_after_w3,
+                    after_dequant_w2=_penultimate_after_w2,
+                )
+            else:
+                def _last_after_w1():
+                    @pl.when(e < num_experts - 1)
+                    def _():
+                        start_fetch_w1(w_slot, e + 1, w_slot)
+
+                def _last_after_w3():
+                    @pl.when(e < num_experts - 1)
+                    def _():
+                        start_fetch_w3(w_slot, e + 1, w_slot)
+
+                def _last_after_w2():
+                    @pl.when(e < num_experts - 1)
+                    def _():
+                        start_fetch_w2(w_slot, e + 1, w_slot)
+
+                compute_tile(
+                    x_slot, w_slot, is_first_tile=False,
+                    after_dequant_w1=_last_after_w1,
+                    after_dequant_w3=_last_after_w3,
+                    after_dequant_w2=_last_after_w2,
                 )
 
         # --- Expert boundary: double-buffered writeback ---
