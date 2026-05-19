@@ -2,7 +2,7 @@
 
 Single routed expert, B=1, persistent x, dual weight slots, low-priority
 W2 DMA, fp32 y_acc accumulator. Hard-coded for d=8192, f=2048, bf16 tokens,
-fp8 weights, bf16 tokens (naive cast to fp8 for fp8×fp8 MXU).
+fp8 weights (cast to bf16 at compute).
 
 Spec: docs/superpowers/specs/2026-05-11-double-buffer-expert-design.md
 """
@@ -38,7 +38,7 @@ config = {
     "tpu_topology": "2x2x1",
     "description": (
         "Double-buffer expert FFN — §5.8 B=1 decode "
-        "(fp8×fp8 MXU, naive token cast, dual W slots)"
+        "(persistent x, dual W slots, low-pri W2)"
     ),
 }
 
@@ -124,17 +124,17 @@ def _double_buffer_expert_kernel(
     # -- Compute function (W2 wait deferred inside) --
     def compute_tile(slot, is_first_tile):
         """Gate/up compute (W1, W3), then wait W2 (low-pri overlap), then accumulate."""
-        x = b_x_vmem[...].astype(jnp.float8_e4m3fn)
-        w1 = b_w1_x2_vmem[slot]
-        w3 = b_w3_x2_vmem[slot]
+        x = b_x_vmem[...]
+        w1 = b_w1_x2_vmem[slot].astype(jnp.bfloat16)
+        w3 = b_w3_x2_vmem[slot].astype(jnp.bfloat16)
         gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)
         up = jnp.dot(x, w3, preferred_element_type=jnp.float32)
         act_up = activation_fn(gate, up, act_fn)
 
         wait_fetch_w2(slot)  # deferred — overlaps with gate/up MXU
 
-        w2 = b_w2_x2_vmem[slot]
-        partial = jnp.dot(act_up.astype(jnp.float8_e4m3fn), w2, preferred_element_type=jnp.float32)
+        w2 = b_w2_x2_vmem[slot].astype(jnp.bfloat16)
+        partial = jnp.dot(act_up, w2, preferred_element_type=jnp.float32)
         if is_first_tile:
             b_y_acc_vmem[...] = partial
         else:
