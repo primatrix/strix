@@ -759,8 +759,14 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
         print("[benchmark] Non-coordinator process, skipping dump/upload")
         return
 
+    effective_config = dict(config)
+    if args.bf is not None:
+        effective_config["bf"] = args.bf
+    if args.bd is not None:
+        effective_config["bd"] = args.bd
+
     write_benchmark_result(
-        timings, args.kernel, args.shape, args.job_name, config,
+        timings, args.kernel, args.shape, args.job_name, effective_config,
         benchmark_result_path,
     )
 
