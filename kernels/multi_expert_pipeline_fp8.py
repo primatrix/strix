@@ -1,6 +1,8 @@
 """Multi-expert double-buffer FFN pipeline — FP8 e4m3 block quantization.
 
-VMEM dequant path: load fp8 weights from HBM → dequant to bf16 in VMEM → bf16 matmul.
+FP8×FP8 MXU path: load fp8 weights from HBM, dynamically quantize bf16
+activations to fp8 per sub-block, run fp8×fp8 matmul on MXU (2x throughput
+vs bf16), post-multiply activation and weight dequant scales.
 Per-block f32 scales with quant_block_k granularity.
 
 Base kernel: kernels/multi_expert_pipeline.py (bf16 version)
@@ -38,7 +40,7 @@ config = {
     "tpu_topology": "2x2x1",
     "description": (
         "Multi-expert double-buffer FFN — FP8 e4m3 block quantization "
-        "(VMEM dequant path, N experts sequential)"
+        "(fp8×fp8 MXU path, per-block activation quant, N experts sequential)"
     ),
 }
 
@@ -110,7 +112,7 @@ def _multi_expert_kernel_fp8(
     quant_block_k: int,
     skip_dequant: bool = False,
 ):
-    """Pallas kernel body — multi-expert FP8 pipeline with VMEM dequant."""
+    """Pallas kernel body — multi-expert FP8 pipeline with fp8×fp8 MXU matmul."""
     _, bt, d = tokens_hbm.shape
     n_w = intermediate_size // bf
     n_sg = d // quant_block_k
@@ -228,48 +230,60 @@ def _multi_expert_kernel_fp8(
             sem=y_out_sem.at[y_slot],
         ).wait()
 
-    # -- Sub-tile dequant-dot fusion --
-    # Instead of dequanting full (d, bf) into a VMEM scratch buffer,
-    # dequant in (qbk, bf) sub-blocks and accumulate partial matmuls.
-    # Eliminates 3 × (d, bf) bf16 scratch buffers, enabling larger bf.
+    # -- Per-block activation quant + fp8×fp8 MXU fusion --
+    # Quantize bf16 activations to fp8 per (row, K-block), then run
+    # fp8×fp8 matmul on MXU (2x throughput vs bf16). Post-multiply
+    # activation dequant scale (bt,1) × weight dequant scale (1,bf).
 
-    def dequant_dot_w13(x, w_slot, tile_idx):
-        """Fused sub-tile dequant + gate/up matmuls for w1 and w3."""
+    def fp8_dot_w13(x, w_slot, tile_idx):
+        """Per-block activation quant + fp8×fp8 gate/up matmuls for w1, w3."""
         gate = jnp.zeros((bt, bf), jnp.float32)
         up = jnp.zeros((bt, bf), jnp.float32)
+        fp8_max = jnp.float32(jnp.finfo(jnp.float8_e4m3fn).max)
         w1_tile = b_w1_x2_vmem[w_slot]
         w3_tile = b_w3_x2_vmem[w_slot]
         for sg in range(n_sg):
             off = sg * quant_block_k
+            x_f32 = x[:, off:off + quant_block_k].astype(jnp.float32)
+            x_abs_max = jnp.max(jnp.abs(x_f32), axis=1, keepdims=True)
+            x_s = jnp.where(x_abs_max > 0, x_abs_max / fp8_max, 1.0)
+            x_q = (x_f32 / x_s).astype(jnp.float8_e4m3fn)
+
             w1_blk = w1_tile[off:off + quant_block_k, :]
             w3_blk = w3_tile[off:off + quant_block_k, :]
-            x_blk = x[:, off:off + quant_block_k]
+            gate_p = jnp.dot(x_q, w1_blk, preferred_element_type=jnp.float32)
+            up_p = jnp.dot(x_q, w3_blk, preferred_element_type=jnp.float32)
+
             if skip_dequant:
-                w1_dq = w1_blk.astype(jnp.bfloat16)
-                w3_dq = w3_blk.astype(jnp.bfloat16)
+                gate += gate_p
+                up += up_p
             else:
                 s1 = b_w1_scale_vmem[sg, :, pl.ds(tile_idx * bf, bf)]
                 s3 = b_w3_scale_vmem[sg, :, pl.ds(tile_idx * bf, bf)]
-                w1_dq = (w1_blk.astype(jnp.float32) * s1).astype(jnp.bfloat16)
-                w3_dq = (w3_blk.astype(jnp.float32) * s3).astype(jnp.bfloat16)
-            gate += jnp.dot(x_blk, w1_dq, preferred_element_type=jnp.float32)
-            up += jnp.dot(x_blk, w3_dq, preferred_element_type=jnp.float32)
+                gate += gate_p * (x_s * s1)
+                up += up_p * (x_s * s3)
         return gate, up
 
-    def dequant_dot_w2(act, w_slot, tile_idx):
-        """Fused sub-tile dequant + down-projection matmul for w2."""
+    def fp8_dot_w2(act, w_slot, tile_idx):
+        """Per-block activation quant + fp8×fp8 down-projection for w2."""
         out = jnp.zeros((bt, d), jnp.float32)
+        fp8_max = jnp.float32(jnp.finfo(jnp.float8_e4m3fn).max)
         w2_tile = b_w2_x2_vmem[w_slot]
         for sg in range(n_sg2):
             off = sg * quant_block_k
-            w2_blk = w2_tile[off:off + quant_block_k, :]
             act_blk = act[:, off:off + quant_block_k]
+            a_abs_max = jnp.max(jnp.abs(act_blk), axis=1, keepdims=True)
+            a_s = jnp.where(a_abs_max > 0, a_abs_max / fp8_max, 1.0)
+            a_q = (act_blk / a_s).astype(jnp.float8_e4m3fn)
+
+            w2_blk = w2_tile[off:off + quant_block_k, :]
+            partial = jnp.dot(a_q, w2_blk, preferred_element_type=jnp.float32)
+
             if skip_dequant:
-                w2_dq = w2_blk.astype(jnp.bfloat16)
+                out += partial
             else:
                 s2 = b_w2_scale_vmem[tile_idx * n_sg2 + sg, :, :]
-                w2_dq = (w2_blk.astype(jnp.float32) * s2).astype(jnp.bfloat16)
-            out += jnp.dot(act_blk, w2_dq, preferred_element_type=jnp.float32)
+                out += partial * (a_s * s2)
         return out
 
     def start_fetch_w13(slot, expert_idx, tile_idx):
@@ -313,7 +327,7 @@ def _multi_expert_kernel_fp8(
 
             x = b_x_x2_vmem[x_slot]
 
-            gate, up = dequant_dot_w13(x, w_slot, tile)
+            gate, up = fp8_dot_w13(x, w_slot, tile)
 
             @pl.when(should_prefetch)
             def _():
@@ -326,7 +340,7 @@ def _multi_expert_kernel_fp8(
 
             wait_fetch_w2(w_slot)
             act = activation_fn(gate, up, act_fn)
-            partial = dequant_dot_w2(act, w_slot, tile)
+            partial = fp8_dot_w2(act, w_slot, tile)
 
             @pl.when(should_prefetch)
             def _():
@@ -395,7 +409,7 @@ def multi_expert_ffn_fp8(
     quant_block_k: int = 256,
     skip_dequant: bool = False,
 ) -> jax.Array:
-    """Run the multi-expert FP8 double-buffer FFN kernel (VMEM dequant path).
+    """Run the multi-expert FP8 double-buffer FFN kernel (fp8×fp8 MXU path).
 
     Shapes:
       tokens:   (num_experts, bt, d)                 bf16
