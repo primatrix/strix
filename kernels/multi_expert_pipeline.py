@@ -382,8 +382,8 @@ def kernel_fn(
 
 if __name__ == "__main__":
     num_experts_arg = int(sys.argv[1]) if len(sys.argv) > 1 else 4
-    bt = int(sys.argv[2]) if len(sys.argv) > 2 else 512
-    bf_arg = 512
+    bt = int(sys.argv[2]) if len(sys.argv) > 2 else 256
+    bf_arg = 1024
 
     key = jax.random.key(0)
     k1, k2, k3, k4 = jax.random.split(key, 4)

@@ -7,8 +7,8 @@
 #
 # Pure FP8: all inputs (tokens, w1/w2/w3) and output are fp8.
 # MXU does fp8×fp8→f32 accumulation; act_up cast back to fp8 before
-# down projection.  bt doubled (256→512) to utilize memory savings.
-# bf=512 gives n_w=4 tiles, each (6144×512)×1B = 3 MiB.
+# down projection.  bf=1024 gives n_w=2 tiles, each (6144×1024)×1B
+# = 6 MiB — larger tiles to reduce DMA overhead.
 #
 # EP layout: 2x2x1 = 4 chips = 8 devices.
 # EP=8 → 384/8 = 48 experts per device.
@@ -18,14 +18,14 @@
 #
 # Run:
 #   bash scripts/run_benchmark.sh kernels.multi_expert_pipeline \
-#     --shape "512,6144,2048" --no-ir-dump \
+#     --shape "256,6144,2048" --no-ir-dump \
 #     --runner-script scripts/sweep_multi_expert_device.py \
-#     --runner-args "--profile mimo-v2 --num-tokens 512"
+#     --runner-args "--profile mimo-v2"
 
 kernel: kernels.multi_expert_pipeline
-shape: "512,6144,2048"
+shape: "256,6144,2048"
 tpu_type: v7x
 tpu_topology: 2x2x1
 no_ir_dump: true
 runner_script: scripts/sweep_multi_expert_device.py
-runner_args: "--profile mimo-v2 --num-tokens 512"
+runner_args: "--profile mimo-v2"
