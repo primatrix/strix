@@ -303,6 +303,7 @@ def _multi_expert_kernel_fp8(
             @pl.when(is_penultimate & (e < num_experts - 1))
             def _():
                 start_load_x(next_xs, e + 1, priority=1)
+                start_fetch_w13(w_slot, e + 1, w_slot)
 
             w1_bf16 = b_w1_dq_vmem[...]
             w3_bf16 = b_w3_dq_vmem[...]
@@ -315,6 +316,10 @@ def _multi_expert_kernel_fp8(
             @pl.when(should_prefetch)
             def _():
                 start_fetch_w2(pf_slot, pf_expert, pf_tile)
+
+            @pl.when(is_penultimate & (e < num_experts - 1))
+            def _():
+                start_fetch_w2(w_slot, e + 1, w_slot)
 
             w2_bf16 = b_w2_dq_vmem[...]
             act = activation_fn(gate, up, act_fn)
