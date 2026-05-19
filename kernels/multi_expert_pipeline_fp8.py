@@ -394,3 +394,130 @@ def _multi_expert_kernel_fp8(
     wait_writeback(last_y_slot)
     if num_experts >= 2:
         wait_writeback(1 - last_y_slot)
+
+
+@functools.partial(jax.jit, static_argnames=[
+    "act_fn", "bf", "num_experts", "quant_block_k",
+])
+def multi_expert_ffn_fp8(
+    tokens: jax.Array,
+    w1: jax.Array,
+    w2: jax.Array,
+    w3: jax.Array,
+    *,
+    w1_scale: jax.Array,
+    w2_scale: jax.Array,
+    w3_scale: jax.Array,
+    act_fn: str = "silu",
+    bf: int = 256,
+    num_experts: int,
+    quant_block_k: int = 256,
+) -> jax.Array:
+    """Run the multi-expert FP8 double-buffer FFN kernel (VMEM dequant path).
+
+    Shapes:
+      tokens:   (num_experts, bt, d)                 bf16
+      w1:       (num_experts, d, f)                   float8_e4m3fn
+      w2:       (num_experts, f, d)                   float8_e4m3fn
+      w3:       (num_experts, d, f)                   float8_e4m3fn
+      w1_scale: (num_experts, d // quant_block_k, 1, f) f32
+      w2_scale: (num_experts, f // quant_block_k, 1, d) f32
+      w3_scale: (num_experts, d // quant_block_k, 1, f) f32
+    Returns:
+      output:   (num_experts, bt, d)                  bf16
+    """
+    n_exp, bt, d = tokens.shape
+    f_full = w1.shape[2]
+    qbk = quant_block_k
+    weight_dtype = w1.dtype
+
+    # --- Validation ---
+    if n_exp != num_experts:
+        raise ValueError(f"tokens.shape[0]={n_exp} != num_experts={num_experts}")
+    if f_full % bf != 0:
+        raise ValueError(f"intermediate_size={f_full} must be divisible by bf={bf}")
+    if f_full // bf < 2:
+        raise ValueError(
+            f"Need >= 2 weight tiles (intermediate_size/bf >= 2); "
+            f"got {f_full}/{bf}={f_full // bf}"
+        )
+    if qbk % 128 != 0:
+        raise ValueError(f"quant_block_k={qbk} must be 128-aligned")
+    if d % qbk != 0:
+        raise ValueError(f"hidden_size={d} must be divisible by quant_block_k={qbk}")
+    if bf % qbk != 0:
+        raise ValueError(f"bf={bf} must be divisible by quant_block_k={qbk}")
+    if w1.shape != (num_experts, d, f_full):
+        raise ValueError(f"w1.shape={w1.shape} must be ({num_experts}, {d}, {f_full})")
+    if w2.shape != (num_experts, f_full, d):
+        raise ValueError(f"w2.shape={w2.shape} must be ({num_experts}, {f_full}, {d})")
+    if w3.shape != (num_experts, d, f_full):
+        raise ValueError(f"w3.shape={w3.shape} must be ({num_experts}, {d}, {f_full})")
+
+    n_sg = d // qbk
+    n_sg2 = bf // qbk
+
+    expected_w1_scale = (num_experts, n_sg, 1, f_full)
+    if w1_scale.shape != expected_w1_scale:
+        raise ValueError(f"w1_scale.shape={w1_scale.shape} must be {expected_w1_scale}")
+    expected_w2_scale = (num_experts, f_full // qbk, 1, d)
+    if w2_scale.shape != expected_w2_scale:
+        raise ValueError(f"w2_scale.shape={w2_scale.shape} must be {expected_w2_scale}")
+    expected_w3_scale = (num_experts, n_sg, 1, f_full)
+    if w3_scale.shape != expected_w3_scale:
+        raise ValueError(f"w3_scale.shape={w3_scale.shape} must be {expected_w3_scale}")
+
+    dtype = tokens.dtype
+
+    # --- Scratch shapes ---
+    scratch_shapes = (
+        pltpu.VMEM((2, d, bf), weight_dtype),              # b_w1_x2_vmem
+        pltpu.VMEM((2, d, bf), weight_dtype),              # b_w3_x2_vmem
+        pltpu.VMEM((2, bf, d), weight_dtype),              # b_w2_x2_vmem
+        pltpu.VMEM((2, n_sg, 1, bf), jnp.float32),        # b_w1_scale_x2_vmem
+        pltpu.VMEM((2, n_sg, 1, bf), jnp.float32),        # b_w3_scale_x2_vmem
+        pltpu.VMEM((2, n_sg2, 1, d), jnp.float32),        # b_w2_scale_x2_vmem
+        pltpu.VMEM((d, bf), jnp.bfloat16),                # b_w1_dq_vmem
+        pltpu.VMEM((d, bf), jnp.bfloat16),                # b_w3_dq_vmem
+        pltpu.VMEM((bf, d), jnp.bfloat16),                # b_w2_dq_vmem
+        pltpu.VMEM((2, bt, d), dtype),                     # b_x_x2_vmem
+        pltpu.VMEM((bt, d), jnp.float32),                 # b_y_acc_vmem
+        pltpu.VMEM((2, bt, d), dtype),                     # b_y_out_vmem
+        pltpu.SemaphoreType.DMA((2, 3)),                   # weight_sems
+        pltpu.SemaphoreType.DMA((2,)),                     # x_sem
+        pltpu.SemaphoreType.DMA((2,)),                     # y_out_sem
+    )
+
+    scope_name = f"multi-expert-fp8-bt{bt}-bf{bf}-e{num_experts}-qbk{qbk}"
+    hbm = pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM)
+
+    kernel = pl.pallas_call(
+        functools.partial(
+            _multi_expert_kernel_fp8,
+            act_fn=act_fn,
+            bf=bf,
+            intermediate_size=f_full,
+            num_experts=num_experts,
+            quant_block_k=qbk,
+        ),
+        out_shape=jax.ShapeDtypeStruct((num_experts, bt, d), dtype),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[hbm, hbm, hbm, hbm, hbm, hbm, hbm],
+            out_specs=pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM),
+            scratch_shapes=scratch_shapes,
+        ),
+        compiler_params=pltpu.CompilerParams(
+            vmem_limit_bytes=64 * 1024 * 1024,
+        ),
+        name=scope_name,
+    )
+    return jax.named_scope(scope_name)(kernel)(
+        pltpu.with_memory_space_constraint(tokens, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w1, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w2, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w3, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w1_scale, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w2_scale, pltpu.HBM),
+        pltpu.with_memory_space_constraint(w3_scale, pltpu.HBM),
+    )
