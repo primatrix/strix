@@ -90,8 +90,8 @@ class TestConfig:
     def test_default_bf(self):
         assert self.config["bf"] == 256
 
-    def test_dtype_is_bfloat16(self):
-        assert self.config["dtype"] == "bfloat16"
+    def test_dtype_is_fp8(self):
+        assert self.config["dtype"] == "float8_e4m3fn"
         assert self.config["weight_dtype"] == "float8_e4m3fn"
 
     def test_act_fn_is_silu(self):
