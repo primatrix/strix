@@ -247,21 +247,29 @@ def _multi_expert_kernel_fp8(
 
     # -- Compute helper --
 
-    def compute_tile(x_slot, w_slot, is_first_tile):
+    def compute_tile(x_slot, w_slot, is_first_tile,
+                     after_dequant_w1=None, after_dequant_w3=None,
+                     after_dequant_w2=None):
         """FFN1 (gate/up) + FFN2 (down) with VMEM dequant."""
         x = b_x_x2_vmem[x_slot]
 
-        # FFN1: dequant w1/w3 → bf16 dots
+        # FFN1: dequant w1/w3 → prefetch → bf16 dots
         dequant_w1(w_slot)
+        if after_dequant_w1 is not None:
+            after_dequant_w1()
         dequant_w3(w_slot)
+        if after_dequant_w3 is not None:
+            after_dequant_w3()
         w1_bf16 = b_w1_dq_vmem[...]
         w3_bf16 = b_w3_dq_vmem[...]
         gate = jnp.dot(x, w1_bf16, preferred_element_type=jnp.float32)
         up = jnp.dot(x, w3_bf16, preferred_element_type=jnp.float32)
 
-        # FFN2: wait w2, dequant, activation, down-project
+        # FFN2: wait w2, dequant → prefetch → activation, down-project
         wait_fetch_w2(w_slot)
         dequant_w2(w_slot)
+        if after_dequant_w2 is not None:
+            after_dequant_w2()
         w2_bf16 = b_w2_dq_vmem[...]
         act = activation_fn(gate, up, act_fn)
         partial = jnp.dot(act, w2_bf16, preferred_element_type=jnp.float32)
@@ -297,59 +305,47 @@ def _multi_expert_kernel_fp8(
         compute_tile(x_slot, w_slot=0, is_first_tile=True)
 
         # --- Steady state: tiles [1, n_w-1) ---
-        # Post-dequant prefetch: dequant frees fetch buffer → start next DMA immediately
         for tile in range(1, n_w - 1):
             w_slot = tile % 2
             next_w = 1 - w_slot
 
-            # FFN1
             wait_fetch_w1(w_slot)
             wait_fetch_w3(w_slot)
-            dequant_w1(w_slot)
-            start_fetch_w1(next_w, e, tile + 1)
-            dequant_w3(w_slot)
-            start_fetch_w3(next_w, e, tile + 1)
-            x = b_x_x2_vmem[x_slot]
-            gate = jnp.dot(x, b_w1_dq_vmem[...], preferred_element_type=jnp.float32)
-            up = jnp.dot(x, b_w3_dq_vmem[...], preferred_element_type=jnp.float32)
-
-            # FFN2
-            wait_fetch_w2(w_slot)
-            dequant_w2(w_slot)
-            start_fetch_w2(next_w, e, tile + 1)
-            act = activation_fn(gate, up, act_fn)
-            partial = jnp.dot(act, b_w2_dq_vmem[...], preferred_element_type=jnp.float32)
-            b_y_acc_vmem[...] = b_y_acc_vmem[...] + partial
+            compute_tile(
+                x_slot, w_slot, is_first_tile=False,
+                after_dequant_w1=lambda: start_fetch_w1(next_w, e, tile + 1),
+                after_dequant_w3=lambda: start_fetch_w3(next_w, e, tile + 1),
+                after_dequant_w2=lambda: start_fetch_w2(next_w, e, tile + 1),
+            )
 
         # --- Epilogue: last tile + next-expert prefetch ---
         if n_w >= 2:
             last_w = (n_w - 1) % 2
 
-            # FFN1
+            def _epilogue_after_w1():
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_load_x(next_xs, e + 1, priority=1)
+                    start_fetch_w1(0, e + 1, 0)
+
+            def _epilogue_after_w3():
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_fetch_w3(0, e + 1, 0)
+
+            def _epilogue_after_w2():
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_fetch_w2(0, e + 1, 0)
+
             wait_fetch_w1(last_w)
             wait_fetch_w3(last_w)
-            dequant_w1(last_w)
-            @pl.when(e < num_experts - 1)
-            def _():
-                start_load_x(next_xs, e + 1, priority=1)
-                start_fetch_w1(0, e + 1, 0)
-            dequant_w3(last_w)
-            @pl.when(e < num_experts - 1)
-            def _():
-                start_fetch_w3(0, e + 1, 0)
-            x = b_x_x2_vmem[x_slot]
-            gate = jnp.dot(x, b_w1_dq_vmem[...], preferred_element_type=jnp.float32)
-            up = jnp.dot(x, b_w3_dq_vmem[...], preferred_element_type=jnp.float32)
-
-            # FFN2
-            wait_fetch_w2(last_w)
-            dequant_w2(last_w)
-            @pl.when(e < num_experts - 1)
-            def _():
-                start_fetch_w2(0, e + 1, 0)
-            act = activation_fn(gate, up, act_fn)
-            partial = jnp.dot(act, b_w2_dq_vmem[...], preferred_element_type=jnp.float32)
-            b_y_acc_vmem[...] = b_y_acc_vmem[...] + partial
+            compute_tile(
+                x_slot, last_w, is_first_tile=False,
+                after_dequant_w1=_epilogue_after_w1,
+                after_dequant_w3=_epilogue_after_w3,
+                after_dequant_w2=_epilogue_after_w2,
+            )
 
         # --- Expert boundary: double-buffered writeback ---
         @pl.when(e >= 2)
