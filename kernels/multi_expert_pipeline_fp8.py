@@ -91,9 +91,9 @@ def _multi_expert_kernel_fp8(
     b_w1_x2_vmem,         # (2, d, bf) fp8
     b_w3_x2_vmem,         # (2, d, bf) fp8
     b_w2_x2_vmem,         # (2, bf, d) fp8
-    b_w1_scale_x2_vmem,   # (2, d // qbk, 1, bf) f32
-    b_w3_scale_x2_vmem,   # (2, d // qbk, 1, bf) f32
-    b_w2_scale_x2_vmem,   # (2, bf // qbk, 1, d) f32
+    b_w1_scale_vmem,      # (d // qbk, 1, f) f32
+    b_w3_scale_vmem,      # (d // qbk, 1, f) f32
+    b_w2_scale_vmem,      # (f // qbk, 1, d) f32
     b_w1_dq_vmem,         # (d, bf) bf16
     b_w3_dq_vmem,         # (d, bf) bf16
     b_w2_dq_vmem,         # (bf, d) bf16
@@ -104,6 +104,7 @@ def _multi_expert_kernel_fp8(
     weight_sems,           # DMA(2, 3)
     x_sem,                 # DMA(2,)
     y_out_sem,             # DMA(2,)
+    scale_sems,            # DMA(3,)
     *,
     act_fn: str,
     bf: int,
@@ -133,17 +134,48 @@ def _multi_expert_kernel_fp8(
             sem=x_sem.at[x_slot],
         ).wait()
 
-    # -- Weight + Scale DMA (co-fetched, shared semaphore) --
+    # -- Scale DMA (full expert, loaded once per expert) --
+
+    def start_load_scales(expert_idx):
+        pltpu.make_async_copy(
+            src_ref=w1_scale_hbm.at[expert_idx],
+            dst_ref=b_w1_scale_vmem,
+            sem=scale_sems.at[0],
+        ).start(priority=1)
+        pltpu.make_async_copy(
+            src_ref=w3_scale_hbm.at[expert_idx],
+            dst_ref=b_w3_scale_vmem,
+            sem=scale_sems.at[1],
+        ).start(priority=1)
+        pltpu.make_async_copy(
+            src_ref=w2_scale_hbm.at[expert_idx],
+            dst_ref=b_w2_scale_vmem,
+            sem=scale_sems.at[2],
+        ).start(priority=0)
+
+    def wait_load_scales():
+        pltpu.make_async_copy(
+            src_ref=b_w1_scale_vmem,
+            dst_ref=b_w1_scale_vmem,
+            sem=scale_sems.at[0],
+        ).wait()
+        pltpu.make_async_copy(
+            src_ref=b_w3_scale_vmem,
+            dst_ref=b_w3_scale_vmem,
+            sem=scale_sems.at[1],
+        ).wait()
+        pltpu.make_async_copy(
+            src_ref=b_w2_scale_vmem,
+            dst_ref=b_w2_scale_vmem,
+            sem=scale_sems.at[2],
+        ).wait()
+
+    # -- Weight DMA (tile-granularity, double-buffered) --
 
     def start_fetch_w1(slot, expert_idx, tile_idx, priority=1):
         pltpu.make_async_copy(
             src_ref=w1_hbm.at[expert_idx, :, pl.ds(tile_idx * bf, bf)],
             dst_ref=b_w1_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 0],
-        ).start(priority=priority)
-        pltpu.make_async_copy(
-            src_ref=w1_scale_hbm.at[expert_idx, :, :, pl.ds(tile_idx * bf, bf)],
-            dst_ref=b_w1_scale_x2_vmem.at[slot],
             sem=weight_sems.at[slot, 0],
         ).start(priority=priority)
 
@@ -153,21 +185,11 @@ def _multi_expert_kernel_fp8(
             dst_ref=b_w1_x2_vmem.at[slot],
             sem=weight_sems.at[slot, 0],
         ).wait()
-        pltpu.make_async_copy(
-            src_ref=b_w1_scale_x2_vmem.at[slot],
-            dst_ref=b_w1_scale_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 0],
-        ).wait()
 
     def start_fetch_w3(slot, expert_idx, tile_idx, priority=1):
         pltpu.make_async_copy(
             src_ref=w3_hbm.at[expert_idx, :, pl.ds(tile_idx * bf, bf)],
             dst_ref=b_w3_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 1],
-        ).start(priority=priority)
-        pltpu.make_async_copy(
-            src_ref=w3_scale_hbm.at[expert_idx, :, :, pl.ds(tile_idx * bf, bf)],
-            dst_ref=b_w3_scale_x2_vmem.at[slot],
             sem=weight_sems.at[slot, 1],
         ).start(priority=priority)
 
@@ -177,11 +199,6 @@ def _multi_expert_kernel_fp8(
             dst_ref=b_w3_x2_vmem.at[slot],
             sem=weight_sems.at[slot, 1],
         ).wait()
-        pltpu.make_async_copy(
-            src_ref=b_w3_scale_x2_vmem.at[slot],
-            dst_ref=b_w3_scale_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 1],
-        ).wait()
 
     def start_fetch_w2(slot, expert_idx, tile_idx, priority=0):
         pltpu.make_async_copy(
@@ -189,21 +206,11 @@ def _multi_expert_kernel_fp8(
             dst_ref=b_w2_x2_vmem.at[slot],
             sem=weight_sems.at[slot, 2],
         ).start(priority=priority)
-        pltpu.make_async_copy(
-            src_ref=w2_scale_hbm.at[expert_idx, pl.ds(tile_idx * bf // quant_block_k, bf // quant_block_k), :, :],
-            dst_ref=b_w2_scale_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 2],
-        ).start(priority=priority)
 
     def wait_fetch_w2(slot):
         pltpu.make_async_copy(
             src_ref=b_w2_x2_vmem.at[slot],
             dst_ref=b_w2_x2_vmem.at[slot],
-            sem=weight_sems.at[slot, 2],
-        ).wait()
-        pltpu.make_async_copy(
-            src_ref=b_w2_scale_x2_vmem.at[slot],
-            dst_ref=b_w2_scale_x2_vmem.at[slot],
             sem=weight_sems.at[slot, 2],
         ).wait()
 
@@ -227,21 +234,21 @@ def _multi_expert_kernel_fp8(
     # Reshape-based bulk multiply (pattern from gmm_v2.py).
     # Reshape is zero-cost in Pallas; gives compiler full operation graph.
 
-    def dequant_w1(slot):
+    def dequant_w1(slot, tile_idx):
         w_fp8 = b_w1_x2_vmem[slot]
-        s = b_w1_scale_x2_vmem[slot]
+        s = b_w1_scale_vmem[:, :, pl.ds(tile_idx * bf, bf)]
         w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg, quant_block_k, bf)
         b_w1_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(d, bf)
 
-    def dequant_w3(slot):
+    def dequant_w3(slot, tile_idx):
         w_fp8 = b_w3_x2_vmem[slot]
-        s = b_w3_scale_x2_vmem[slot]
+        s = b_w3_scale_vmem[:, :, pl.ds(tile_idx * bf, bf)]
         w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg, quant_block_k, bf)
         b_w3_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(d, bf)
 
-    def dequant_w2(slot):
+    def dequant_w2(slot, tile_idx):
         w_fp8 = b_w2_x2_vmem[slot]
-        s = b_w2_scale_x2_vmem[slot]
+        s = b_w2_scale_vmem[pl.ds(tile_idx * n_sg2, n_sg2), :, :]
         w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg2, quant_block_k, d)
         b_w2_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(bf, d)
 
@@ -253,6 +260,7 @@ def _multi_expert_kernel_fp8(
 
     x_slot = 0
     start_load_x(x_slot=0, expert_idx=0)
+    start_load_scales(0)
     start_fetch_w1(0, 0, 0, priority=1)
     start_fetch_w3(0, 0, 0, priority=1)
     start_fetch_w2(0, 0, 0)
@@ -261,6 +269,7 @@ def _multi_expert_kernel_fp8(
     start_fetch_w2(1, 0, 1)
 
     wait_load_x(x_slot)
+    wait_load_scales()
 
     # -- Expert Loop --
 
@@ -284,8 +293,8 @@ def _multi_expert_kernel_fp8(
 
             x = b_x_x2_vmem[x_slot]
 
-            dequant_w1(w_slot)
-            dequant_w3(w_slot)
+            dequant_w1(w_slot, tile)
+            dequant_w3(w_slot, tile)
 
             @pl.when(should_prefetch)
             def _():
@@ -301,7 +310,7 @@ def _multi_expert_kernel_fp8(
             up = jnp.dot(x, w3_bf16, preferred_element_type=jnp.float32)
 
             wait_fetch_w2(w_slot)
-            dequant_w2(w_slot)
+            dequant_w2(w_slot, tile)
 
             @pl.when(should_prefetch)
             def _():
@@ -323,6 +332,11 @@ def _multi_expert_kernel_fp8(
 
         lax.fori_loop(0, n_w, tile_body, jnp.int32(0), unroll=True)
 
+        # Start next-expert scale DMA early to overlap with writeback
+        @pl.when(e < num_experts - 1)
+        def _():
+            start_load_scales(e + 1)
+
         # --- Expert boundary: double-buffered writeback ---
         @pl.when(e >= 2)
         def _():
@@ -334,6 +348,7 @@ def _multi_expert_kernel_fp8(
         @pl.when(e < num_experts - 1)
         def _():
             wait_load_x(next_xs)
+            wait_load_scales()
 
         return next_xs
 
@@ -424,9 +439,9 @@ def multi_expert_ffn_fp8(
         pltpu.VMEM((2, d, bf), weight_dtype),              # b_w1_x2_vmem
         pltpu.VMEM((2, d, bf), weight_dtype),              # b_w3_x2_vmem
         pltpu.VMEM((2, bf, d), weight_dtype),              # b_w2_x2_vmem
-        pltpu.VMEM((2, n_sg, 1, bf), jnp.float32),        # b_w1_scale_x2_vmem
-        pltpu.VMEM((2, n_sg, 1, bf), jnp.float32),        # b_w3_scale_x2_vmem
-        pltpu.VMEM((2, n_sg2, 1, d), jnp.float32),        # b_w2_scale_x2_vmem
+        pltpu.VMEM((n_sg, 1, f_full), jnp.float32),       # b_w1_scale_vmem
+        pltpu.VMEM((n_sg, 1, f_full), jnp.float32),       # b_w3_scale_vmem
+        pltpu.VMEM((f_full // qbk, 1, d), jnp.float32),   # b_w2_scale_vmem
         pltpu.VMEM((d, bf), jnp.bfloat16),                # b_w1_dq_vmem
         pltpu.VMEM((d, bf), jnp.bfloat16),                # b_w3_dq_vmem
         pltpu.VMEM((bf, d), jnp.bfloat16),                # b_w2_dq_vmem
@@ -436,6 +451,7 @@ def multi_expert_ffn_fp8(
         pltpu.SemaphoreType.DMA((2, 3)),                   # weight_sems
         pltpu.SemaphoreType.DMA((2,)),                     # x_sem
         pltpu.SemaphoreType.DMA((2,)),                     # y_out_sem
+        pltpu.SemaphoreType.DMA((3,)),                     # scale_sems
     )
 
     scope_name = f"multi-expert-fp8-bt{bt}-bf{bf}-e{num_experts}-qbk{qbk}"
