@@ -111,6 +111,7 @@ def _multi_expert_kernel_fp8(
     intermediate_size: int,
     num_experts: int,
     quant_block_k: int,
+    skip_dequant: bool = False,
 ):
     """Pallas kernel body — multi-expert FP8 pipeline with VMEM dequant."""
     _, bt, d = tokens_hbm.shape
@@ -236,21 +237,30 @@ def _multi_expert_kernel_fp8(
 
     def dequant_w1(slot, tile_idx):
         w_fp8 = b_w1_x2_vmem[slot]
-        s = b_w1_scale_vmem[:, :, pl.ds(tile_idx * bf, bf)]
-        w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg, quant_block_k, bf)
-        b_w1_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(d, bf)
+        if skip_dequant:
+            b_w1_dq_vmem[...] = w_fp8.astype(jnp.bfloat16)
+        else:
+            s = b_w1_scale_vmem[:, :, pl.ds(tile_idx * bf, bf)]
+            w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg, quant_block_k, bf)
+            b_w1_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(d, bf)
 
     def dequant_w3(slot, tile_idx):
         w_fp8 = b_w3_x2_vmem[slot]
-        s = b_w3_scale_vmem[:, :, pl.ds(tile_idx * bf, bf)]
-        w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg, quant_block_k, bf)
-        b_w3_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(d, bf)
+        if skip_dequant:
+            b_w3_dq_vmem[...] = w_fp8.astype(jnp.bfloat16)
+        else:
+            s = b_w3_scale_vmem[:, :, pl.ds(tile_idx * bf, bf)]
+            w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg, quant_block_k, bf)
+            b_w3_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(d, bf)
 
     def dequant_w2(slot, tile_idx):
         w_fp8 = b_w2_x2_vmem[slot]
-        s = b_w2_scale_vmem[pl.ds(tile_idx * n_sg2, n_sg2), :, :]
-        w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg2, quant_block_k, d)
-        b_w2_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(bf, d)
+        if skip_dequant:
+            b_w2_dq_vmem[...] = w_fp8.astype(jnp.bfloat16)
+        else:
+            s = b_w2_scale_vmem[pl.ds(tile_idx * n_sg2, n_sg2), :, :]
+            w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg2, quant_block_k, d)
+            b_w2_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(bf, d)
 
     def start_fetch_w13(slot, expert_idx, tile_idx):
         start_fetch_w1(slot, expert_idx, tile_idx)
@@ -367,7 +377,7 @@ def _multi_expert_kernel_fp8(
 
 
 @functools.partial(jax.jit, static_argnames=[
-    "act_fn", "bf", "num_experts", "quant_block_k",
+    "act_fn", "bf", "num_experts", "quant_block_k", "skip_dequant",
 ])
 def multi_expert_ffn_fp8(
     tokens: jax.Array,
@@ -382,6 +392,7 @@ def multi_expert_ffn_fp8(
     bf: int = 256,
     num_experts: int,
     quant_block_k: int = 256,
+    skip_dequant: bool = False,
 ) -> jax.Array:
     """Run the multi-expert FP8 double-buffer FFN kernel (VMEM dequant path).
 
@@ -470,6 +481,7 @@ def multi_expert_ffn_fp8(
             intermediate_size=f_full,
             num_experts=num_experts,
             quant_block_k=qbk,
+            skip_dequant=skip_dequant,
         ),
         out_shape=jax.ShapeDtypeStruct((num_experts, bt, d), dtype),
         grid_spec=pltpu.PrefetchScalarGridSpec(
@@ -521,6 +533,7 @@ def kernel_fn(
     bf: int = 256,
     num_experts: int = 8,
     quant_block_k: int = 256,
+    skip_dequant: bool = False,
     **_kwargs,
 ) -> Callable[[], jax.Array]:
     """Build random FP8 inputs and return a zero-arg closure calling the kernel."""
@@ -548,6 +561,7 @@ def kernel_fn(
             w1_scale=w1s, w2_scale=w2s, w3_scale=w3s,
             act_fn=act_fn, bf=bf, num_experts=num_experts,
             quant_block_k=quant_block_k,
+            skip_dequant=skip_dequant,
         )
 
     return run

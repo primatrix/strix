@@ -61,6 +61,8 @@ def main():
     p.add_argument("--num-tokens", type=int, default=256)
     p.add_argument("--experts", type=str, help="Comma-separated expert counts")
     p.add_argument("--no-ir-dump", action="store_true")
+    p.add_argument("--skip-dequant", action="store_true",
+                   help="Skip scale multiply in FP8 dequant (cast-only)")
     args = p.parse_args()
 
     defaults = PROFILES.get(args.profile, PROFILES["ling2.6"])
@@ -75,7 +77,8 @@ def main():
         if args.experts else defaults["experts"]
     )
 
-    print(f"Config: d={d}, f={f}, bf={bf}, bt={bt}")
+    print(f"Config: d={d}, f={f}, bf={bf}, bt={bt}"
+          f"{' [skip_dequant]' if args.skip_dequant else ''}")
     print(f"{'experts':>8} {'median_ms':>10} {'mean_ms':>10} {'min_ms':>10} "
           f"{'max_ms':>10} {'stdev_ms':>10} {'per_expert_us':>14}")
     print("-" * 84)
@@ -84,6 +87,7 @@ def main():
         run = kernel_fn(
             num_experts=ne, num_tokens=bt,
             hidden_size=d, intermediate_size=f, bf=bf,
+            skip_dequant=args.skip_dequant,
         )
         for _ in range(NUM_WARMUP):
             run().block_until_ready()
