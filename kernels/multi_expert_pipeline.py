@@ -29,7 +29,7 @@ config = {
         "num_experts": 8,
     },
     "dtype": "bfloat16",
-    "weight_dtype": "bfloat16",
+    "weight_dtype": "float8_e4m3fn",
     "act_fn": "silu",
     "bf": 256,
     "tpu_type": "v7x",
@@ -141,15 +141,15 @@ def _multi_expert_kernel(
 
     def compute_tile(x_slot, w_slot, is_first_tile):
         x = b_x_x2_vmem[x_slot]
-        w1 = b_w1_x2_vmem[w_slot]
-        w3 = b_w3_x2_vmem[w_slot]
+        w1 = b_w1_x2_vmem[w_slot].astype(jnp.bfloat16)
+        w3 = b_w3_x2_vmem[w_slot].astype(jnp.bfloat16)
         gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)
         up = jnp.dot(x, w3, preferred_element_type=jnp.float32)
         act_up = activation_fn(gate, up, act_fn)
 
         wait_fetch_w2(w_slot)
 
-        w2 = b_w2_x2_vmem[w_slot]
+        w2 = b_w2_x2_vmem[w_slot].astype(jnp.bfloat16)
         partial = jnp.dot(act_up, w2, preferred_element_type=jnp.float32)
         if is_first_tile:
             b_y_acc_vmem[...] = partial
@@ -257,9 +257,9 @@ def multi_expert_ffn(
 
     Shapes:
       tokens: (num_experts, bt, d) bf16
-      w1:     (num_experts, d, f)  bf16
-      w2:     (num_experts, f, d)  bf16
-      w3:     (num_experts, d, f)  bf16
+      w1:     (num_experts, d, f)  fp8 (cast to bf16 in kernel)
+      w2:     (num_experts, f, d)  fp8 (cast to bf16 in kernel)
+      w3:     (num_experts, d, f)  fp8 (cast to bf16 in kernel)
     Returns:
       output: (num_experts, bt, d) bf16
     """
@@ -360,9 +360,9 @@ def kernel_fn(
     key = jax.random.key(42)
     k1, k2, k3, k4 = jax.random.split(key, 4)
     tokens = jax.random.normal(k1, (num_experts, num_tokens, hidden_size), dtype=dtype)
-    w1 = jax.random.normal(k2, (num_experts, hidden_size, intermediate_size), dtype=weight_dtype)
-    w2 = jax.random.normal(k3, (num_experts, intermediate_size, hidden_size), dtype=weight_dtype)
-    w3 = jax.random.normal(k4, (num_experts, hidden_size, intermediate_size), dtype=weight_dtype)
+    w1 = jax.random.normal(k2, (num_experts, hidden_size, intermediate_size), dtype=jnp.bfloat16).astype(weight_dtype)
+    w2 = jax.random.normal(k3, (num_experts, intermediate_size, hidden_size), dtype=jnp.bfloat16).astype(weight_dtype)
+    w3 = jax.random.normal(k4, (num_experts, hidden_size, intermediate_size), dtype=jnp.bfloat16).astype(weight_dtype)
 
     def run():
         return multi_expert_ffn(
@@ -381,9 +381,9 @@ if __name__ == "__main__":
     key = jax.random.key(0)
     k1, k2, k3, k4 = jax.random.split(key, 4)
     tokens = jax.random.normal(k1, (num_experts_arg, bt, 8192), dtype=jnp.bfloat16)
-    w1 = jax.random.normal(k2, (num_experts_arg, 8192, 2048), dtype=jnp.bfloat16)
-    w2 = jax.random.normal(k3, (num_experts_arg, 2048, 8192), dtype=jnp.bfloat16)
-    w3 = jax.random.normal(k4, (num_experts_arg, 8192, 2048), dtype=jnp.bfloat16)
+    w1 = jax.random.normal(k2, (num_experts_arg, 8192, 2048), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
+    w2 = jax.random.normal(k3, (num_experts_arg, 2048, 8192), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
+    w3 = jax.random.normal(k4, (num_experts_arg, 8192, 2048), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
 
     result = multi_expert_ffn(
         tokens, w1, w2, w3, bf=bf_arg, num_experts=num_experts_arg,

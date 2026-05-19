@@ -92,7 +92,7 @@ class TestConfig:
 
     def test_dtype_is_bfloat16(self):
         assert self.config["dtype"] == "bfloat16"
-        assert self.config["weight_dtype"] == "bfloat16"
+        assert self.config["weight_dtype"] == "float8_e4m3fn"
 
     def test_act_fn_is_silu(self):
         assert self.config["act_fn"] == "silu"
