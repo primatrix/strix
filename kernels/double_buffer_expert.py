@@ -1,8 +1,8 @@
 """Double-buffer expert FFN kernel — §5.8 decode pipeline for Ling 2.6.
 
 Single routed expert, B=1, persistent x, dual weight slots, low-priority
-W2 DMA, fp32 y_acc accumulator. Hard-coded for d=8192, f=2048, bf16 tokens dynamically quantized
-to fp8, fp8×fp8 MXU matmul.
+W2 DMA, fp32 y_acc accumulator. Hard-coded for d=8192, f=2048,
+fp8 tokens, fp8 weights, fp8×fp8 MXU matmul, bf16 output.
 
 Spec: docs/superpowers/specs/2026-05-11-double-buffer-expert-design.md
 """
@@ -30,7 +30,7 @@ config = {
         "hidden_size": 8192,
         "intermediate_size": 2048,
     },
-    "dtype": "bfloat16",
+    "dtype": "float8_e4m3fn",
     "weight_dtype": "float8_e4m3fn",
     "act_fn": "silu",
     "bf": 256,
@@ -38,7 +38,7 @@ config = {
     "tpu_topology": "2x2x1",
     "description": (
         "Double-buffer expert FFN — §5.8 B=1 decode "
-        "(bf16→fp8 tokens, fp8×fp8 MXU, dual W slots, low-pri W2)"
+        "(fp8 tokens, fp8×fp8 MXU, dual W slots, low-pri W2)"
     ),
 }
 
@@ -125,11 +125,10 @@ def _double_buffer_expert_kernel(
     def compute_tile(slot, is_first_tile):
         """Gate/up compute (W1, W3), then wait W2 (low-pri overlap), then accumulate."""
         x = b_x_vmem[...]
-        x_fp8 = x.astype(jnp.float8_e4m3fn)
         w1 = b_w1_x2_vmem[slot]
         w3 = b_w3_x2_vmem[slot]
-        gate = jnp.dot(x_fp8, w1, preferred_element_type=jnp.float32)
-        up = jnp.dot(x_fp8, w3, preferred_element_type=jnp.float32)
+        gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)
+        up = jnp.dot(x, w3, preferred_element_type=jnp.float32)
         act_up = activation_fn(gate, up, act_fn)
 
         wait_fetch_w2(slot)  # deferred — overlaps with gate/up MXU
@@ -199,7 +198,7 @@ def double_buffer_expert(
     """Run the double-buffer expert FFN kernel.
 
     Shapes:
-      tokens: (bt, d) bf16 (quantized to fp8 in kernel)
+      tokens: (bt, d) fp8
       w1:     (d, f)  fp8
       w2:     (f, d)  fp8
       w3:     (d, f)  fp8
@@ -224,14 +223,15 @@ def double_buffer_expert(
 
     dtype = tokens.dtype
     weight_dtype = w1.dtype
+    output_dtype = jnp.bfloat16
 
     scratch_shapes = (
         pltpu.VMEM((2, d, bf), weight_dtype),            # b_w1_x2_vmem
         pltpu.VMEM((2, d, bf), weight_dtype),            # b_w3_x2_vmem
         pltpu.VMEM((2, bf, d), weight_dtype),            # b_w2_x2_vmem
-        pltpu.VMEM((bt, d), dtype),                      # b_x_vmem
+        pltpu.VMEM((bt, d), dtype),                      # b_x_vmem (fp8)
         pltpu.VMEM((bt, d), jnp.float32),                # b_y_acc_vmem (fp32)
-        pltpu.VMEM((bt, d), dtype),                      # b_y_out_vmem (bf16 stage)
+        pltpu.VMEM((bt, d), output_dtype),               # b_y_out_vmem (bf16 stage)
         pltpu.SemaphoreType.DMA((2, 3)),                 # weight_sems[slot, channel]
         pltpu.SemaphoreType.DMA((1,)),                   # x_sem
         pltpu.SemaphoreType.DMA((1,)),                   # y_out_sem
@@ -247,7 +247,7 @@ def double_buffer_expert(
             bf=bf,
             intermediate_size=f_full,
         ),
-        out_shape=jax.ShapeDtypeStruct((bt, d), dtype),
+        out_shape=jax.ShapeDtypeStruct((bt, d), output_dtype),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[hbm, hbm, hbm, hbm],
@@ -279,7 +279,7 @@ def _ref_expert_ffn(
     gate = tokens.astype(jnp.float32) @ w1.astype(jnp.float32)
     up = tokens.astype(jnp.float32) @ w3.astype(jnp.float32)
     act = activation_fn(gate, up, act_fn)
-    return (act @ w2.astype(jnp.float32)).astype(tokens.dtype)
+    return (act @ w2.astype(jnp.float32)).astype(jnp.bfloat16)
 
 
 def kernel_fn(
@@ -298,7 +298,7 @@ def kernel_fn(
     """
     key = jax.random.key(42)
     k1, k2, k3, k4 = jax.random.split(key, 4)
-    tokens = jax.random.normal(k1, (num_tokens, hidden_size), dtype=dtype)
+    tokens = jax.random.normal(k1, (num_tokens, hidden_size), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
     w1 = jax.random.normal(k2, (hidden_size, intermediate_size), dtype=jnp.bfloat16).astype(weight_dtype)
     w2 = jax.random.normal(k3, (intermediate_size, hidden_size), dtype=jnp.bfloat16).astype(weight_dtype)
     w3 = jax.random.normal(k4, (hidden_size, intermediate_size), dtype=jnp.bfloat16).astype(weight_dtype)
@@ -317,7 +317,7 @@ if __name__ == "__main__":
 
     key = jax.random.key(0)
     k1, k2, k3, k4 = jax.random.split(key, 4)
-    tokens = jax.random.normal(k1, (bt, 8192), dtype=jnp.bfloat16)
+    tokens = jax.random.normal(k1, (bt, 8192), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
     w1 = jax.random.normal(k2, (8192, 2048), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
     w2 = jax.random.normal(k3, (2048, 8192), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
     w3 = jax.random.normal(k4, (8192, 2048), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
