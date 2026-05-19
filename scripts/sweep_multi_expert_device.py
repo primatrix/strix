@@ -39,7 +39,7 @@ PROFILES = {
         # Real MiMo V2 Pro: d=6144, f=2048, pure fp8.
         # bf=1024 gives n_w=2 tiles, each (6144×1024)×1B = 6 MiB.
         kernel="kernels.multi_expert_pipeline",
-        hidden_size=6144, intermediate_size=2048, bf=1024,
+        hidden_size=6144, intermediate_size=2048, bf=512,
         experts=[1, 4, 8, 12, 16, 24, 48],
     ),
     "mimo-v2-fp8": dict(
