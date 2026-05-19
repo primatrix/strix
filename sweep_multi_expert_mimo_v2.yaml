@@ -1,14 +1,13 @@
-# Multi-expert pipeline sweep — MiMo V2 Pro decode profile (FP8 approx)
+# Multi-expert pipeline sweep — MiMo V2 Pro decode profile (native FP8)
 # =====================================================================
 # Stage:  Decode (autoregressive)
 # Model:  MiMo V2 Pro (384 routed experts, top_k=8, SwiGLU)
-#         d=6144, f=2048, FP8 e4m3 weights
+#         d=6144, f=2048, FP8 e4m3fn weights (cast to bf16 in kernel)
 # Kernel: multi_expert_pipeline (sequential N-expert double-buffer FFN)
 #
-# FP8 approximation: since the kernel uses bf16 weights, we halve
-# intermediate_size (2048 → 1024) so that per-tile DMA volume in bf16
-# matches FP8:  bf16 (6144 × 256) × 2B = fp8 (6144 × 512) × 1B.
-# This also preserves n_w = 4 tiles, matching the real fp8 bf=512 config.
+# Native FP8: kernel accepts float8_e4m3fn weights and casts to bf16
+# before each matmul.  bf=512 gives n_w=4 tiles, each (6144×512)×1B
+# = 3 MiB — same per-tile DMA as the old bf16 approx (6144×256×2B).
 #
 # EP layout: 2x2x1 = 4 chips = 8 devices.
 # EP=8 → 384/8 = 48 experts per device.
@@ -18,12 +17,12 @@
 #
 # Run:
 #   bash scripts/run_benchmark.sh kernels.multi_expert_pipeline \
-#     --shape "256,6144,1024" --no-ir-dump \
+#     --shape "256,6144,2048" --no-ir-dump \
 #     --runner-script scripts/sweep_multi_expert_device.py \
 #     --runner-args "--profile mimo-v2"
 
 kernel: kernels.multi_expert_pipeline
-shape: "256,6144,1024"
+shape: "256,6144,2048"
 tpu_type: v7x
 tpu_topology: 2x2x1
 no_ir_dump: true
