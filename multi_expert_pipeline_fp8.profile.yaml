@@ -1,0 +1,30 @@
+# Multi-expert pipeline FP8 sweep — MiMo V2 Pro decode profile
+# =============================================================
+# Stage:  Decode (autoregressive)
+# Model:  MiMo V2 Pro (384 routed experts, top_k=8, SwiGLU)
+#         d=6144, f=2048, FP8 e4m3fn weights, quant_block_k=256
+# Kernel: multi_expert_pipeline_fp8 (VMEM dequant path)
+#
+# Native FP8: weights are stored in e4m3fn with block-wise scales,
+# so intermediate_size=2048 is the true model dimension (no halving).
+# bf=512 → n_w = 2048/512 = 4 tiles per gate/up/down projection.
+#
+# EP layout: 2x2x1 = 4 chips = 8 devices.
+# EP=8 → 384/8 = 48 experts per device.
+# Sweep: [4, 8, 12, 24, 36, 48] experts.
+#
+# Shape encoding (metadata): num_tokens,hidden_size,intermediate_size
+#
+# Run:
+#   bash scripts/run_benchmark.sh kernels.multi_expert_pipeline_fp8 \
+#     --shape "256,6144,2048" --no-ir-dump \
+#     --runner-script scripts/sweep_multi_expert_device.py \
+#     --runner-args "--profile mimo-v2-fp8"
+
+kernel: kernels.multi_expert_pipeline_fp8
+shape: "256,6144,2048"
+tpu_type: v7x
+tpu_topology: 2x2x1
+no_ir_dump: true
+runner_script: scripts/sweep_multi_expert_device.py
+runner_args: "--profile mimo-v2-fp8"

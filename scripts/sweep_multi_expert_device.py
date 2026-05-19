@@ -5,7 +5,8 @@ Supports configurable shapes for different model profiles.
 
 Usage:
   python scripts/sweep_multi_expert_device.py                    # Ling 2.6 defaults
-  python scripts/sweep_multi_expert_device.py --profile mimo-v2  # MiMo V2 fp8-approx
+  python scripts/sweep_multi_expert_device.py --profile mimo-v2      # MiMo V2 bf16 approx
+  python scripts/sweep_multi_expert_device.py --profile mimo-v2-fp8  # MiMo V2 native FP8
   python scripts/sweep_multi_expert_device.py --hidden-size 6144 --intermediate-size 1024
 """
 import argparse
@@ -38,6 +39,11 @@ PROFILES = {
         #   fp8 f=2048 bf=512 when using bf16 bf=256).
         hidden_size=6144, intermediate_size=1024, bf=256,
         experts=[1, 4, 8, 12, 16, 24, 48],
+    ),
+    "mimo-v2-fp8": dict(
+        # Native FP8 e4m3fn weights, quant_block_k=256, bf=512.
+        hidden_size=6144, intermediate_size=2048, bf=512,
+        experts=[4, 8, 12, 24, 36, 48],
     ),
 }
 
