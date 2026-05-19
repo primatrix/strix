@@ -304,48 +304,47 @@ def _multi_expert_kernel_fp8(
         wait_fetch_w3(0)
         compute_tile(x_slot, w_slot=0, is_first_tile=True)
 
-        # --- Steady state: tiles [1, n_w-1) ---
-        for tile in range(1, n_w - 1):
+        # --- Tiles [1, n_w): prefetch next tile, or next-expert tiles when last ---
+        for tile in range(1, n_w):
             w_slot = tile % 2
             next_w = 1 - w_slot
 
             wait_fetch_w1(w_slot)
             wait_fetch_w3(w_slot)
-            compute_tile(
-                x_slot, w_slot, is_first_tile=False,
-                after_dequant_w1=lambda: start_fetch_w1(next_w, e, tile + 1),
-                after_dequant_w3=lambda: start_fetch_w3(next_w, e, tile + 1),
-                after_dequant_w2=lambda: start_fetch_w2(next_w, e, tile + 1),
-            )
 
-        # --- Epilogue: last tile + next-expert prefetch ---
-        if n_w >= 2:
-            last_w = (n_w - 1) % 2
+            if tile + 1 < n_w:
+                compute_tile(
+                    x_slot, w_slot, is_first_tile=False,
+                    after_dequant_w1=lambda: start_fetch_w1(next_w, e, tile + 1),
+                    after_dequant_w3=lambda: start_fetch_w3(next_w, e, tile + 1),
+                    after_dequant_w2=lambda: start_fetch_w2(next_w, e, tile + 1),
+                )
+            else:
+                def _next_expert_after_w1():
+                    @pl.when(e < num_experts - 1)
+                    def _():
+                        start_load_x(next_xs, e + 1, priority=1)
+                        start_fetch_w1(0, e + 1, 0)
+                        start_fetch_w1(1, e + 1, 1)
 
-            def _epilogue_after_w1():
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_load_x(next_xs, e + 1, priority=1)
-                    start_fetch_w1(0, e + 1, 0)
+                def _next_expert_after_w3():
+                    @pl.when(e < num_experts - 1)
+                    def _():
+                        start_fetch_w3(0, e + 1, 0)
+                        start_fetch_w3(1, e + 1, 1)
 
-            def _epilogue_after_w3():
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_fetch_w3(0, e + 1, 0)
+                def _next_expert_after_w2():
+                    @pl.when(e < num_experts - 1)
+                    def _():
+                        start_fetch_w2(0, e + 1, 0)
+                        start_fetch_w2(1, e + 1, 1)
 
-            def _epilogue_after_w2():
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_fetch_w2(0, e + 1, 0)
-
-            wait_fetch_w1(last_w)
-            wait_fetch_w3(last_w)
-            compute_tile(
-                x_slot, last_w, is_first_tile=False,
-                after_dequant_w1=_epilogue_after_w1,
-                after_dequant_w3=_epilogue_after_w3,
-                after_dequant_w2=_epilogue_after_w2,
-            )
+                compute_tile(
+                    x_slot, w_slot, is_first_tile=False,
+                    after_dequant_w1=_next_expert_after_w1,
+                    after_dequant_w3=_next_expert_after_w3,
+                    after_dequant_w2=_next_expert_after_w2,
+                )
 
         # --- Expert boundary: double-buffered writeback ---
         @pl.when(e >= 2)
@@ -354,13 +353,6 @@ def _multi_expert_kernel_fp8(
 
         b_y_out_vmem[x_slot] = b_y_acc_vmem[...].astype(jnp.bfloat16)
         start_writeback(e, x_slot)
-
-        @pl.when(e < num_experts - 1)
-        def _():
-            if n_w >= 2:
-                start_fetch_w1(1, e + 1, 1)
-                start_fetch_w3(1, e + 1, 1)
-                start_fetch_w2(1, e + 1, 1)
 
         @pl.when(e < num_experts - 1)
         def _():
