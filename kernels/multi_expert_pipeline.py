@@ -221,53 +221,50 @@ def _multi_expert_kernel(
             sem=y_out_sem.at[y_slot],
         ).wait()
 
-    # -- Per-block activation quant + fp8×fp8 MXU fusion --
-    # Quantize bf16 activations to fp8 per (row, K-block), then run
-    # fp8×fp8 matmul on MXU (2x throughput vs bf16). Post-multiply
-    # activation dequant scale (bt,1) × weight dequant scale (1,bf).
+    # -- Per-block activation quant + fp8×fp8 MXU (reshape-based) --
+    # Reshape activations and weights into (n_sg, quant_block_k, ...) blocks,
+    # vectorize per-block activation quantization, batched fp8×fp8 dot_general
+    # on MXU (n_sg as batch dim), post-multiply activation × weight scales,
+    # reduce over blocks.
 
     def fp8_dot_w13(x, w_slot, tile_idx):
-        """Per-block activation quant + fp8×fp8 gate/up matmuls for w1, w3."""
-        gate = jnp.zeros((bt, bf), jnp.float32)
-        up = jnp.zeros((bt, bf), jnp.float32)
+        """Batched fp8×fp8 gate/up matmuls with per-block activation quant."""
         fp8_max = jnp.float32(jnp.finfo(jnp.float8_e4m3fn).max)
-        w1_tile = b_w1_x2_vmem[w_slot]
-        w3_tile = b_w3_x2_vmem[w_slot]
-        for sg in range(n_sg):
-            off = sg * quant_block_k
-            x_f32 = x[:, off:off + quant_block_k].astype(jnp.float32)
-            x_abs_max = jnp.max(jnp.abs(x_f32), axis=1, keepdims=True)
-            x_s = jnp.where(x_abs_max > 0, x_abs_max / fp8_max, 1.0)
-            x_q = (x_f32 / x_s).astype(jnp.float8_e4m3fn)
+        x_f32 = x.astype(jnp.float32).reshape(bt, n_sg, quant_block_k)
+        x_abs_max = jnp.max(jnp.abs(x_f32), axis=2, keepdims=True)
+        x_s = jnp.where(x_abs_max > 0, x_abs_max / fp8_max, 1.0)
+        x_q = (x_f32 / x_s).astype(jnp.float8_e4m3fn)
 
-            w1_blk = w1_tile[off:off + quant_block_k, :]
-            w3_blk = w3_tile[off:off + quant_block_k, :]
-            gate_p = jnp.dot(x_q, w1_blk, preferred_element_type=jnp.float32)
-            up_p = jnp.dot(x_q, w3_blk, preferred_element_type=jnp.float32)
+        w1_blks = b_w1_x2_vmem[w_slot].reshape(n_sg, quant_block_k, bf)
+        w3_blks = b_w3_x2_vmem[w_slot].reshape(n_sg, quant_block_k, bf)
+        s1 = b_w1_scale_vmem[:, :, pl.ds(tile_idx * bf, bf)]
+        s3 = b_w3_scale_vmem[:, :, pl.ds(tile_idx * bf, bf)]
 
-            s1 = b_w1_scale_vmem[sg, :, pl.ds(tile_idx * bf, bf)]
-            s3 = b_w3_scale_vmem[sg, :, pl.ds(tile_idx * bf, bf)]
-            gate += gate_p * (x_s * s1)
-            up += up_p * (x_s * s3)
+        dn = (([2], [1]), ([1], [0]))
+        gate_raw = lax.dot_general(x_q, w1_blks, dn, preferred_element_type=jnp.float32)
+        up_raw = lax.dot_general(x_q, w3_blks, dn, preferred_element_type=jnp.float32)
+
+        x_s_t = x_s.transpose(1, 0, 2)
+        gate = jnp.sum(gate_raw * (x_s_t * s1), axis=0)
+        up = jnp.sum(up_raw * (x_s_t * s3), axis=0)
         return gate, up
 
     def fp8_dot_w2(act, w_slot, tile_idx):
-        """Per-block activation quant + fp8×fp8 down-projection for w2."""
-        out = jnp.zeros((bt, d), jnp.float32)
+        """Batched fp8×fp8 down-projection with per-block activation quant."""
         fp8_max = jnp.float32(jnp.finfo(jnp.float8_e4m3fn).max)
-        w2_tile = b_w2_x2_vmem[w_slot]
-        for sg in range(n_sg2):
-            off = sg * quant_block_k
-            act_blk = act[:, off:off + quant_block_k]
-            a_abs_max = jnp.max(jnp.abs(act_blk), axis=1, keepdims=True)
-            a_s = jnp.where(a_abs_max > 0, a_abs_max / fp8_max, 1.0)
-            a_q = (act_blk / a_s).astype(jnp.float8_e4m3fn)
+        act_f32 = act.reshape(bt, n_sg2, quant_block_k)
+        a_abs_max = jnp.max(jnp.abs(act_f32), axis=2, keepdims=True)
+        a_s = jnp.where(a_abs_max > 0, a_abs_max / fp8_max, 1.0)
+        a_q = (act_f32 / a_s).astype(jnp.float8_e4m3fn)
 
-            w2_blk = w2_tile[off:off + quant_block_k, :]
-            partial = jnp.dot(a_q, w2_blk, preferred_element_type=jnp.float32)
+        w2_blks = b_w2_x2_vmem[w_slot].reshape(n_sg2, quant_block_k, d)
+        s2 = b_w2_scale_vmem[pl.ds(tile_idx * n_sg2, n_sg2), :, :]
 
-            s2 = b_w2_scale_vmem[tile_idx * n_sg2 + sg, :, :]
-            out += partial * (a_s * s2)
+        dn = (([2], [1]), ([1], [0]))
+        out_raw = lax.dot_general(a_q, w2_blks, dn, preferred_element_type=jnp.float32)
+
+        a_s_t = a_s.transpose(1, 0, 2)
+        out = jnp.sum(out_raw * (a_s_t * s2), axis=0)
         return out
 
     # -- Compute --
