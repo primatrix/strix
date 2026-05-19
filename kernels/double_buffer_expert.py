@@ -1,7 +1,8 @@
 """Double-buffer expert FFN kernel — §5.8 decode pipeline for Ling 2.6.
 
 Single routed expert, B=1, persistent x, dual weight slots, low-priority
-W2 DMA, fp32 y_acc accumulator. Hard-coded for d=8192, f=2048, bf16.
+W2 DMA, fp32 y_acc accumulator. Hard-coded for d=8192, f=2048, bf16 tokens,
+fp8 weights (cast to bf16 at compute).
 
 Spec: docs/superpowers/specs/2026-05-11-double-buffer-expert-design.md
 """
@@ -30,7 +31,7 @@ config = {
         "intermediate_size": 2048,
     },
     "dtype": "bfloat16",
-    "weight_dtype": "bfloat16",
+    "weight_dtype": "float8_e4m3fn",
     "act_fn": "silu",
     "bf": 256,
     "tpu_type": "v7x",
@@ -124,15 +125,15 @@ def _double_buffer_expert_kernel(
     def compute_tile(slot, is_first_tile):
         """Gate/up compute (W1, W3), then wait W2 (low-pri overlap), then accumulate."""
         x = b_x_vmem[...]
-        w1 = b_w1_x2_vmem[slot]
-        w3 = b_w3_x2_vmem[slot]
+        w1 = b_w1_x2_vmem[slot].astype(jnp.bfloat16)
+        w3 = b_w3_x2_vmem[slot].astype(jnp.bfloat16)
         gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)
         up = jnp.dot(x, w3, preferred_element_type=jnp.float32)
         act_up = activation_fn(gate, up, act_fn)
 
         wait_fetch_w2(slot)  # deferred — overlaps with gate/up MXU
 
-        w2 = b_w2_x2_vmem[slot]
+        w2 = b_w2_x2_vmem[slot].astype(jnp.bfloat16)
         partial = jnp.dot(act_up, w2, preferred_element_type=jnp.float32)
         if is_first_tile:
             b_y_acc_vmem[...] = partial
@@ -197,9 +198,9 @@ def double_buffer_expert(
 
     Shapes:
       tokens: (bt, d) bf16
-      w1:     (d, f)  bf16
-      w2:     (f, d)  bf16
-      w3:     (d, f)  bf16
+      w1:     (d, f)  fp8 (cast to bf16 in kernel)
+      w2:     (f, d)  fp8 (cast to bf16 in kernel)
+      w3:     (d, f)  fp8 (cast to bf16 in kernel)
     Returns:
       output: (bt, d) bf16
     """
@@ -296,9 +297,9 @@ def kernel_fn(
     key = jax.random.key(42)
     k1, k2, k3, k4 = jax.random.split(key, 4)
     tokens = jax.random.normal(k1, (num_tokens, hidden_size), dtype=dtype)
-    w1 = jax.random.normal(k2, (hidden_size, intermediate_size), dtype=weight_dtype)
-    w2 = jax.random.normal(k3, (intermediate_size, hidden_size), dtype=weight_dtype)
-    w3 = jax.random.normal(k4, (hidden_size, intermediate_size), dtype=weight_dtype)
+    w1 = jax.random.normal(k2, (hidden_size, intermediate_size), dtype=jnp.bfloat16).astype(weight_dtype)
+    w2 = jax.random.normal(k3, (intermediate_size, hidden_size), dtype=jnp.bfloat16).astype(weight_dtype)
+    w3 = jax.random.normal(k4, (hidden_size, intermediate_size), dtype=jnp.bfloat16).astype(weight_dtype)
 
     def run():
         return double_buffer_expert(
@@ -315,9 +316,9 @@ if __name__ == "__main__":
     key = jax.random.key(0)
     k1, k2, k3, k4 = jax.random.split(key, 4)
     tokens = jax.random.normal(k1, (bt, 8192), dtype=jnp.bfloat16)
-    w1 = jax.random.normal(k2, (8192, 2048), dtype=jnp.bfloat16)
-    w2 = jax.random.normal(k3, (2048, 8192), dtype=jnp.bfloat16)
-    w3 = jax.random.normal(k4, (8192, 2048), dtype=jnp.bfloat16)
+    w1 = jax.random.normal(k2, (8192, 2048), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
+    w2 = jax.random.normal(k3, (2048, 8192), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
+    w3 = jax.random.normal(k4, (8192, 2048), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
 
     result = double_buffer_expert(tokens, w1, w2, w3, bf=bf_arg)
     ref = _ref_expert_ffn(tokens, w1, w2, w3)
