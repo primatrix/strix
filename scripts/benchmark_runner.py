@@ -109,6 +109,12 @@ def parse_args(argv=None):
         help="Override config default_shape.num_tokens (per-run override)",
     )
     p.add_argument(
+        "--num-experts",
+        type=int,
+        default=_int_or_none(os.environ.get("NUM_EXPERTS")),
+        help="Override config default_shape.num_experts (per-run override)",
+    )
+    p.add_argument(
         "--output-dir",
         default=os.environ.get("OUTPUT_DIR") or os.environ.get("ARTIFACT_LOCAL_DIR") or "/tmp/operator-artifact",
         help="Operator-optimization artifact root directory",
@@ -377,7 +383,7 @@ def _timed_runs(run_fn, num_runs: int, trace_root: str = "/tmp/strix_bench_trace
     return [d / 1000.0 for d in durations_ms]
 
 
-def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_size=None, bf=None, bd=None, num_tokens=None):
+def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_size=None, bf=None, bd=None, num_tokens=None, num_experts=None):
     """Execute kernel benchmark and return list of timing values (seconds)."""
     kwargs = dict(config.get("default_shape", {}))
     if chunk_size is not None:
@@ -389,6 +395,8 @@ def run_benchmark(kernel_fn, config, num_warmup, num_runs, chunk_size=None, ep_s
         kwargs["bd"] = bd
     if num_tokens is not None:
         kwargs["num_tokens"] = num_tokens
+    if num_experts is not None:
+        kwargs["num_experts"] = num_experts
 
     run_fn = kernel_fn(**kwargs)
 
@@ -753,6 +761,7 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
         bf=args.bf,
         bd=args.bd,
         num_tokens=args.num_tokens,
+        num_experts=args.num_experts,
     )
 
     if not is_coordinator():
@@ -764,6 +773,8 @@ def main(argv=None, ir_dump_root=None, benchmark_result_path=None, output_dir=No
         effective_config["bf"] = args.bf
     if args.bd is not None:
         effective_config["bd"] = args.bd
+    if args.num_experts is not None:
+        effective_config.setdefault("default_shape", {})["num_experts"] = args.num_experts
 
     write_benchmark_result(
         timings, args.kernel, args.shape, args.job_name, effective_config,

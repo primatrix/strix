@@ -21,6 +21,7 @@ COMPILE_ONLY=""
 TARGET_TOPOLOGY=""
 NUM_TOKENS=""
 EP_SIZE=""
+NUM_EXPERTS=""
 BF=""
 BD=""
 SWEEP=""
@@ -48,6 +49,7 @@ Options:
   --target-topology <t> Target topology for cross-compilation (default: 2x8x8)
   --num-tokens <n>     Override num_tokens for cross-compilation
   --ep-size <n>        Expert parallelism size (overrides kernel default)
+  --num-experts <n>    Number of experts (overrides kernel default)
   --bf <n>             Intermediate dimension block size
   --bd <n>             Hidden dimension block size
   --sweep <spec>       Comma-separated bf:bd pairs, e.g. "2048:1024,1024:512"
@@ -103,6 +105,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ep-size)
       EP_SIZE="${2:?--ep-size requires a value}"
+      shift 2
+      ;;
+    --num-experts)
+      NUM_EXPERTS="${2:?--num-experts requires a value}"
       shift 2
       ;;
     --bf)
@@ -196,6 +202,9 @@ else
   if [[ -n "${NUM_TOKENS}" ]]; then
     RUNNER_CMD="${RUNNER_CMD} --num-tokens ${NUM_TOKENS}"
   fi
+  if [[ -n "${NUM_EXPERTS}" ]]; then
+    RUNNER_CMD="${RUNNER_CMD} --num-experts ${NUM_EXPERTS}"
+  fi
 fi
 export RUNNER_CMD
 
@@ -220,7 +229,7 @@ TPU_CHIPS=$(( ${TPU_TOPOLOGY//x/*} ))
 export TPU_ACCELERATOR="tpu${TPU_TYPE#v}"
 
 # ---- Export for envsubst ----
-export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY EP_SIZE BF BD SWEEP TOTAL_BYTES NO_IR_DUMP PROFILE
+export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY EP_SIZE NUM_EXPERTS BF BD SWEEP TOTAL_BYTES NO_IR_DUMP PROFILE
 
 # ---- GCS config ----
 export GCS_BUCKET="${GCS_BUCKET:-gs://poc_profile/}"
