@@ -282,10 +282,10 @@ def _multi_expert_kernel_fp8(
             is_last = tile + 1 >= n_w
             is_penultimate = tile + 2 == n_w
 
-            # Arithmetic next-ID: collapse 3 conditions into 1 prefetch guard
-            pf_slot = lax.select(is_last, w_slot, next_w)
-            pf_expert = lax.select(is_last, e + 1, e)
-            pf_tile = lax.select(is_last, w_slot, tile + 1)
+            not_last = ~is_last
+            pf_slot = (tile + not_last) % 2
+            pf_expert = e + is_last
+            pf_tile = is_last * w_slot + not_last * (tile + 1)
             should_prefetch = (tile > 0) & (pf_expert < num_experts)
 
             wait_fetch_w1(w_slot)
