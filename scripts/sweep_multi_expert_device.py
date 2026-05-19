@@ -35,12 +35,12 @@ PROFILES = {
         experts=[1, 4, 8, 16, 32, 64, 256],
     ),
     "mimo-v2": dict(
-        # Native FP8 e4m3fn weights (no scales, bare fp8→bf16 cast).
-        # Real MiMo V2 Pro: d=6144, f=2048, fp8 weights.
-        # bf=512 gives n_w=4 tiles, each (6144×512)×1B = 3 MiB — same
-        # per-tile DMA volume as the old bf16 approx (6144×256×2B).
+        # Native FP8 e4m3fn: tokens + weights all fp8, no bf16 cast.
+        # Real MiMo V2 Pro: d=6144, f=2048, pure fp8.
+        # bf=256 to fit bt=512 in VMEM (f32 accumulator dominates at 12 MiB).
+        # n_w=8 tiles, each (6144×256)×1B = 1.5 MiB.
         kernel="kernels.multi_expert_pipeline",
-        hidden_size=6144, intermediate_size=2048, bf=512,
+        hidden_size=6144, intermediate_size=2048, bf=256,
         experts=[1, 4, 8, 12, 16, 24, 48],
     ),
     "mimo-v2-fp8": dict(
