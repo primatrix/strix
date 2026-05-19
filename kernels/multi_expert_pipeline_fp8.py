@@ -245,10 +245,9 @@ def _multi_expert_kernel_fp8(
         w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg2, quant_block_k, d)
         b_w2_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(bf, d)
 
-    def start_fetch_all(slot, expert_idx, tile_idx):
+    def start_fetch_w13(slot, expert_idx, tile_idx):
         start_fetch_w1(slot, expert_idx, tile_idx)
         start_fetch_w3(slot, expert_idx, tile_idx)
-        start_fetch_w2(slot, expert_idx, tile_idx)
 
     # -- Global Prologue --
 
@@ -290,7 +289,7 @@ def _multi_expert_kernel_fp8(
 
             @pl.when(should_prefetch)
             def _():
-                start_fetch_all(pf_slot, pf_expert, pf_tile)
+                start_fetch_w13(pf_slot, pf_expert, pf_tile)
 
             @pl.when(is_penultimate & (e < num_experts - 1))
             def _():
@@ -303,6 +302,10 @@ def _multi_expert_kernel_fp8(
 
             wait_fetch_w2(w_slot)
             dequant_w2(w_slot)
+
+            @pl.when(should_prefetch)
+            def _():
+                start_fetch_w2(pf_slot, pf_expert, pf_tile)
 
             w2_bf16 = b_w2_dq_vmem[...]
             act = activation_fn(gate, up, act_fn)
@@ -318,7 +321,7 @@ def _multi_expert_kernel_fp8(
 
             return jnp.int32(0)
 
-        lax.fori_loop(0, n_w, tile_body, jnp.int32(0), unroll=False)
+        lax.fori_loop(0, n_w, tile_body, jnp.int32(0), unroll=True)
 
         # --- Expert boundary: double-buffered writeback ---
         @pl.when(e >= 2)
