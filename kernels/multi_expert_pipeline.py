@@ -3,6 +3,9 @@
 Extends double_buffer_expert.py to process N experts sequentially on one
 device, with DMA overlap between adjacent experts.
 
+FP8×FP8 MXU path: bf16 tokens cast to fp8 inside kernel, fp8 weights
+used directly, fp8×fp8 matmul on MXU (2x throughput vs bf16).
+
 Spec: docs/superpowers/specs/2026-05-12-multi-expert-pipeline-design.md
 """
 
@@ -36,7 +39,7 @@ config = {
     "tpu_topology": "2x2x1",
     "description": (
         "Multi-expert double-buffer FFN — EP decode "
-        "(N experts sequential, expert-to-expert DMA overlap)"
+        "(fp8×fp8 MXU path, bf16→fp8 token cast, N experts sequential)"
     ),
 }
 
@@ -140,17 +143,15 @@ def _multi_expert_kernel(
     # -- Compute --
 
     def compute_tile(x_slot, w_slot, is_first_tile):
-        x = b_x_x2_vmem[x_slot]
-        w1 = b_w1_x2_vmem[w_slot].astype(jnp.bfloat16)
-        w3 = b_w3_x2_vmem[w_slot].astype(jnp.bfloat16)
-        gate = jnp.dot(x, w1, preferred_element_type=jnp.float32)
-        up = jnp.dot(x, w3, preferred_element_type=jnp.float32)
+        x = b_x_x2_vmem[x_slot].astype(jnp.float8_e4m3fn)
+        gate = jnp.dot(x, b_w1_x2_vmem[w_slot], preferred_element_type=jnp.float32)
+        up = jnp.dot(x, b_w3_x2_vmem[w_slot], preferred_element_type=jnp.float32)
         act_up = activation_fn(gate, up, act_fn)
 
         wait_fetch_w2(w_slot)
 
-        w2 = b_w2_x2_vmem[w_slot].astype(jnp.bfloat16)
-        partial = jnp.dot(act_up, w2, preferred_element_type=jnp.float32)
+        act_fp8 = act_up.astype(jnp.float8_e4m3fn)
+        partial = jnp.dot(act_fp8, b_w2_x2_vmem[w_slot], preferred_element_type=jnp.float32)
         if is_first_tile:
             b_y_acc_vmem[...] = partial
         else:
@@ -253,13 +254,13 @@ def multi_expert_ffn(
     bf: int = 256,
     num_experts: int,
 ) -> jax.Array:
-    """Run the multi-expert double-buffer FFN kernel.
+    """Run the multi-expert double-buffer FFN kernel (fp8×fp8 MXU path).
 
     Shapes:
-      tokens: (num_experts, bt, d) bf16
-      w1:     (num_experts, d, f)  fp8 (cast to bf16 in kernel)
-      w2:     (num_experts, f, d)  fp8 (cast to bf16 in kernel)
-      w3:     (num_experts, d, f)  fp8 (cast to bf16 in kernel)
+      tokens: (num_experts, bt, d) bf16 (cast to fp8 in kernel)
+      w1:     (num_experts, d, f)  fp8
+      w2:     (num_experts, f, d)  fp8
+      w3:     (num_experts, d, f)  fp8
     Returns:
       output: (num_experts, bt, d) bf16
     """
@@ -332,15 +333,21 @@ def multi_expert_ffn(
 
 
 def _ref_multi_expert_ffn(tokens, w1, w2, w3, *, act_fn="silu"):
-    """Pure-JAX reference: loop over experts, each does (silu(x@W1) * (x@W3)) @ W2."""
+    """Pure-JAX reference: cast tokens to fp8, fp8×fp8 matmul in f32."""
     num_experts = tokens.shape[0]
     outputs = []
     for e in range(num_experts):
-        x = tokens[e].astype(jnp.float32)
-        gate = x @ w1[e].astype(jnp.float32)
-        up = x @ w3[e].astype(jnp.float32)
+        x_fp8 = tokens[e].astype(jnp.float8_e4m3fn)
+        x_f32 = x_fp8.astype(jnp.float32)
+        w1_f32 = w1[e].astype(jnp.float32)
+        w3_f32 = w3[e].astype(jnp.float32)
+        gate = x_f32 @ w1_f32
+        up = x_f32 @ w3_f32
         act = activation_fn(gate, up, act_fn)
-        out = (act @ w2[e].astype(jnp.float32)).astype(tokens.dtype)
+        act_fp8 = act.astype(jnp.float8_e4m3fn)
+        act_f32 = act_fp8.astype(jnp.float32)
+        w2_f32 = w2[e].astype(jnp.float32)
+        out = (act_f32 @ w2_f32).astype(tokens.dtype)
         outputs.append(out)
     return jnp.stack(outputs)
 
@@ -350,7 +357,7 @@ def kernel_fn(
     hidden_size: int = 8192,
     intermediate_size: int = 2048,
     dtype=jnp.bfloat16,
-    weight_dtype=jnp.bfloat16,
+    weight_dtype=jnp.float8_e4m3fn,
     act_fn: str = "silu",
     bf: int = 256,
     num_experts: int = 8,
