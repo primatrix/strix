@@ -224,41 +224,26 @@ def _multi_expert_kernel_fp8(
         ).wait()
 
     # -- Dequant: fp8 → bf16 in VMEM --
-    # Pattern from _fused_moe_v2_impl.py lines 1042-1082.
-    # Uses lax.fori_loop with full unroll so Mosaic sees all ops statically.
+    # Reshape-based bulk multiply (pattern from gmm_v2.py).
+    # Reshape is zero-cost in Pallas; gives compiler full operation graph.
 
     def dequant_w1(slot):
-        def _dq(sg_id, _):
-            sg_off = sg_id * quant_block_k
-            w_fp8 = b_w1_x2_vmem[slot, pl.ds(sg_off, quant_block_k), pl.ds(0, bf)]
-            s = b_w1_scale_x2_vmem[slot, pl.ds(sg_id, 1), 0, pl.ds(0, bf)]
-            s = s.reshape(1, bf)
-            w_bf16 = (w_fp8.astype(jnp.float32) * jnp.broadcast_to(s, (quant_block_k, bf))).astype(jnp.bfloat16)
-            b_w1_dq_vmem.at[pl.ds(sg_off, quant_block_k), pl.ds(0, bf)][...] = w_bf16
-            return None
-        lax.fori_loop(0, n_sg, _dq, None, unroll=n_sg)
+        w_fp8 = b_w1_x2_vmem[slot]
+        s = b_w1_scale_x2_vmem[slot]
+        w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg, quant_block_k, bf)
+        b_w1_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(d, bf)
 
     def dequant_w3(slot):
-        def _dq(sg_id, _):
-            sg_off = sg_id * quant_block_k
-            w_fp8 = b_w3_x2_vmem[slot, pl.ds(sg_off, quant_block_k), pl.ds(0, bf)]
-            s = b_w3_scale_x2_vmem[slot, pl.ds(sg_id, 1), 0, pl.ds(0, bf)]
-            s = s.reshape(1, bf)
-            w_bf16 = (w_fp8.astype(jnp.float32) * jnp.broadcast_to(s, (quant_block_k, bf))).astype(jnp.bfloat16)
-            b_w3_dq_vmem.at[pl.ds(sg_off, quant_block_k), pl.ds(0, bf)][...] = w_bf16
-            return None
-        lax.fori_loop(0, n_sg, _dq, None, unroll=n_sg)
+        w_fp8 = b_w3_x2_vmem[slot]
+        s = b_w3_scale_x2_vmem[slot]
+        w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg, quant_block_k, bf)
+        b_w3_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(d, bf)
 
     def dequant_w2(slot):
-        def _dq(sg_id, _):
-            sg_off = sg_id * quant_block_k
-            w_fp8 = b_w2_x2_vmem[slot, pl.ds(sg_off, quant_block_k), pl.ds(0, d)]
-            s = b_w2_scale_x2_vmem[slot, pl.ds(sg_id, 1), 0, pl.ds(0, d)]
-            s = s.reshape(1, d)
-            w_bf16 = (w_fp8.astype(jnp.float32) * jnp.broadcast_to(s, (quant_block_k, d))).astype(jnp.bfloat16)
-            b_w2_dq_vmem.at[pl.ds(sg_off, quant_block_k), pl.ds(0, d)][...] = w_bf16
-            return None
-        lax.fori_loop(0, n_sg2, _dq, None, unroll=n_sg2)
+        w_fp8 = b_w2_x2_vmem[slot]
+        s = b_w2_scale_x2_vmem[slot]
+        w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg2, quant_block_k, d)
+        b_w2_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(bf, d)
 
     # -- Compute helper --
 
