@@ -521,3 +521,116 @@ def multi_expert_ffn_fp8(
         pltpu.with_memory_space_constraint(w2_scale, pltpu.HBM),
         pltpu.with_memory_space_constraint(w3_scale, pltpu.HBM),
     )
+
+
+def _make_fp8_weights_and_scales(key, shape, quant_block_k):
+    """Generate random fp8 weights and matching per-block scales.
+
+    Returns (w_fp8, scale) where:
+        w_fp8: shape, float8_e4m3fn
+        scale: (shape[0] // quant_block_k, 1, shape[1]), float32
+    """
+    w_bf16 = jax.random.normal(key, shape, dtype=jnp.bfloat16)
+    w_fp8 = w_bf16.astype(jnp.float8_e4m3fn)
+    K, N = shape
+    n_blocks = K // quant_block_k
+    w_fp8_f32 = w_fp8.astype(jnp.float32).reshape(n_blocks, quant_block_k, N)
+    block_max = jnp.max(jnp.abs(w_fp8_f32), axis=1, keepdims=True)
+    scale = jnp.where(block_max > 0, 1.0 / block_max, 1.0)
+    return w_fp8, scale
+
+
+def kernel_fn(
+    num_tokens: int = 256,
+    hidden_size: int = 6144,
+    intermediate_size: int = 2048,
+    dtype=jnp.bfloat16,
+    weight_dtype=jnp.float8_e4m3fn,
+    act_fn: str = "silu",
+    bf: int = 256,
+    num_experts: int = 8,
+    quant_block_k: int = 256,
+    **_kwargs,
+) -> Callable[[], jax.Array]:
+    """Build random FP8 inputs and return a zero-arg closure calling the kernel."""
+    key = jax.random.key(42)
+    k1, k2, k3, k4 = jax.random.split(key, 4)
+    tokens = jax.random.normal(k1, (num_experts, num_tokens, hidden_size), dtype=dtype)
+
+    w1_fp8, w1_scale = _make_fp8_weights_and_scales(
+        k2, (hidden_size, intermediate_size), quant_block_k)
+    w2_fp8, w2_scale = _make_fp8_weights_and_scales(
+        k3, (intermediate_size, hidden_size), quant_block_k)
+    w3_fp8, w3_scale = _make_fp8_weights_and_scales(
+        k4, (hidden_size, intermediate_size), quant_block_k)
+
+    w1 = jnp.broadcast_to(w1_fp8[None], (num_experts,) + w1_fp8.shape).copy()
+    w2 = jnp.broadcast_to(w2_fp8[None], (num_experts,) + w2_fp8.shape).copy()
+    w3 = jnp.broadcast_to(w3_fp8[None], (num_experts,) + w3_fp8.shape).copy()
+    w1s = jnp.broadcast_to(w1_scale[None], (num_experts,) + w1_scale.shape).copy()
+    w2s = jnp.broadcast_to(w2_scale[None], (num_experts,) + w2_scale.shape).copy()
+    w3s = jnp.broadcast_to(w3_scale[None], (num_experts,) + w3_scale.shape).copy()
+
+    def run():
+        return multi_expert_ffn_fp8(
+            tokens, w1, w2, w3,
+            w1_scale=w1s, w2_scale=w2s, w3_scale=w3s,
+            act_fn=act_fn, bf=bf, num_experts=num_experts,
+            quant_block_k=quant_block_k,
+        )
+
+    return run
+
+
+if __name__ == "__main__":
+    num_experts_arg = int(sys.argv[1]) if len(sys.argv) > 1 else 4
+    bt = int(sys.argv[2]) if len(sys.argv) > 2 else 256
+    d = int(sys.argv[3]) if len(sys.argv) > 3 else 6144
+    f = int(sys.argv[4]) if len(sys.argv) > 4 else 2048
+    bf_arg = 256
+    qbk = 256
+
+    key = jax.random.key(0)
+    k1, k2, k3, k4 = jax.random.split(key, 4)
+    tokens = jax.random.normal(k1, (num_experts_arg, bt, d), dtype=jnp.bfloat16)
+
+    w1_fp8, w1_scale = _make_fp8_weights_and_scales(k2, (d, f), qbk)
+    w2_fp8, w2_scale = _make_fp8_weights_and_scales(k3, (f, d), qbk)
+    w3_fp8, w3_scale = _make_fp8_weights_and_scales(k4, (d, f), qbk)
+
+    w1 = jnp.stack([w1_fp8] * num_experts_arg)
+    w2 = jnp.stack([w2_fp8] * num_experts_arg)
+    w3 = jnp.stack([w3_fp8] * num_experts_arg)
+    w1s = jnp.stack([w1_scale] * num_experts_arg)
+    w2s = jnp.stack([w2_scale] * num_experts_arg)
+    w3s = jnp.stack([w3_scale] * num_experts_arg)
+
+    result = multi_expert_ffn_fp8(
+        tokens, w1, w2, w3,
+        w1_scale=w1s, w2_scale=w2s, w3_scale=w3s,
+        bf=bf_arg, num_experts=num_experts_arg, quant_block_k=qbk,
+    )
+    ref = _ref_multi_expert_ffn_fp8(
+        tokens, w1, w2, w3,
+        w1_scale=w1s, w2_scale=w2s, w3_scale=w3s,
+        quant_block_k=qbk,
+    )
+
+    max_errs = []
+    rel_errs = []
+    for e in range(num_experts_arg):
+        r = result[e].astype(jnp.float32)
+        f_ref = ref[e].astype(jnp.float32)
+        me = jnp.max(jnp.abs(r - f_ref))
+        re = me / (jnp.max(jnp.abs(f_ref)) + 1e-6)
+        max_errs.append(float(me))
+        rel_errs.append(float(re))
+        print(f"  expert {e}: max_abs_err={me:.4f}, rel_err={re:.6f}")
+
+    worst_rel = max(rel_errs)
+    print(
+        f"num_experts={num_experts_arg}, bt={bt}, d={d}, f={f}, "
+        f"bf={bf_arg}, qbk={qbk}, worst_rel_err={worst_rel:.6f}"
+    )
+    assert worst_rel < 0.1, f"worst rel_err too high: {worst_rel}"
+    print("PASS")
