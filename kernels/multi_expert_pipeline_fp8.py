@@ -245,40 +245,6 @@ def _multi_expert_kernel_fp8(
         w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg2, quant_block_k, d)
         b_w2_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(bf, d)
 
-    # -- Compute helper --
-
-    def compute_tile(x_slot, w_slot, is_first_tile,
-                     after_dequant_w1=None, after_dequant_w3=None,
-                     after_dequant_w2=None):
-        """FFN1 (gate/up) + FFN2 (down) with VMEM dequant."""
-        x = b_x_x2_vmem[x_slot]
-
-        # FFN1: dequant w1/w3 → prefetch → bf16 dots
-        dequant_w1(w_slot)
-        if after_dequant_w1 is not None:
-            after_dequant_w1()
-        dequant_w3(w_slot)
-        if after_dequant_w3 is not None:
-            after_dequant_w3()
-        w1_bf16 = b_w1_dq_vmem[...]
-        w3_bf16 = b_w3_dq_vmem[...]
-        gate = jnp.dot(x, w1_bf16, preferred_element_type=jnp.float32)
-        up = jnp.dot(x, w3_bf16, preferred_element_type=jnp.float32)
-
-        # FFN2: wait w2, dequant → prefetch → activation, down-project
-        wait_fetch_w2(w_slot)
-        dequant_w2(w_slot)
-        if after_dequant_w2 is not None:
-            after_dequant_w2()
-        w2_bf16 = b_w2_dq_vmem[...]
-        act = activation_fn(gate, up, act_fn)
-        partial = jnp.dot(act, w2_bf16, preferred_element_type=jnp.float32)
-
-        if is_first_tile:
-            b_y_acc_vmem[...] = partial
-        else:
-            b_y_acc_vmem[...] = b_y_acc_vmem[...] + partial
-
     # -- Global Prologue --
 
     x_slot = 0
@@ -286,11 +252,9 @@ def _multi_expert_kernel_fp8(
     start_fetch_w1(0, 0, 0, priority=1)
     start_fetch_w3(0, 0, 0, priority=1)
     start_fetch_w2(0, 0, 0)
-
-    if n_w >= 2:
-        start_fetch_w1(1, 0, 1)
-        start_fetch_w3(1, 0, 1)
-        start_fetch_w2(1, 0, 1)
+    start_fetch_w1(1, 0, 1)
+    start_fetch_w3(1, 0, 1)
+    start_fetch_w2(1, 0, 1)
 
     wait_load_x(x_slot)
 
@@ -299,97 +263,99 @@ def _multi_expert_kernel_fp8(
     def expert_body(e, x_slot):
         next_xs = 1 - x_slot
 
-        # --- Tile 0 ---
-        wait_fetch_w1(0)
-        wait_fetch_w3(0)
-
-        if n_w == 2:
-            def _t0_after_w1():
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_load_x(next_xs, e + 1, priority=1)
-                    start_fetch_w1(0, e + 1, 0)
-
-            def _t0_after_w3():
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_fetch_w3(0, e + 1, 0)
-
-            def _t0_after_w2():
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_fetch_w2(0, e + 1, 0)
-
-            compute_tile(x_slot, w_slot=0, is_first_tile=True,
-                         after_dequant_w1=_t0_after_w1,
-                         after_dequant_w3=_t0_after_w3,
-                         after_dequant_w2=_t0_after_w2)
-        else:
-            compute_tile(x_slot, w_slot=0, is_first_tile=True)
-
-        # --- Tiles [1, n_w) ---
-        for tile in range(1, n_w):
+        def tile_body(tile, _):
             w_slot = tile % 2
             next_w = 1 - w_slot
+            is_last = tile + 1 >= n_w
+            is_penultimate = (tile + 1 == n_w - 1)
+            is_interior = ~is_last & ~is_penultimate
 
             wait_fetch_w1(w_slot)
             wait_fetch_w3(w_slot)
 
-            if tile + 2 < n_w:
-                compute_tile(
-                    x_slot, w_slot, is_first_tile=False,
-                    after_dequant_w1=lambda: start_fetch_w1(next_w, e, tile + 1),
-                    after_dequant_w3=lambda: start_fetch_w3(next_w, e, tile + 1),
-                    after_dequant_w2=lambda: start_fetch_w2(next_w, e, tile + 1),
-                )
-            elif tile + 1 < n_w:
-                def _penultimate_after_w1():
-                    start_fetch_w1(next_w, e, tile + 1)
-                    @pl.when(e < num_experts - 1)
-                    def _():
-                        start_load_x(next_xs, e + 1, priority=1)
-                        start_fetch_w1(w_slot, e + 1, w_slot)
+            x = b_x_x2_vmem[x_slot]
 
-                def _penultimate_after_w3():
-                    start_fetch_w3(next_w, e, tile + 1)
-                    @pl.when(e < num_experts - 1)
-                    def _():
-                        start_fetch_w3(w_slot, e + 1, w_slot)
+            # --- FFN1: dequant w1 → prefetch → dequant w3 → prefetch → dots ---
+            dequant_w1(w_slot)
 
-                def _penultimate_after_w2():
-                    start_fetch_w2(next_w, e, tile + 1)
-                    @pl.when(e < num_experts - 1)
-                    def _():
-                        start_fetch_w2(w_slot, e + 1, w_slot)
+            @pl.when(is_interior)
+            def _():
+                start_fetch_w1(next_w, e, tile + 1)
 
-                compute_tile(
-                    x_slot, w_slot, is_first_tile=False,
-                    after_dequant_w1=_penultimate_after_w1,
-                    after_dequant_w3=_penultimate_after_w3,
-                    after_dequant_w2=_penultimate_after_w2,
-                )
-            else:
-                def _last_after_w1():
-                    @pl.when(e < num_experts - 1)
-                    def _():
-                        start_fetch_w1(w_slot, e + 1, w_slot)
+            @pl.when(is_penultimate)
+            def _():
+                start_fetch_w1(next_w, e, tile + 1)
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_load_x(next_xs, e + 1, priority=1)
+                    start_fetch_w1(w_slot, e + 1, w_slot)
 
-                def _last_after_w3():
-                    @pl.when(e < num_experts - 1)
-                    def _():
-                        start_fetch_w3(w_slot, e + 1, w_slot)
+            @pl.when(is_last)
+            def _():
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_fetch_w1(w_slot, e + 1, w_slot)
 
-                def _last_after_w2():
-                    @pl.when(e < num_experts - 1)
-                    def _():
-                        start_fetch_w2(w_slot, e + 1, w_slot)
+            dequant_w3(w_slot)
 
-                compute_tile(
-                    x_slot, w_slot, is_first_tile=False,
-                    after_dequant_w1=_last_after_w1,
-                    after_dequant_w3=_last_after_w3,
-                    after_dequant_w2=_last_after_w2,
-                )
+            @pl.when(is_interior)
+            def _():
+                start_fetch_w3(next_w, e, tile + 1)
+
+            @pl.when(is_penultimate)
+            def _():
+                start_fetch_w3(next_w, e, tile + 1)
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_fetch_w3(w_slot, e + 1, w_slot)
+
+            @pl.when(is_last)
+            def _():
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_fetch_w3(w_slot, e + 1, w_slot)
+
+            w1_bf16 = b_w1_dq_vmem[...]
+            w3_bf16 = b_w3_dq_vmem[...]
+            gate = jnp.dot(x, w1_bf16, preferred_element_type=jnp.float32)
+            up = jnp.dot(x, w3_bf16, preferred_element_type=jnp.float32)
+
+            # --- FFN2: wait w2, dequant → prefetch → activation, down-project ---
+            wait_fetch_w2(w_slot)
+            dequant_w2(w_slot)
+
+            @pl.when(is_interior)
+            def _():
+                start_fetch_w2(next_w, e, tile + 1)
+
+            @pl.when(is_penultimate)
+            def _():
+                start_fetch_w2(next_w, e, tile + 1)
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_fetch_w2(w_slot, e + 1, w_slot)
+
+            @pl.when(is_last)
+            def _():
+                @pl.when(e < num_experts - 1)
+                def _():
+                    start_fetch_w2(w_slot, e + 1, w_slot)
+
+            w2_bf16 = b_w2_dq_vmem[...]
+            act = activation_fn(gate, up, act_fn)
+            partial = jnp.dot(act, w2_bf16, preferred_element_type=jnp.float32)
+
+            @pl.when(tile == 0)
+            def _():
+                b_y_acc_vmem[...] = partial
+
+            @pl.when(tile > 0)
+            def _():
+                b_y_acc_vmem[...] = b_y_acc_vmem[...] + partial
+
+            return jnp.int32(0)
+
+        lax.fori_loop(0, n_w, tile_body, jnp.int32(0), unroll=False)
 
         # --- Expert boundary: double-buffered writeback ---
         @pl.when(e >= 2)
