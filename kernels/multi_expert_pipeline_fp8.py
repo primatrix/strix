@@ -260,16 +260,19 @@ def _multi_expert_kernel_fp8(
         dequant_w3(w_slot)
         if after_dequant_w3 is not None:
             after_dequant_w3()
+
+        wait_fetch_w2(w_slot)
+        dequant_w2(w_slot)
+        if after_dequant_w2 is not None:
+            after_dequant_w2()
+        
         w1_bf16 = b_w1_dq_vmem[...]
         w3_bf16 = b_w3_dq_vmem[...]
         gate = jnp.dot(x, w1_bf16, preferred_element_type=jnp.float32)
         up = jnp.dot(x, w3_bf16, preferred_element_type=jnp.float32)
 
         # FFN2: wait w2, dequant → prefetch → activation, down-project
-        wait_fetch_w2(w_slot)
-        dequant_w2(w_slot)
-        if after_dequant_w2 is not None:
-            after_dequant_w2()
+        
         w2_bf16 = b_w2_dq_vmem[...]
         act = activation_fn(gate, up, act_fn)
         partial = jnp.dot(act, w2_bf16, preferred_element_type=jnp.float32)
