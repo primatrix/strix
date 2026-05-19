@@ -268,7 +268,6 @@ def _multi_expert_kernel_fp8(
             next_w = 1 - w_slot
             is_last = tile + 1 >= n_w
             is_penultimate = (tile + 1 == n_w - 1)
-            is_interior = ~is_last & ~is_penultimate
 
             wait_fetch_w1(w_slot)
             wait_fetch_w3(w_slot)
@@ -278,42 +277,32 @@ def _multi_expert_kernel_fp8(
             # --- FFN1: dequant w1 → prefetch → dequant w3 → prefetch → dots ---
             dequant_w1(w_slot)
 
-            @pl.when(is_interior)
+            @pl.when((tile > 0) & ~is_last)
             def _():
                 start_fetch_w1(next_w, e, tile + 1)
 
-            @pl.when(is_penultimate)
+            @pl.when(is_penultimate & (e < num_experts - 1))
             def _():
-                start_fetch_w1(next_w, e, tile + 1)
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_load_x(next_xs, e + 1, priority=1)
-                    start_fetch_w1(w_slot, e + 1, w_slot)
+                start_load_x(next_xs, e + 1, priority=1)
+                start_fetch_w1(w_slot, e + 1, w_slot)
 
-            @pl.when(is_last)
+            @pl.when(is_last & (e < num_experts - 1))
             def _():
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_fetch_w1(w_slot, e + 1, w_slot)
+                start_fetch_w1(w_slot, e + 1, w_slot)
 
             dequant_w3(w_slot)
 
-            @pl.when(is_interior)
+            @pl.when((tile > 0) & ~is_last)
             def _():
                 start_fetch_w3(next_w, e, tile + 1)
 
-            @pl.when(is_penultimate)
+            @pl.when(is_penultimate & (e < num_experts - 1))
             def _():
-                start_fetch_w3(next_w, e, tile + 1)
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_fetch_w3(w_slot, e + 1, w_slot)
+                start_fetch_w3(w_slot, e + 1, w_slot)
 
-            @pl.when(is_last)
+            @pl.when(is_last & (e < num_experts - 1))
             def _():
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_fetch_w3(w_slot, e + 1, w_slot)
+                start_fetch_w3(w_slot, e + 1, w_slot)
 
             w1_bf16 = b_w1_dq_vmem[...]
             w3_bf16 = b_w3_dq_vmem[...]
@@ -324,22 +313,17 @@ def _multi_expert_kernel_fp8(
             wait_fetch_w2(w_slot)
             dequant_w2(w_slot)
 
-            @pl.when(is_interior)
+            @pl.when((tile > 0) & ~is_last)
             def _():
                 start_fetch_w2(next_w, e, tile + 1)
 
-            @pl.when(is_penultimate)
+            @pl.when(is_penultimate & (e < num_experts - 1))
             def _():
-                start_fetch_w2(next_w, e, tile + 1)
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_fetch_w2(w_slot, e + 1, w_slot)
+                start_fetch_w2(w_slot, e + 1, w_slot)
 
-            @pl.when(is_last)
+            @pl.when(is_last & (e < num_experts - 1))
             def _():
-                @pl.when(e < num_experts - 1)
-                def _():
-                    start_fetch_w2(w_slot, e + 1, w_slot)
+                start_fetch_w2(w_slot, e + 1, w_slot)
 
             w2_bf16 = b_w2_dq_vmem[...]
             act = activation_fn(gate, up, act_fn)
