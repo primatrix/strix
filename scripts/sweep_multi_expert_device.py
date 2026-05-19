@@ -35,9 +35,8 @@ PROFILES = {
         experts=[1, 4, 8, 16, 32, 64, 256],
     ),
     "mimo-v2": dict(
-        # Native FP8 e4m3fn: tokens + weights all fp8, no bf16 cast.
-        # Real MiMo V2 Pro: d=6144, f=2048, pure fp8.
-        # bf=1024 gives n_w=2 tiles, each (6144×1024)×1B = 6 MiB.
+        # Block quant FP8: bf16 tokens, fp8 weights with per-block scales.
+        # Real MiMo V2 Pro: d=6144, f=2048, qbk=256.
         kernel="kernels.multi_expert_pipeline",
         hidden_size=6144, intermediate_size=2048, bf=512,
         experts=[1, 4, 8, 12, 16, 24, 48],

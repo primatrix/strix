@@ -1,14 +1,14 @@
-# Multi-expert pipeline sweep — MiMo V2 Pro decode profile (pure FP8)
-# =====================================================================
+# Multi-expert pipeline sweep — MiMo V2 Pro decode profile (block quant FP8)
+# =========================================================================
 # Stage:  Decode (autoregressive)
 # Model:  MiMo V2 Pro (384 routed experts, top_k=8, SwiGLU)
-#         d=6144, f=2048, pure FP8 e4m3fn (tokens + weights)
+#         d=6144, f=2048, bf16 tokens, fp8 weights with per-block scales
 # Kernel: multi_expert_pipeline (sequential N-expert double-buffer FFN)
 #
-# Pure FP8: all inputs (tokens, w1/w2/w3) and output are fp8.
-# MXU does fp8×fp8→f32 accumulation; act_up cast back to fp8 before
-# down projection.  bf=1024 gives n_w=2 tiles, each (6144×1024)×1B
-# = 6 MiB — larger tiles to reduce DMA overhead.
+# Block quant FP8: bf16 tokens dynamically quantized to fp8 per sub-block
+# inside the kernel, fp8 weights with per-block f32 scales (qbk=256),
+# fp8×fp8→f32 MXU matmul, post-multiply activation and weight dequant
+# scales.  Output bf16.
 #
 # EP layout: 2x2x1 = 4 chips = 8 devices.
 # EP=8 → 384/8 = 48 experts per device.
