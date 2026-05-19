@@ -19,9 +19,10 @@ if cwd not in sys.path:
 
 import statistics
 
+import importlib
+
 import jax
 import jax.numpy as jnp
-from kernels.multi_expert_pipeline import kernel_fn
 from scripts.benchmark_runner import _timed_runs
 
 NUM_WARMUP = 3
@@ -29,6 +30,7 @@ NUM_RUNS = 10
 
 PROFILES = {
     "ling2.6": dict(
+        kernel="kernels.multi_expert_pipeline",
         hidden_size=8192, intermediate_size=2048, bf=256,
         experts=[1, 4, 8, 16, 32, 64, 256],
     ),
@@ -37,11 +39,13 @@ PROFILES = {
         # Real MiMo: d=6144, f=2048, fp8 weights.
         # bf16 approx: d=6144, f=1024 (same tile count & per-tile bytes as
         #   fp8 f=2048 bf=512 when using bf16 bf=256).
+        kernel="kernels.multi_expert_pipeline",
         hidden_size=6144, intermediate_size=1024, bf=256,
         experts=[1, 4, 8, 12, 16, 24, 48],
     ),
     "mimo-v2-fp8": dict(
         # Native FP8 e4m3fn weights, quant_block_k=256, bf=512.
+        kernel="kernels.multi_expert_pipeline_fp8",
         hidden_size=6144, intermediate_size=2048, bf=512,
         experts=[4, 8, 12, 24, 36, 48],
     ),
@@ -60,6 +64,8 @@ def main():
     args = p.parse_args()
 
     defaults = PROFILES.get(args.profile, PROFILES["ling2.6"])
+    kernel_mod = importlib.import_module(defaults["kernel"])
+    kernel_fn = kernel_mod.kernel_fn
     d = args.hidden_size or defaults["hidden_size"]
     f = args.intermediate_size or defaults["intermediate_size"]
     bf = args.bf or defaults["bf"]
