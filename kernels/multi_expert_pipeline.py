@@ -3,8 +3,8 @@
 Extends double_buffer_expert.py to process N experts sequentially on one
 device, with DMA overlap between adjacent experts.
 
-FP8×FP8 MXU path: bf16 tokens cast to fp8 inside kernel, fp8 weights
-used directly, fp8×fp8 matmul on MXU (2x throughput vs bf16).
+BF16 compute path: fp8 tokens cast to bf16 inside kernel, bf16 weights
+used directly, bf16×bf16 matmul on MXU.
 
 Spec: docs/superpowers/specs/2026-05-12-multi-expert-pipeline-design.md
 """
@@ -31,15 +31,15 @@ config = {
         "intermediate_size": 2048,
         "num_experts": 8,
     },
-    "dtype": "bfloat16",
-    "weight_dtype": "float8_e4m3fn",
+    "dtype": "float8_e4m3fn",
+    "weight_dtype": "bfloat16",
     "act_fn": "silu",
     "bf": 256,
     "tpu_type": "v7x",
     "tpu_topology": "2x2x1",
     "description": (
         "Multi-expert double-buffer FFN — EP decode "
-        "(fp8×fp8 MXU path, bf16→fp8 token cast, N experts sequential)"
+        "(bf16 compute, fp8→bf16 token cast, N experts sequential)"
     ),
 }
 
@@ -143,15 +143,14 @@ def _multi_expert_kernel(
     # -- Compute --
 
     def compute_tile(x_slot, w_slot, is_first_tile):
-        x = b_x_x2_vmem[x_slot].astype(jnp.float8_e4m3fn)
+        x = b_x_x2_vmem[x_slot].astype(jnp.bfloat16)
         gate = jnp.dot(x, b_w1_x2_vmem[w_slot], preferred_element_type=jnp.float32)
         up = jnp.dot(x, b_w3_x2_vmem[w_slot], preferred_element_type=jnp.float32)
         act_up = activation_fn(gate, up, act_fn)
 
         wait_fetch_w2(w_slot)
 
-        act_fp8 = act_up.astype(jnp.float8_e4m3fn)
-        partial = jnp.dot(act_fp8, b_w2_x2_vmem[w_slot], preferred_element_type=jnp.float32)
+        partial = jnp.dot(act_up.astype(jnp.bfloat16), b_w2_x2_vmem[w_slot], preferred_element_type=jnp.float32)
         if is_first_tile:
             b_y_acc_vmem[...] = partial
         else:
@@ -254,13 +253,13 @@ def multi_expert_ffn(
     bf: int = 256,
     num_experts: int,
 ) -> jax.Array:
-    """Run the multi-expert double-buffer FFN kernel (fp8×fp8 MXU path).
+    """Run the multi-expert double-buffer FFN kernel (bf16 compute path).
 
     Shapes:
-      tokens: (num_experts, bt, d) bf16 (cast to fp8 in kernel)
-      w1:     (num_experts, d, f)  fp8
-      w2:     (num_experts, f, d)  fp8
-      w3:     (num_experts, d, f)  fp8
+      tokens: (num_experts, bt, d) fp8 (cast to bf16 in kernel)
+      w1:     (num_experts, d, f)  bf16
+      w2:     (num_experts, f, d)  bf16
+      w3:     (num_experts, d, f)  bf16
     Returns:
       output: (num_experts, bt, d) bf16
     """
@@ -295,7 +294,7 @@ def multi_expert_ffn(
         pltpu.VMEM((2, bf, d), weight_dtype),        # b_w2_x2_vmem
         pltpu.VMEM((2, bt, d), dtype),               # b_x_x2_vmem
         pltpu.VMEM((bt, d), jnp.float32),            # b_y_acc_vmem
-        pltpu.VMEM((2, bt, d), dtype),               # b_y_out_vmem (double-buffered)
+        pltpu.VMEM((2, bt, d), jnp.bfloat16),       # b_y_out_vmem (double-buffered)
         pltpu.SemaphoreType.DMA((2, 3)),             # weight_sems[slot, channel]
         pltpu.SemaphoreType.DMA((2,)),               # x_sem[x_slot]
         pltpu.SemaphoreType.DMA((2,)),               # y_out_sem[y_slot]
@@ -312,7 +311,7 @@ def multi_expert_ffn(
             intermediate_size=f_full,
             num_experts=num_experts,
         ),
-        out_shape=jax.ShapeDtypeStruct((num_experts, bt, d), dtype),
+        out_shape=jax.ShapeDtypeStruct((num_experts, bt, d), jnp.bfloat16),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[hbm, hbm, hbm, hbm],
@@ -333,21 +332,21 @@ def multi_expert_ffn(
 
 
 def _ref_multi_expert_ffn(tokens, w1, w2, w3, *, act_fn="silu"):
-    """Pure-JAX reference: cast tokens to fp8, fp8×fp8 matmul in f32."""
+    """Pure-JAX reference: cast tokens to bf16, bf16×bf16 matmul in f32."""
     num_experts = tokens.shape[0]
     outputs = []
     for e in range(num_experts):
-        x_fp8 = tokens[e].astype(jnp.float8_e4m3fn)
-        x_f32 = x_fp8.astype(jnp.float32)
+        x_bf16 = tokens[e].astype(jnp.bfloat16)
+        x_f32 = x_bf16.astype(jnp.float32)
         w1_f32 = w1[e].astype(jnp.float32)
         w3_f32 = w3[e].astype(jnp.float32)
         gate = x_f32 @ w1_f32
         up = x_f32 @ w3_f32
         act = activation_fn(gate, up, act_fn)
-        act_fp8 = act.astype(jnp.float8_e4m3fn)
-        act_f32 = act_fp8.astype(jnp.float32)
+        act_bf16 = act.astype(jnp.bfloat16)
+        act_f32 = act_bf16.astype(jnp.float32)
         w2_f32 = w2[e].astype(jnp.float32)
-        out = (act_f32 @ w2_f32).astype(tokens.dtype)
+        out = (act_f32 @ w2_f32).astype(jnp.bfloat16)
         outputs.append(out)
     return jnp.stack(outputs)
 
@@ -356,8 +355,8 @@ def kernel_fn(
     num_tokens: int = 256,
     hidden_size: int = 8192,
     intermediate_size: int = 2048,
-    dtype=jnp.bfloat16,
-    weight_dtype=jnp.float8_e4m3fn,
+    dtype=jnp.float8_e4m3fn,
+    weight_dtype=jnp.bfloat16,
     act_fn: str = "silu",
     bf: int = 256,
     num_experts: int = 8,
@@ -366,10 +365,10 @@ def kernel_fn(
     """Build random inputs and return a zero-arg closure calling the kernel."""
     key = jax.random.key(42)
     k1, k2, k3, k4 = jax.random.split(key, 4)
-    tokens = jax.random.normal(k1, (num_experts, num_tokens, hidden_size), dtype=dtype)
-    w1 = jax.random.normal(k2, (num_experts, hidden_size, intermediate_size), dtype=jnp.bfloat16).astype(weight_dtype)
-    w2 = jax.random.normal(k3, (num_experts, intermediate_size, hidden_size), dtype=jnp.bfloat16).astype(weight_dtype)
-    w3 = jax.random.normal(k4, (num_experts, hidden_size, intermediate_size), dtype=jnp.bfloat16).astype(weight_dtype)
+    tokens = jax.random.normal(k1, (num_experts, num_tokens, hidden_size), dtype=jnp.bfloat16).astype(dtype)
+    w1 = jax.random.normal(k2, (num_experts, hidden_size, intermediate_size), dtype=weight_dtype)
+    w2 = jax.random.normal(k3, (num_experts, intermediate_size, hidden_size), dtype=weight_dtype)
+    w3 = jax.random.normal(k4, (num_experts, hidden_size, intermediate_size), dtype=weight_dtype)
 
     def run():
         return multi_expert_ffn(
@@ -387,10 +386,10 @@ if __name__ == "__main__":
 
     key = jax.random.key(0)
     k1, k2, k3, k4 = jax.random.split(key, 4)
-    tokens = jax.random.normal(k1, (num_experts_arg, bt, 8192), dtype=jnp.bfloat16)
-    w1 = jax.random.normal(k2, (num_experts_arg, 8192, 2048), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
-    w2 = jax.random.normal(k3, (num_experts_arg, 2048, 8192), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
-    w3 = jax.random.normal(k4, (num_experts_arg, 8192, 2048), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
+    tokens = jax.random.normal(k1, (num_experts_arg, bt, 8192), dtype=jnp.bfloat16).astype(jnp.float8_e4m3fn)
+    w1 = jax.random.normal(k2, (num_experts_arg, 8192, 2048), dtype=jnp.bfloat16)
+    w2 = jax.random.normal(k3, (num_experts_arg, 2048, 8192), dtype=jnp.bfloat16)
+    w3 = jax.random.normal(k4, (num_experts_arg, 8192, 2048), dtype=jnp.bfloat16)
 
     result = multi_expert_ffn(
         tokens, w1, w2, w3, bf=bf_arg, num_experts=num_experts_arg,
