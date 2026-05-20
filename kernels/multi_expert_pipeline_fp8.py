@@ -269,15 +269,6 @@ def _multi_expert_kernel_fp8(
 
             x = b_x_x2_vmem[x_slot]
 
-            @pl.when(should_prefetch)
-            def _():
-                start_fetch_w13(pf_slot, pf_expert, pf_tile)
-
-            @pl.when(is_penultimate & (e < num_experts - 1))
-            def _():
-                start_load_x(next_xs, e + 1, priority=1)
-                start_fetch_w13(w_slot, e + 1, w_slot)
-
             x_r = x.reshape(bt, n_sg, quant_block_k)
             w1_r = b_w1_x2_vmem[w_slot].reshape(n_sg, quant_block_k, bf)
             w3_r = b_w3_x2_vmem[w_slot].reshape(n_sg, quant_block_k, bf)
@@ -291,16 +282,17 @@ def _multi_expert_kernel_fp8(
                 lax.dot_general(x_r, w3_r, (((2,), (1,)), ((1,), (0,))),
                                 preferred_element_type=jnp.float32) * s3,
                 axis=0)
-
-            wait_fetch_w2(w_slot)
-
+            
             @pl.when(should_prefetch)
             def _():
-                start_fetch_w2(pf_slot, pf_expert, pf_tile)
+                start_fetch_w13(pf_slot, pf_expert, pf_tile)
 
             @pl.when(is_penultimate & (e < num_experts - 1))
             def _():
-                start_fetch_w2(w_slot, e + 1, w_slot)
+                start_load_x(next_xs, e + 1, priority=1)
+                start_fetch_w13(w_slot, e + 1, w_slot)
+
+            wait_fetch_w2(w_slot)
 
             act = activation_fn(gate, up, act_fn)
             act_r = act.reshape(bt, n_sg2, quant_block_k)
@@ -310,6 +302,14 @@ def _multi_expert_kernel_fp8(
                 lax.dot_general(act_r, w2_r, (((2,), (1,)), ((1,), (0,))),
                                 preferred_element_type=jnp.float32) * s2,
                 axis=0)
+
+            @pl.when(should_prefetch)
+            def _():
+                start_fetch_w2(pf_slot, pf_expert, pf_tile)
+
+            @pl.when(is_penultimate & (e < num_experts - 1))
+            def _():
+                start_fetch_w2(w_slot, e + 1, w_slot)
 
             @pl.when(tile == 0)
             def _():
