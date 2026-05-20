@@ -1,7 +1,8 @@
 """Multi-expert double-buffer FFN pipeline — FP8 e4m3 block quantization.
 
-VMEM dequant path: load fp8 weights from HBM → dequant to bf16 in VMEM → bf16 matmul.
-Per-block f32 scales with quant_block_k granularity.
+bf16 × fp8 block-scaled path: load fp8 weights from HBM → bf16×fp8 matmul per
+scale-group on MXU → multiply by per-block f32 scale → sum across groups.
+No VMEM dequant buffers needed.
 
 Base kernel: kernels/multi_expert_pipeline.py (bf16 version)
 Spec: docs/superpowers/specs/2026-05-19-multi-expert-pipeline-fp8-design.md
@@ -38,7 +39,7 @@ config = {
     "tpu_topology": "2x2x1",
     "description": (
         "Multi-expert double-buffer FFN — FP8 e4m3 block quantization "
-        "(VMEM dequant path, N experts sequential)"
+        "(bf16×fp8 block-scaled matmul, N experts sequential)"
     ),
 }
 
@@ -94,9 +95,6 @@ def _multi_expert_kernel_fp8(
     b_w1_scale_vmem,      # (d // qbk, 1, f) f32
     b_w3_scale_vmem,      # (d // qbk, 1, f) f32
     b_w2_scale_vmem,      # (f // qbk, 1, d) f32
-    b_w1_dq_vmem,         # (d, bf) bf16
-    b_w3_dq_vmem,         # (d, bf) bf16
-    b_w2_dq_vmem,         # (bf, d) bf16
     b_x_x2_vmem,          # (2, bt, d) bf16
     b_y_acc_vmem,          # (bt, d) f32
     b_y_out_vmem,          # (2, bt, d) bf16
@@ -112,7 +110,7 @@ def _multi_expert_kernel_fp8(
     num_experts: int,
     quant_block_k: int,
 ):
-    """Pallas kernel body — multi-expert FP8 pipeline with VMEM dequant."""
+    """Pallas kernel body — multi-expert FP8 pipeline with block-scaled matmul."""
     _, bt, d = tokens_hbm.shape
     n_w = intermediate_size // bf
     n_sg = d // quant_block_k
@@ -230,28 +228,6 @@ def _multi_expert_kernel_fp8(
             sem=y_out_sem.at[y_slot],
         ).wait()
 
-    # -- Dequant: fp8 → bf16 in VMEM --
-    # Reshape-based bulk multiply (pattern from gmm_v2.py).
-    # Reshape is zero-cost in Pallas; gives compiler full operation graph.
-
-    def dequant_w1(slot, tile_idx):
-        w_fp8 = b_w1_x2_vmem[slot]
-        s = b_w1_scale_vmem[:, :, pl.ds(tile_idx * bf, bf)]
-        w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg, quant_block_k, bf)
-        b_w1_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(d, bf)
-
-    def dequant_w3(slot, tile_idx):
-        w_fp8 = b_w3_x2_vmem[slot]
-        s = b_w3_scale_vmem[:, :, pl.ds(tile_idx * bf, bf)]
-        w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg, quant_block_k, bf)
-        b_w3_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(d, bf)
-
-    def dequant_w2(slot, tile_idx):
-        w_fp8 = b_w2_x2_vmem[slot]
-        s = b_w2_scale_vmem[pl.ds(tile_idx * n_sg2, n_sg2), :, :]
-        w_f32 = w_fp8.astype(jnp.float32).reshape(n_sg2, quant_block_k, d)
-        b_w2_dq_vmem[...] = (w_f32 * s).astype(jnp.bfloat16).reshape(bf, d)
-
     def start_fetch_w13(slot, expert_idx, tile_idx):
         start_fetch_w1(slot, expert_idx, tile_idx)
         start_fetch_w3(slot, expert_idx, tile_idx)
@@ -293,9 +269,6 @@ def _multi_expert_kernel_fp8(
 
             x = b_x_x2_vmem[x_slot]
 
-            dequant_w1(w_slot, tile)
-            dequant_w3(w_slot, tile)
-
             @pl.when(should_prefetch)
             def _():
                 start_fetch_w13(pf_slot, pf_expert, pf_tile)
@@ -305,13 +278,21 @@ def _multi_expert_kernel_fp8(
                 start_load_x(next_xs, e + 1, priority=1)
                 start_fetch_w13(w_slot, e + 1, w_slot)
 
-            w1_bf16 = b_w1_dq_vmem[...]
-            w3_bf16 = b_w3_dq_vmem[...]
-            gate = jnp.dot(x, w1_bf16, preferred_element_type=jnp.float32)
-            up = jnp.dot(x, w3_bf16, preferred_element_type=jnp.float32)
+            x_r = x.reshape(bt, n_sg, quant_block_k)
+            w1_r = b_w1_x2_vmem[w_slot].reshape(n_sg, quant_block_k, bf)
+            w3_r = b_w3_x2_vmem[w_slot].reshape(n_sg, quant_block_k, bf)
+            s1 = b_w1_scale_vmem[:, :, pl.ds(tile * bf, bf)]
+            s3 = b_w3_scale_vmem[:, :, pl.ds(tile * bf, bf)]
+            gate = jnp.sum(
+                lax.dot_general(x_r, w1_r, (((2,), (1,)), ((1,), (0,))),
+                                preferred_element_type=jnp.float32) * s1,
+                axis=0)
+            up = jnp.sum(
+                lax.dot_general(x_r, w3_r, (((2,), (1,)), ((1,), (0,))),
+                                preferred_element_type=jnp.float32) * s3,
+                axis=0)
 
             wait_fetch_w2(w_slot)
-            dequant_w2(w_slot, tile)
 
             @pl.when(should_prefetch)
             def _():
@@ -321,9 +302,14 @@ def _multi_expert_kernel_fp8(
             def _():
                 start_fetch_w2(w_slot, e + 1, w_slot)
 
-            w2_bf16 = b_w2_dq_vmem[...]
             act = activation_fn(gate, up, act_fn)
-            partial = jnp.dot(act, w2_bf16, preferred_element_type=jnp.float32)
+            act_r = act.reshape(bt, n_sg2, quant_block_k)
+            w2_r = b_w2_x2_vmem[w_slot].reshape(n_sg2, quant_block_k, d)
+            s2 = b_w2_scale_vmem[pl.ds(tile * n_sg2, n_sg2), :, :]
+            partial = jnp.sum(
+                lax.dot_general(act_r, w2_r, (((2,), (1,)), ((1,), (0,))),
+                                preferred_element_type=jnp.float32) * s2,
+                axis=0)
 
             @pl.when(tile == 0)
             def _():
@@ -383,7 +369,7 @@ def multi_expert_ffn_fp8(
     num_experts: int,
     quant_block_k: int = 256,
 ) -> jax.Array:
-    """Run the multi-expert FP8 double-buffer FFN kernel (VMEM dequant path).
+    """Run the multi-expert FP8 double-buffer FFN kernel (block-scaled matmul path).
 
     Shapes:
       tokens:   (num_experts, bt, d)                 bf16
@@ -447,9 +433,6 @@ def multi_expert_ffn_fp8(
         pltpu.VMEM((n_sg, 1, f_full), jnp.float32),       # b_w1_scale_vmem
         pltpu.VMEM((n_sg, 1, f_full), jnp.float32),       # b_w3_scale_vmem
         pltpu.VMEM((f_full // qbk, 1, d), jnp.float32),   # b_w2_scale_vmem
-        pltpu.VMEM((d, bf), jnp.bfloat16),                # b_w1_dq_vmem
-        pltpu.VMEM((d, bf), jnp.bfloat16),                # b_w3_dq_vmem
-        pltpu.VMEM((bf, d), jnp.bfloat16),                # b_w2_dq_vmem
         pltpu.VMEM((2, bt, d), dtype),                     # b_x_x2_vmem
         pltpu.VMEM((bt, d), jnp.float32),                 # b_y_acc_vmem
         pltpu.VMEM((2, bt, d), dtype),                     # b_y_out_vmem
