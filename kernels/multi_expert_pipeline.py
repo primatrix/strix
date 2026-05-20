@@ -364,7 +364,7 @@ def kernel_fn(
     """Build random inputs and return a zero-arg closure calling the kernel."""
     key = jax.random.key(42)
     k1, k2, k3, k4 = jax.random.split(key, 4)
-    tokens = jax.random.normal(k1, (num_experts, num_tokens, hidden_size), dtype=jnp.bfloat16)
+    tokens = jax.random.normal(k1, (num_experts, num_tokens, hidden_size), dtype=jnp.bfloat16).astype(dtype)
     w1 = jax.random.normal(k2, (num_experts, hidden_size, intermediate_size), dtype=jnp.bfloat16).astype(weight_dtype)
     w2 = jax.random.normal(k3, (num_experts, intermediate_size, hidden_size), dtype=jnp.bfloat16).astype(weight_dtype)
     w3 = jax.random.normal(k4, (num_experts, hidden_size, intermediate_size), dtype=jnp.bfloat16).astype(weight_dtype)

@@ -58,10 +58,15 @@ def main():
     p.add_argument("--bf", type=int)
     p.add_argument("--num-tokens", type=int, default=256)
     p.add_argument("--experts", type=str, help="Comma-separated expert counts")
+    p.add_argument("--token-dtype", choices=["bf16", "fp8"], default="bf16",
+                   help="Token input dtype: bf16 (default) or fp8 (float8_e4m3fn)")
     p.add_argument("--no-ir-dump", action="store_true")
     p.add_argument("--skip-dequant", action="store_true",
                    help="Skip scale multiply in FP8 dequant (cast-only)")
     args = p.parse_args()
+
+    _DTYPE_MAP = {"bf16": jnp.bfloat16, "fp8": jnp.float8_e4m3fn}
+    token_dtype = _DTYPE_MAP[args.token_dtype]
 
     defaults = PROFILES.get(args.profile, PROFILES["ling2.6"])
     kernel_mod = importlib.import_module(defaults["kernel"])
@@ -75,7 +80,7 @@ def main():
         if args.experts else defaults["experts"]
     )
 
-    print(f"Config: d={d}, f={f}, bf={bf}, bt={bt}"
+    print(f"Config: d={d}, f={f}, bf={bf}, bt={bt}, token_dtype={args.token_dtype}"
           f"{' [skip_dequant]' if args.skip_dequant else ''}")
     print(f"{'experts':>8} {'median_ms':>10} {'mean_ms':>10} {'min_ms':>10} "
           f"{'max_ms':>10} {'stdev_ms':>10} {'per_expert_us':>14}")
@@ -85,6 +90,7 @@ def main():
         run = kernel_fn(
             num_experts=ne, num_tokens=bt,
             hidden_size=d, intermediate_size=f, bf=bf,
+            dtype=token_dtype,
             skip_dequant=args.skip_dequant,
         )
         for _ in range(NUM_WARMUP):
