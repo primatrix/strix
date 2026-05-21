@@ -29,7 +29,20 @@ spec:
               cd /workspace && \
               pip install uv && \
               uv sync --extra tpu && \
-              uv run ${RUNNER_CMD}
+              uv run ${RUNNER_CMD} ; \
+              _rc=$? ; \
+              if [ -d /tmp/operator-artifact ] && python -c "import jax; exit(0 if jax.process_index()==0 else 1)" 2>/dev/null; then \
+                tar czf /tmp/${JOB_NAME}.tar.gz -C /tmp/operator-artifact --exclude='*.tar.gz' . && \
+                python -c "
+from google.cloud import storage; import os
+b='${GCS_BUCKET}'.removeprefix('gs://').strip('/')
+p=b.split('/',1); bn=p[0]; px=(p[1]+'/' if len(p)>1 else '')
+c=storage.Client(); bl=c.bucket(bn).blob(px+'${JOB_NAME}/${JOB_NAME}.tar.gz')
+bl.upload_from_filename('/tmp/${JOB_NAME}.tar.gz')
+print(f'[collect] Uploaded to gs://{bn}/{px}${JOB_NAME}/${JOB_NAME}.tar.gz')
+" ; \
+              fi ; \
+              exit $_rc
           env:
             - name: KERNEL_MODULE
               value: "${KERNEL_MODULE}"
@@ -52,7 +65,9 @@ spec:
             - name: NO_IR_DUMP
               value: "${NO_IR_DUMP}"
             - name: LIBTPU_INIT_ARGS
-              value: "--xla_jf_bounds_check=false --xla_tpu_dvfs_p_state=7"
+              value: "${LIBTPU_INIT_ARGS}"
+            - name: XLA_FLAGS
+              value: "${XLA_FLAGS}"
           resources:
             limits:
               google.com/tpu: ${TPU_CHIPS}

@@ -231,6 +231,18 @@ export TPU_ACCELERATOR="tpu${TPU_TYPE#v}"
 # ---- Export for envsubst ----
 export KERNEL_MODULE SHAPE CHUNK_SIZE TPU_TYPE TPU_TOPOLOGY EP_SIZE NUM_EXPERTS BF BD SWEEP TOTAL_BYTES NO_IR_DUMP PROFILE
 
+# ---- Build LIBTPU_INIT_ARGS / XLA_FLAGS ----
+_VMEM_LIMIT_KIB=65536
+IR_DUMP_ROOT="/tmp/operator-artifact/rank-0/compiler"
+
+if [[ -z "${NO_IR_DUMP}" ]]; then
+  export XLA_FLAGS="--xla_dump_hlo_as_text --xla_dump_to=${IR_DUMP_ROOT}/hlo"
+  export LIBTPU_INIT_ARGS="--xla_enable_custom_call_region_trace=true --xla_xprof_register_llo_debug_info=true --xla_jf_dump_to=${IR_DUMP_ROOT}/llo --xla_jf_dump_hlo_text=true --xla_jf_dump_llo_text=true --xla_jf_emit_annotations=true --xla_mosaic_dump_to=${IR_DUMP_ROOT}/mosaic --xla_mosaic_enable_llo_source_annotations=true --xla_tpu_scoped_vmem_limit_kib=${_VMEM_LIMIT_KIB} --xla_jf_bounds_check=false --xla_tpu_dvfs_p_state=7"
+else
+  export XLA_FLAGS=""
+  export LIBTPU_INIT_ARGS="--xla_tpu_scoped_vmem_limit_kib=${_VMEM_LIMIT_KIB} --xla_jf_bounds_check=false --xla_tpu_dvfs_p_state=7"
+fi
+
 # ---- GCS config ----
 export GCS_BUCKET="${GCS_BUCKET:-gs://poc_profile/}"
 GCS_PATH="${GCS_BUCKET}${JOB_NAME}/"
@@ -269,7 +281,7 @@ trap cleanup EXIT
 
 # ---- Render and deploy ----
 echo "[run_benchmark] Rendering Job YAML for ${JOB_NAME}..."
-ENVSUBST_VARS='$JOB_NAME $BRANCH $BRANCH_LABEL $KERNEL_MODULE $SHAPE $CHUNK_SIZE $TPU_TYPE $TPU_TOPOLOGY $TPU_CHIPS $TPU_ACCELERATOR $GCS_BUCKET $RUNNER_CMD $EP_SIZE $SWEEP $TOTAL_BYTES $NO_IR_DUMP'
+ENVSUBST_VARS='$JOB_NAME $BRANCH $BRANCH_LABEL $KERNEL_MODULE $SHAPE $CHUNK_SIZE $TPU_TYPE $TPU_TOPOLOGY $TPU_CHIPS $TPU_ACCELERATOR $GCS_BUCKET $RUNNER_CMD $EP_SIZE $SWEEP $TOTAL_BYTES $NO_IR_DUMP $LIBTPU_INIT_ARGS $XLA_FLAGS'
 RENDERED_YAML="$(envsubst "${ENVSUBST_VARS}" < "${YAML_TEMPLATE}")"
 
 echo "[run_benchmark] Deploying Job..."
