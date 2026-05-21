@@ -303,6 +303,10 @@ def _multi_expert_kernel_fp8(
                                 preferred_element_type=jnp.float32) * s2,
                 axis=0)
 
+            @pl.when(is_last & (e < num_experts - 1))
+            def _():
+                start_load_scales(e + 1)
+
             @pl.when(should_prefetch)
             def _():
                 start_fetch_w2(pf_slot, pf_expert, pf_tile)
@@ -323,11 +327,6 @@ def _multi_expert_kernel_fp8(
 
         lax.fori_loop(0, n_w, tile_body, jnp.int32(0), unroll=True)
 
-        # Start next-expert scale DMA early to overlap with writeback
-        @pl.when(e < num_experts - 1)
-        def _():
-            start_load_scales(e + 1)
-
         # --- Expert boundary: double-buffered writeback ---
         @pl.when(e >= 2)
         def _():
@@ -343,7 +342,7 @@ def _multi_expert_kernel_fp8(
 
         return next_xs
 
-    lax.fori_loop(0, num_experts, expert_body, jnp.int32(0), unroll=False)
+    lax.fori_loop(0, num_experts, expert_body, jnp.int32(0), unroll=True)
 
     # -- Drain outstanding writebacks --
     last_y_slot = (num_experts - 1) % 2
